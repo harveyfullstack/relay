@@ -1,0 +1,144 @@
+/**
+ * Agent Relay Protocol Types
+ * Version 1.0
+ */
+
+export const PROTOCOL_VERSION = 1;
+
+export type MessageType =
+  | 'HELLO'
+  | 'WELCOME'
+  | 'SEND'
+  | 'DELIVER'
+  | 'ACK'
+  | 'NACK'
+  | 'PING'
+  | 'PONG'
+  | 'ERROR'
+  | 'BUSY'
+  | 'RESUME'
+  | 'BYE'
+  | 'STATE'
+  | 'SYNC' // legacy alias; prefer SYNC_SNAPSHOT/SYNC_DELTA
+  | 'SYNC_SNAPSHOT'
+  | 'SYNC_DELTA'
+  | 'SUBSCRIBE'
+  | 'UNSUBSCRIBE';
+
+export type PayloadKind = 'message' | 'action' | 'state' | 'thinking';
+
+export interface Envelope<T = unknown> {
+  v: number;
+  type: MessageType;
+  id: string;
+  ts: number;
+  from?: string;
+  to?: string | '*';
+  topic?: string;
+  payload: T;
+}
+
+// Handshake payloads
+export interface HelloPayload {
+  agent: string;
+  capabilities: {
+    ack: boolean;
+    resume: boolean;
+    max_inflight: number;
+    supports_topics: boolean;
+  };
+  session?: {
+    resume_token?: string;
+  };
+}
+
+export interface WelcomePayload {
+  session_id: string;
+  resume_token: string;
+  server: {
+    max_frame_bytes: number;
+    heartbeat_ms: number;
+  };
+}
+
+// Message payloads
+export interface SendPayload {
+  kind: PayloadKind;
+  body: string;
+  data?: Record<string, unknown>;
+}
+
+export interface SendMeta {
+  requires_ack?: boolean;
+  ttl_ms?: number;
+}
+
+export interface DeliveryInfo {
+  seq: number;
+  session_id: string;
+}
+
+// ACK/NACK payloads
+export interface AckPayload {
+  ack_id: string;
+  seq: number;
+  cumulative_seq?: number;
+  sack?: number[];
+}
+
+export interface NackPayload {
+  ack_id: string;
+  code?: 'BUSY' | 'INVALID' | 'FORBIDDEN' | 'STALE';
+  reason?: 'busy' | 'invalid' | 'forbidden'; // legacy
+  message?: string;
+}
+
+// Backpressure
+export interface BusyPayload {
+  retry_after_ms: number;
+  queue_depth: number;
+}
+
+// Ping/Pong
+export interface PingPayload {
+  nonce: string;
+}
+
+export interface PongPayload {
+  nonce: string;
+}
+
+// Error
+export type ErrorCode = 'BAD_REQUEST' | 'UNAUTHORIZED' | 'NOT_FOUND' | 'INTERNAL' | 'RESUME_TOO_OLD';
+
+export interface ErrorPayload {
+  code: ErrorCode;
+  message: string;
+  fatal: boolean;
+}
+
+// Resume/Sync
+export interface SyncStream {
+  topic: string;
+  peer: string;
+  last_seq: number;
+  server_last_seq?: number;
+}
+
+export interface SyncPayload {
+  session_id: string;
+  streams: SyncStream[];
+}
+
+// Typed envelope helpers
+export type HelloEnvelope = Envelope<HelloPayload>;
+export type WelcomeEnvelope = Envelope<WelcomePayload>;
+export type SendEnvelope = Envelope<SendPayload> & { payload_meta?: SendMeta };
+export type DeliverEnvelope = Envelope<SendPayload> & { delivery: DeliveryInfo };
+export type AckEnvelope = Envelope<AckPayload>;
+export type NackEnvelope = Envelope<NackPayload>;
+export type PingEnvelope = Envelope<PingPayload>;
+export type PongEnvelope = Envelope<PongPayload>;
+export type ErrorEnvelope = Envelope<ErrorPayload>;
+export type BusyEnvelope = Envelope<BusyPayload>;
+export type SyncEnvelope = Envelope<SyncPayload>;

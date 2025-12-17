@@ -1,0 +1,196 @@
+/**
+ * Agent Relay Daemon Server
+ * Main entry point for the relay daemon.
+ */
+
+import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+import { Connection, type ConnectionConfig, DEFAULT_CONFIG } from './connection.js';
+import { Router } from './router.js';
+import type { Envelope, SendPayload } from '../protocol/types.js';
+
+export interface DaemonConfig extends ConnectionConfig {
+  socketPath: string;
+  pidFilePath: string;
+}
+
+export const DEFAULT_SOCKET_PATH = '/tmp/agent-relay.sock';
+
+export const DEFAULT_DAEMON_CONFIG: DaemonConfig = {
+  ...DEFAULT_CONFIG,
+  socketPath: DEFAULT_SOCKET_PATH,
+  pidFilePath: `${DEFAULT_SOCKET_PATH}.pid`,
+};
+
+export class Daemon {
+  private server: net.Server;
+  private router: Router;
+  private config: DaemonConfig;
+  private running = false;
+
+  constructor(config: Partial<DaemonConfig> = {}) {
+    this.config = { ...DEFAULT_DAEMON_CONFIG, ...config };
+    if (config.socketPath && !config.pidFilePath) {
+      this.config.pidFilePath = `${config.socketPath}.pid`;
+    }
+    this.router = new Router();
+    this.server = net.createServer(this.handleConnection.bind(this));
+  }
+
+  /**
+   * Start the daemon.
+   */
+  async start(): Promise<void> {
+    if (this.running) return;
+
+    // Clean up stale socket (only if it's actually a socket)
+    if (fs.existsSync(this.config.socketPath)) {
+      const stat = fs.lstatSync(this.config.socketPath);
+      if (!stat.isSocket()) {
+        throw new Error(
+          `Refusing to unlink non-socket at ${this.config.socketPath}`
+        );
+      }
+      fs.unlinkSync(this.config.socketPath);
+    }
+
+    // Ensure directory exists
+    const socketDir = path.dirname(this.config.socketPath);
+    if (!fs.existsSync(socketDir)) {
+      fs.mkdirSync(socketDir, { recursive: true });
+    }
+
+    return new Promise((resolve, reject) => {
+      this.server.on('error', reject);
+      this.server.listen(this.config.socketPath, () => {
+        this.running = true;
+        // Set restrictive permissions
+        fs.chmodSync(this.config.socketPath, 0o600);
+        fs.writeFileSync(this.config.pidFilePath, `${process.pid}\n`, 'utf-8');
+        console.log(`[daemon] Listening on ${this.config.socketPath}`);
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * Stop the daemon.
+   */
+  async stop(): Promise<void> {
+    if (!this.running) return;
+
+    return new Promise((resolve) => {
+      this.server.close(() => {
+        this.running = false;
+        // Clean up socket file
+        if (fs.existsSync(this.config.socketPath)) {
+          fs.unlinkSync(this.config.socketPath);
+        }
+        // Clean up pid file
+        if (fs.existsSync(this.config.pidFilePath)) {
+          fs.unlinkSync(this.config.pidFilePath);
+        }
+        console.log('[daemon] Stopped');
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * Handle new connection.
+   */
+  private handleConnection(socket: net.Socket): void {
+    console.log('[daemon] New connection');
+
+    const connection = new Connection(socket, this.config);
+
+    connection.onMessage = (envelope: Envelope) => {
+      this.handleMessage(connection, envelope);
+    };
+
+    // Register agent when connection becomes active (after successful handshake)
+    connection.onActive = () => {
+      if (connection.agentName) {
+        this.router.register(connection);
+        console.log(`[daemon] Agent registered: ${connection.agentName}`);
+      }
+    };
+
+    connection.onClose = () => {
+      console.log(`[daemon] Connection closed: ${connection.agentName ?? connection.id}`);
+      this.router.unregister(connection);
+    };
+
+    connection.onError = (error: Error) => {
+      console.error(`[daemon] Connection error: ${error.message}`);
+      this.router.unregister(connection);
+    };
+  }
+
+  /**
+   * Handle incoming message from a connection.
+   */
+  private handleMessage(connection: Connection, envelope: Envelope): void {
+    switch (envelope.type) {
+      case 'SEND':
+        this.router.route(connection, envelope as Envelope<SendPayload>);
+        break;
+
+      case 'SUBSCRIBE':
+        if (connection.agentName && envelope.topic) {
+          this.router.subscribe(connection.agentName, envelope.topic);
+        }
+        break;
+
+      case 'UNSUBSCRIBE':
+        if (connection.agentName && envelope.topic) {
+          this.router.unsubscribe(connection.agentName, envelope.topic);
+        }
+        break;
+    }
+  }
+
+  /**
+   * Get list of connected agents.
+   */
+  getAgents(): string[] {
+    return this.router.getAgents();
+  }
+
+  /**
+   * Get connection count.
+   */
+  get connectionCount(): number {
+    return this.router.connectionCount;
+  }
+
+  /**
+   * Check if daemon is running.
+   */
+  get isRunning(): boolean {
+    return this.running;
+  }
+}
+
+// Run as standalone if executed directly
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  const daemon = new Daemon();
+
+  process.on('SIGINT', async () => {
+    console.log('\n[daemon] Shutting down...');
+    await daemon.stop();
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', async () => {
+    await daemon.stop();
+    process.exit(0);
+  });
+
+  daemon.start().catch((err) => {
+    console.error('[daemon] Failed to start:', err);
+    process.exit(1);
+  });
+}

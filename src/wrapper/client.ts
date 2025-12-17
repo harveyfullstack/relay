@@ -1,0 +1,354 @@
+/**
+ * Relay Client
+ * Connects to the daemon and handles message sending/receiving.
+ */
+
+import net from 'node:net';
+import { v4 as uuid } from 'uuid';
+import {
+  type Envelope,
+  type HelloPayload,
+  type WelcomePayload,
+  type SendPayload,
+  type DeliverEnvelope,
+  type PayloadKind,
+  PROTOCOL_VERSION,
+} from '../protocol/types.js';
+import { encodeFrame, FrameParser } from '../protocol/framing.js';
+import { DEFAULT_SOCKET_PATH } from '../daemon/server.js';
+
+export type ClientState = 'DISCONNECTED' | 'CONNECTING' | 'HANDSHAKING' | 'READY' | 'BACKOFF';
+
+export interface ClientConfig {
+  socketPath: string;
+  agentName: string;
+  reconnect: boolean;
+  maxReconnectAttempts: number;
+  reconnectDelayMs: number;
+  reconnectMaxDelayMs: number;
+}
+
+const DEFAULT_CLIENT_CONFIG: ClientConfig = {
+  socketPath: DEFAULT_SOCKET_PATH,
+  agentName: 'agent',
+  reconnect: true,
+  maxReconnectAttempts: 10,
+  reconnectDelayMs: 100,
+  reconnectMaxDelayMs: 30000,
+};
+
+export class RelayClient {
+  private config: ClientConfig;
+  private socket?: net.Socket;
+  private parser: FrameParser;
+
+  private _state: ClientState = 'DISCONNECTED';
+  private sessionId?: string;
+  private resumeToken?: string;
+  private reconnectAttempts = 0;
+  private reconnectDelay: number;
+  private reconnectTimer?: NodeJS.Timeout;
+
+  // Event handlers
+  onMessage?: (from: string, payload: SendPayload) => void;
+  onStateChange?: (state: ClientState) => void;
+  onError?: (error: Error) => void;
+
+  constructor(config: Partial<ClientConfig> = {}) {
+    this.config = { ...DEFAULT_CLIENT_CONFIG, ...config };
+    this.parser = new FrameParser();
+    this.reconnectDelay = this.config.reconnectDelayMs;
+  }
+
+  get state(): ClientState {
+    return this._state;
+  }
+
+  get agentName(): string {
+    return this.config.agentName;
+  }
+
+  /**
+   * Connect to the relay daemon.
+   */
+  connect(): Promise<void> {
+    if (this._state !== 'DISCONNECTED' && this._state !== 'BACKOFF') {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      this.setState('CONNECTING');
+
+      this.socket = net.createConnection(this.config.socketPath, () => {
+        this.setState('HANDSHAKING');
+        this.sendHello();
+      });
+
+      this.socket.on('data', (data) => this.handleData(data));
+
+      this.socket.on('close', () => {
+        this.handleDisconnect();
+      });
+
+      this.socket.on('error', (err) => {
+        if (this._state === 'CONNECTING') {
+          reject(err);
+        }
+        this.handleError(err);
+      });
+
+      // Wait for WELCOME
+      const checkReady = setInterval(() => {
+        if (this._state === 'READY') {
+          clearInterval(checkReady);
+          resolve();
+        }
+      }, 10);
+
+      // Timeout
+      setTimeout(() => {
+        if (this._state !== 'READY') {
+          clearInterval(checkReady);
+          reject(new Error('Connection timeout'));
+        }
+      }, 5000);
+    });
+  }
+
+  /**
+   * Disconnect from the relay daemon.
+   */
+  disconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
+    if (this.socket) {
+      this.send({
+        v: PROTOCOL_VERSION,
+        type: 'BYE',
+        id: uuid(),
+        ts: Date.now(),
+        payload: {},
+      });
+      this.socket.end();
+      this.socket = undefined;
+    }
+
+    this.setState('DISCONNECTED');
+  }
+
+  /**
+   * Send a message to another agent.
+   */
+  sendMessage(to: string, body: string, kind: PayloadKind = 'message', data?: Record<string, unknown>): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: Envelope<SendPayload> = {
+      v: PROTOCOL_VERSION,
+      type: 'SEND',
+      id: uuid(),
+      ts: Date.now(),
+      to,
+      payload: {
+        kind,
+        body,
+        data,
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Broadcast a message to all agents.
+   */
+  broadcast(body: string, kind: PayloadKind = 'message', data?: Record<string, unknown>): boolean {
+    return this.sendMessage('*', body, kind, data);
+  }
+
+  /**
+   * Subscribe to a topic.
+   */
+  subscribe(topic: string): boolean {
+    if (this._state !== 'READY') return false;
+
+    return this.send({
+      v: PROTOCOL_VERSION,
+      type: 'SUBSCRIBE',
+      id: uuid(),
+      ts: Date.now(),
+      topic,
+      payload: {},
+    });
+  }
+
+  /**
+   * Unsubscribe from a topic.
+   */
+  unsubscribe(topic: string): boolean {
+    if (this._state !== 'READY') return false;
+
+    return this.send({
+      v: PROTOCOL_VERSION,
+      type: 'UNSUBSCRIBE',
+      id: uuid(),
+      ts: Date.now(),
+      topic,
+      payload: {},
+    });
+  }
+
+  private setState(state: ClientState): void {
+    this._state = state;
+    if (this.onStateChange) {
+      this.onStateChange(state);
+    }
+  }
+
+  private sendHello(): void {
+    const hello: Envelope<HelloPayload> = {
+      v: PROTOCOL_VERSION,
+      type: 'HELLO',
+      id: uuid(),
+      ts: Date.now(),
+      payload: {
+        agent: this.config.agentName,
+        capabilities: {
+          ack: true,
+          resume: true,
+          max_inflight: 256,
+          supports_topics: true,
+        },
+        session: this.resumeToken ? { resume_token: this.resumeToken } : undefined,
+      },
+    };
+
+    this.send(hello);
+  }
+
+  private send(envelope: Envelope): boolean {
+    if (!this.socket) return false;
+
+    try {
+      const frame = encodeFrame(envelope);
+      this.socket.write(frame);
+      return true;
+    } catch (err) {
+      this.handleError(err as Error);
+      return false;
+    }
+  }
+
+  private handleData(data: Buffer): void {
+    try {
+      const frames = this.parser.push(data);
+      for (const frame of frames) {
+        this.processFrame(frame);
+      }
+    } catch (err) {
+      this.handleError(err as Error);
+    }
+  }
+
+  private processFrame(envelope: Envelope): void {
+    switch (envelope.type) {
+      case 'WELCOME':
+        this.handleWelcome(envelope as Envelope<WelcomePayload>);
+        break;
+
+      case 'DELIVER':
+        this.handleDeliver(envelope as DeliverEnvelope);
+        break;
+
+      case 'PING':
+        this.handlePing(envelope);
+        break;
+
+      case 'ERROR':
+        console.error('[client] Server error:', envelope.payload);
+        break;
+
+      case 'BUSY':
+        console.warn('[client] Server busy, backing off');
+        break;
+    }
+  }
+
+  private handleWelcome(envelope: Envelope<WelcomePayload>): void {
+    this.sessionId = envelope.payload.session_id;
+    this.resumeToken = envelope.payload.resume_token;
+    this.reconnectAttempts = 0;
+    this.reconnectDelay = this.config.reconnectDelayMs;
+    this.setState('READY');
+    console.log(`[client] Connected as ${this.config.agentName} (session: ${this.sessionId})`);
+  }
+
+  private handleDeliver(envelope: DeliverEnvelope): void {
+    // Send ACK
+    this.send({
+      v: PROTOCOL_VERSION,
+      type: 'ACK',
+      id: uuid(),
+      ts: Date.now(),
+      payload: {
+        ack_id: envelope.id,
+        seq: envelope.delivery.seq,
+      },
+    });
+
+    // Notify handler
+    if (this.onMessage && envelope.from) {
+      this.onMessage(envelope.from, envelope.payload);
+    }
+  }
+
+  private handlePing(envelope: Envelope): void {
+    this.send({
+      v: PROTOCOL_VERSION,
+      type: 'PONG',
+      id: uuid(),
+      ts: Date.now(),
+      payload: (envelope.payload as { nonce?: string }) ?? {},
+    });
+  }
+
+  private handleDisconnect(): void {
+    this.parser.reset();
+    this.socket = undefined;
+
+    if (this.config.reconnect && this.reconnectAttempts < this.config.maxReconnectAttempts) {
+      this.scheduleReconnect();
+    } else {
+      this.setState('DISCONNECTED');
+    }
+  }
+
+  private handleError(error: Error): void {
+    console.error('[client] Error:', error.message);
+    if (this.onError) {
+      this.onError(error);
+    }
+  }
+
+  private scheduleReconnect(): void {
+    this.setState('BACKOFF');
+    this.reconnectAttempts++;
+
+    // Exponential backoff with jitter
+    const jitter = Math.random() * 0.3 + 0.85; // 0.85 - 1.15
+    const delay = Math.min(this.reconnectDelay * jitter, this.config.reconnectMaxDelayMs);
+    this.reconnectDelay *= 2;
+
+    console.log(`[client] Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts})`);
+
+    this.reconnectTimer = setTimeout(() => {
+      this.connect().catch(() => {
+        // Will trigger another reconnect
+      });
+    }, delay);
+  }
+}
