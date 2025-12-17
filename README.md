@@ -233,7 +233,8 @@ Agents respond with:
 
 ---
 
-# For Agents
+<details>
+<summary><h2>For Agents (Click to expand)</h2></summary>
 
 > **This section is specifically for AI agents setting up agent-relay autonomously.**
 
@@ -448,6 +449,8 @@ async function setupAgent() {
 Default: `/tmp/agent-relay.sock`
 
 Custom: Use `-s` flag or `socketPath` config option.
+
+</details>
 
 ---
 
