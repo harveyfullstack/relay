@@ -4,15 +4,31 @@
   "description": "Real-time agent-to-agent communication system",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
-    "agent-relay": "./dist/cli/index.js"
+    "agent-relay": "dist/cli/index.js"
+  },
+  "files": [
+    "dist/",
+    "install.sh",
+    "README.md",
+    "PROTOCOL.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
+    "postbuild": "cp -r src/dashboard/public dist/dashboard/",
     "dev": "tsc -w",
     "start": "node dist/cli/index.js",
     "daemon": "node dist/daemon/server.js",
+    "pretest": "npm run build",
     "test": "vitest run",
+    "pretest:coverage": "npm run build",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "lint": "eslint src --ext .ts",
     "clean": "rm -rf dist"
@@ -38,18 +54,26 @@
   },
   "homepage": "https://github.com/khaliqgant/agent-relay#readme",
   "dependencies": {
+    "chokidar": "^5.0.0",
     "commander": "^12.1.0",
+    "express": "^5.2.1",
     "node-pty": "^1.0.0",
     "uuid": "^10.0.0",
-    "yaml": "^2.6.1"
+    "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.2",
     "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.18.2",
+    "@typescript-eslint/parser": "^8.18.2",
+    "@vitest/coverage-v8": "^2.1.8",
+    "eslint": "^8.57.1",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=18.0.0"
   }
 }

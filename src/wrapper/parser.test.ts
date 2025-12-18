@@ -240,13 +240,16 @@ describe('OutputParser', () => {
   });
 
   describe('Edge cases', () => {
-    it('buffers partial lines correctly', () => {
+    it('inline commands must be complete in single chunk (no cross-chunk buffering)', () => {
+      // Inline relay commands split across chunks are NOT detected
+      // This is intentional for minimal terminal interference
       const result1 = parser.parse('@relay:agent2 Partial');
       expect(result1.commands).toHaveLength(0);
+      expect(result1.output).toBe('@relay:agent2 Partial'); // Passed through
 
       const result2 = parser.parse(' line\n');
-      expect(result2.commands).toHaveLength(1);
-      expect(result2.commands[0].body).toBe('Partial line');
+      expect(result2.commands).toHaveLength(0); // Not detected
+      expect(result2.output).toBe(' line\n'); // Passed through
     });
 
     it('buffers partial block correctly', () => {
@@ -258,12 +261,13 @@ describe('OutputParser', () => {
       expect(result2.commands[0].body).toBe('Test');
     });
 
-    it('flush() processes remaining buffer', () => {
-      parser.parse('@relay:agent2 No newline');
-      const result = parser.flush();
+    it('flush() does not detect incomplete inline commands (no buffering)', () => {
+      // Incomplete inline commands without newline are passed through, not buffered
+      const result1 = parser.parse('@relay:agent2 No newline');
+      expect(result1.output).toBe('@relay:agent2 No newline'); // Passed through
 
-      expect(result.commands).toHaveLength(1);
-      expect(result.commands[0].to).toBe('agent2');
+      const result = parser.flush();
+      expect(result.commands).toHaveLength(0); // Not detected
     });
 
     it('flush() clears all state', () => {

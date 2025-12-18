@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # agent-relay installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/anthropics/agent-relay/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/khaliqgant/agent-relay/main/install.sh | bash
 #
 # Options (via environment variables):
 #   AGENT_RELAY_DIR     - Installation directory (default: ~/.agent-relay)
@@ -10,7 +10,7 @@
 #   AGENT_RELAY_QUIET   - Minimal output for agents (default: false)
 #
 
-set -euo pipefail
+set -Eeuo pipefail
 
 # Colors (disabled if not a terminal or AGENT_RELAY_QUIET is set)
 if [[ -t 1 ]] && [[ "${AGENT_RELAY_QUIET:-}" != "true" ]]; then
@@ -63,6 +63,16 @@ log_info() {
 agent_output() {
   echo "AGENT_RELAY_$1=$2"
 }
+
+# Better error reporting (especially when run via curl | bash)
+on_error() {
+  local exit_code=$?
+  log_error "Installation failed (exit $exit_code) near line $1."
+  log_error "Re-run with AGENT_RELAY_QUIET=false for verbose output."
+  agent_output "ERROR" "INSTALL_FAILED"
+  exit "$exit_code"
+}
+trap 'on_error $LINENO' ERR
 
 # Check if command exists
 command_exists() {

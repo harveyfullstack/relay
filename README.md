@@ -1,5 +1,8 @@
 # agent-relay
 
+[![CI](https://github.com/khaliqgant/agent-relay/actions/workflows/test.yml/badge.svg)](https://github.com/khaliqgant/agent-relay/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/khaliqgant/agent-relay/branch/main/graph/badge.svg)](https://codecov.io/gh/khaliqgant/agent-relay)
+
 Real-time agent-to-agent communication system. Enables AI agents (Claude, Codex, Gemini, etc.) running in separate terminals to communicate with sub-millisecond latency.
 
 ## Installation
@@ -38,6 +41,24 @@ npm run build
 
 - Node.js >= 18 (20+ recommended)
 - macOS or Linux (Unix domain sockets)
+
+## Troubleshooting
+
+### `node-pty` / native module errors
+
+If you see errors like `NODE_MODULE_VERSION ...` or `compiled against a different Node.js version`, rebuild native deps:
+
+```bash
+npm rebuild node-pty
+```
+
+### `listen EPERM: operation not permitted`
+
+If your environment restricts creating sockets under `/tmp` (some sandboxes/containers do), pick a socket path you can write to:
+
+```bash
+npx agent-relay start -f -s ./agent-relay.sock
+```
 
 ## Why We Built This
 
@@ -96,27 +117,136 @@ agent-relay takes a different path:
 
 ## Quick Start
 
-```bash
-# Install dependencies
-npm install
+### Option 1: One-Line Install (Recommended)
 
-# Build
-npm run build
+```bash
+# Install agent-relay
+curl -fsSL https://raw.githubusercontent.com/khaliqgant/agent-relay/main/install.sh | bash
+
+# Start the daemon
+agent-relay start -f
+
+# In another terminal, wrap an agent (name auto-generated)
+agent-relay wrap "claude"
+# Output: Agent name: SilverMountain
+
+# In another terminal, wrap another agent
+agent-relay wrap "codex"
+# Output: Agent name: BlueFox
+```
+
+### Option 2: From Source
+
+```bash
+git clone https://github.com/khaliqgant/agent-relay.git
+cd agent-relay
+npm install && npm run build
 
 # Start the daemon
 npx agent-relay start -f
 
-# In another terminal, wrap an agent (name auto-generated)
+# In another terminal, wrap an agent
 npx agent-relay wrap "claude"
-# Output: Agent name: SilverMountain
-
-# In another terminal, wrap another agent
-npx agent-relay wrap "codex"
-# Output: Agent name: BlueFox
-
-# Or specify a name explicitly
-npx agent-relay wrap -n my-agent "claude"
 ```
+
+### Sending Messages Between Agents
+
+Once agents are wrapped, they can send messages to each other:
+
+```bash
+# Direct message (from agent terminal)
+@relay:BlueFox Hello from SilverMountain!
+
+# Broadcast to all agents
+@relay:* Anyone online?
+
+# Messages appear in recipient's terminal as:
+# [MSG] from SilverMountain: Hello from SilverMountain!
+```
+
+### Enable Your Agents
+
+Copy [`AGENTS.md`](./AGENTS.md) to your project so AI agents know how to use agent-relay:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/khaliqgant/agent-relay/main/AGENTS.md > AGENTS.md
+```
+
+This file contains instructions that AI agents can read to learn how to send/receive messages.
+
+## Common Use Cases
+
+### 1. Pair Programming: Code + Review
+
+Two agents collaborating on a codebase - one writes code, the other reviews:
+
+```bash
+# Terminal 1: Start daemon
+agent-relay start -f
+
+# Terminal 2: Code writer agent
+agent-relay wrap -n Coder "claude"
+# Agent starts working, then sends:
+# @relay:Reviewer I've implemented the auth module. Please review src/auth.ts
+
+# Terminal 3: Reviewer agent
+agent-relay wrap -n Reviewer "claude"
+# Receives the message and reviews the code
+# @relay:Coder Found an issue in line 45: missing input validation
+```
+
+### 2. Multi-Agent Task Distribution
+
+A coordinator distributing tasks to worker agents:
+
+```bash
+# Set up workers with file-based inboxes
+mkdir -p /tmp/workers
+agent-relay inbox-write -t Worker1 -f Coordinator -m "Process files in /data/batch1" -d /tmp/workers
+agent-relay inbox-write -t Worker2 -f Coordinator -m "Process files in /data/batch2" -d /tmp/workers
+
+# Each worker polls their inbox
+agent-relay inbox-poll -n Worker1 -d /tmp/workers --clear
+# Worker1 sees: Process files in /data/batch1
+```
+
+### 3. Turn-Based Game (Tic-Tac-Toe)
+
+Two agents playing a game with coordinated turns:
+
+```bash
+# Quick setup
+agent-relay tictactoe-setup -d /tmp/ttt --player-x AgentX --player-o AgentO
+
+# Terminal 1: Player X reads instructions
+cat /tmp/ttt/AgentX/INSTRUCTIONS.md
+
+# Terminal 2: Player O reads instructions
+cat /tmp/ttt/AgentO/INSTRUCTIONS.md
+
+# Agents communicate moves via inbox:
+agent-relay inbox-write -t AgentO -f AgentX -m "MOVE: center" -d /tmp/ttt
+```
+
+### 4. Live Collaboration Session
+
+Multiple agents working together with real-time socket communication:
+
+```bash
+# Start daemon
+agent-relay start -f
+
+# Wrap multiple agents (3 terminals)
+agent-relay wrap "claude"      # -> GreenLake
+agent-relay wrap "codex"       # -> BlueRiver
+agent-relay wrap "gemini-cli"  # -> RedMountain
+
+# Any agent can message others:
+# @relay:BlueRiver Can you handle the database migration?
+# @relay:* I'm starting on the frontend components
+```
+
+> **More examples:** See the [`examples/`](./examples) directory for complete working examples including setup scripts.
 
 ## Architecture
 
@@ -194,6 +324,119 @@ npx agent-relay status
 
 # Send a test message
 npx agent-relay send -t recipient -m "Hello"
+```
+
+### File-Based Inbox Commands
+
+For scenarios where PTY wrapping isn't ideal (scripts, automation, or agents that read files):
+
+```bash
+# Write to an agent's inbox (supports broadcast with *)
+agent-relay inbox-write -t AgentName -f SenderName -m "Your message" -d /tmp/my-dir
+agent-relay inbox-write -t "*" -f SenderName -m "Broadcast!" -d /tmp/my-dir
+
+# Read an agent's inbox (non-blocking)
+agent-relay inbox-read -n AgentName -d /tmp/my-dir
+agent-relay inbox-read -n AgentName -d /tmp/my-dir --clear  # Clear after reading
+
+# Block until inbox has messages (useful for agent loops)
+agent-relay inbox-poll -n AgentName -d /tmp/my-dir --clear
+agent-relay inbox-poll -n AgentName -d /tmp/my-dir -t 30    # 30s timeout
+
+# List all agents in a data directory
+agent-relay inbox-agents -d /tmp/my-dir
+```
+
+**Inbox message format:**
+```markdown
+## Message from SenderName | 2024-01-15T10:30:00Z
+Your message content here
+```
+
+### Team Commands
+
+For coordinating multiple agents working together on a project:
+
+```bash
+# Initialize a team workspace
+agent-relay team-init -d /tmp/my-team -p /path/to/project -n "my-team"
+
+# Set up a complete team from JSON config
+agent-relay team-setup -f team-config.json -d /tmp/my-team
+
+# Add an agent to the team
+agent-relay team-add -n AgentName -r "Role description" -d /tmp/my-team
+
+# List all agents in the team
+agent-relay team-list -d /tmp/my-team
+
+# Show team status with message counts
+agent-relay team-status -d /tmp/my-team
+
+# Send a message to teammate(s)
+agent-relay team-send -n SenderName -t RecipientName -m "Hello" -d /tmp/my-team
+agent-relay team-send -n SenderName -t "*" -m "Broadcast" -d /tmp/my-team
+
+# Check your inbox (blocking wait)
+agent-relay team-check -n AgentName -d /tmp/my-team
+agent-relay team-check -n AgentName -d /tmp/my-team --no-wait  # Non-blocking
+
+# Join an existing team (self-register)
+agent-relay team-join -n AgentName -r "Role" -d /tmp/my-team
+
+# Start team with auto-spawning
+agent-relay team-start -f team-config.json -d /tmp/my-team
+```
+
+**Team config JSON format:**
+```json
+{
+  "name": "my-project",
+  "project": "/path/to/project",
+  "agents": [
+    {"name": "Architect", "cli": "claude", "role": "Design Lead", "tasks": ["Design system"]}
+  ]
+}
+```
+
+### Supervisor Commands
+
+For spawn-per-message agent management:
+
+```bash
+# Run the supervisor (foreground)
+agent-relay supervisor -d /tmp/relay -v
+
+# Run supervisor in background
+agent-relay supervisor -d /tmp/relay --detach
+
+# Check supervisor status
+agent-relay supervisor-status
+
+# Stop background supervisor
+agent-relay supervisor-stop
+
+# Register an agent with supervisor
+agent-relay register -n AgentName -c "claude" -d /tmp/relay
+```
+
+### Dashboard
+
+Web-based dashboard for monitoring agent communication:
+
+```bash
+# Start dashboard on default port (3456)
+agent-relay dashboard -d /tmp/my-team
+
+# Start on custom port
+agent-relay dashboard -p 8080 -d /tmp/my-team
+```
+
+### Games
+
+```bash
+# Set up tic-tac-toe for two agents
+agent-relay tictactoe-setup -d /tmp/ttt --player-x AgentX --player-o AgentO
 ```
 
 ## Playing Hearts

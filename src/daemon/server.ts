@@ -28,6 +28,7 @@ export class Daemon {
   private router: Router;
   private config: DaemonConfig;
   private running = false;
+  private connections: Set<Connection> = new Set();
 
   constructor(config: Partial<DaemonConfig> = {}) {
     this.config = { ...DEFAULT_DAEMON_CONFIG, ...config };
@@ -80,6 +81,12 @@ export class Daemon {
   async stop(): Promise<void> {
     if (!this.running) return;
 
+    // Close all active connections
+    for (const connection of this.connections) {
+      connection.close();
+    }
+    this.connections.clear();
+
     return new Promise((resolve) => {
       this.server.close(() => {
         this.running = false;
@@ -104,6 +111,7 @@ export class Daemon {
     console.log('[daemon] New connection');
 
     const connection = new Connection(socket, this.config);
+    this.connections.add(connection);
 
     connection.onMessage = (envelope: Envelope) => {
       this.handleMessage(connection, envelope);
@@ -119,11 +127,13 @@ export class Daemon {
 
     connection.onClose = () => {
       console.log(`[daemon] Connection closed: ${connection.agentName ?? connection.id}`);
+      this.connections.delete(connection);
       this.router.unregister(connection);
     };
 
     connection.onError = (error: Error) => {
       console.error(`[daemon] Connection error: ${error.message}`);
+      this.connections.delete(connection);
       this.router.unregister(connection);
     };
   }

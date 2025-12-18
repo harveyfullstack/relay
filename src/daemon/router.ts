@@ -90,10 +90,15 @@ export class Router {
    */
   route(from: RoutableConnection, envelope: Envelope<SendPayload>): void {
     const senderName = from.agentName;
-    if (!senderName) return;
+    if (!senderName) {
+      console.log(`[router] Dropping message - sender has no name`);
+      return;
+    }
 
     const to = envelope.to;
     const topic = envelope.topic;
+
+    console.log(`[router] ${senderName} -> ${to}: ${envelope.payload.body?.substring(0, 50)}...`);
 
     if (to === '*') {
       // Broadcast to all (except sender)
@@ -114,12 +119,14 @@ export class Router {
   ): boolean {
     const target = this.agents.get(to);
     if (!target) {
-      // TODO: Queue for offline delivery or return error
+      console.log(`[router] Target "${to}" not found. Available agents: ${Array.from(this.agents.keys()).join(', ')}`);
       return false;
     }
 
     const deliver = this.createDeliverEnvelope(from, to, envelope, target);
-    return target.send(deliver);
+    const sent = target.send(deliver);
+    console.log(`[router] Delivered to ${to}: ${sent ? 'success' : 'failed'}`);
+    return sent;
   }
 
   /**

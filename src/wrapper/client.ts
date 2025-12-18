@@ -48,6 +48,7 @@ export class RelayClient {
   private reconnectAttempts = 0;
   private reconnectDelay: number;
   private reconnectTimer?: NodeJS.Timeout;
+  private _destroyed = false;
 
   // Event handlers
   onMessage?: (from: string, payload: SendPayload) => void;
@@ -137,6 +138,14 @@ export class RelayClient {
     }
 
     this.setState('DISCONNECTED');
+  }
+
+  /**
+   * Permanently destroy the client. Disconnects and prevents any reconnection.
+   */
+  destroy(): void {
+    this._destroyed = true;
+    this.disconnect();
   }
 
   /**
@@ -319,6 +328,12 @@ export class RelayClient {
   private handleDisconnect(): void {
     this.parser.reset();
     this.socket = undefined;
+
+    // Don't reconnect if permanently destroyed
+    if (this._destroyed) {
+      this.setState('DISCONNECTED');
+      return;
+    }
 
     if (this.config.reconnect && this.reconnectAttempts < this.config.maxReconnectAttempts) {
       this.scheduleReconnect();
