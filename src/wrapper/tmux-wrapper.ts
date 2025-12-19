@@ -44,6 +44,10 @@ export interface TmuxWrapperConfig {
   idleBeforeInjectMs?: number;
   /** Retry interval while waiting for idle window (ms) */
   injectRetryMs?: number;
+  /** CLI type for special handling (auto-detected from command if not set) */
+  cliType?: 'claude' | 'codex' | 'gemini' | 'other';
+  /** Enable tmux mouse mode for scroll passthrough (default: true) */
+  mouseMode?: boolean;
 }
 
 export class TmuxWrapper {
@@ -59,11 +63,12 @@ export class TmuxWrapper {
   private lastOutputTime = 0;
   private recentlySentMessages: Map<string, number> = new Map();
   private sentMessageHashes: Set<string> = new Set(); // Permanent dedup
-  private messageQueue: Array<{ from: string; body: string }> = [];
+  private messageQueue: Array<{ from: string; body: string; messageId: string }> = [];
   private isInjecting = false;
   // Track processed output to avoid re-parsing
   private processedOutputLength = 0;
   private lastDebugLog = 0;
+  private cliType: 'claude' | 'codex' | 'gemini' | 'other';
 
   constructor(config: TmuxWrapperConfig) {
     this.config = {
@@ -74,8 +79,23 @@ export class TmuxWrapper {
       injectRetryMs: 500,
       debug: true,
       debugLogIntervalMs: 0,
+      mouseMode: true, // Enable mouse scroll passthrough by default
       ...config,
     };
+
+    // Detect CLI type from command for special handling
+    const cmdLower = config.command.toLowerCase();
+    if (config.cliType) {
+      this.cliType = config.cliType;
+    } else if (cmdLower.includes('gemini')) {
+      this.cliType = 'gemini';
+    } else if (cmdLower.includes('codex')) {
+      this.cliType = 'codex';
+    } else if (cmdLower.includes('claude')) {
+      this.cliType = 'claude';
+    } else {
+      this.cliType = 'other';
+    }
 
     // Generate unique session name
     this.sessionName = `relay-${config.name}-${process.pid}`;
@@ -96,8 +116,8 @@ export class TmuxWrapper {
     }
 
     // Handle incoming messages from relay
-    this.client.onMessage = (from: string, payload: SendPayload) => {
-      this.handleIncomingMessage(from, payload);
+    this.client.onMessage = (from: string, payload: SendPayload, messageId: string) => {
+      this.handleIncomingMessage(from, payload, messageId);
     };
 
     this.client.onStateChange = (state) => {
@@ -192,6 +212,30 @@ export class TmuxWrapper {
         cwd: this.config.cwd ?? process.cwd(),
         stdio: 'pipe',
       });
+
+      // Configure tmux for seamless scrolling
+      // Mouse mode passes scroll events to the application when in alternate screen
+      const tmuxSettings = [
+        'set -g set-clipboard on',            // Enable clipboard
+        'set -g history-limit 50000',         // Large scrollback for when needed
+        'setw -g alternate-screen on',        // Ensure alternate screen works
+        // Pass through mouse scroll to application in alternate screen mode
+        'set -ga terminal-overrides ",xterm*:Tc"',
+      ];
+
+      // Add mouse mode if enabled (allows scroll passthrough to CLI apps)
+      if (this.config.mouseMode) {
+        tmuxSettings.unshift('set -g mouse on');
+        this.logStderr('Mouse mode enabled (scroll should work in app)');
+      }
+
+      for (const setting of tmuxSettings) {
+        try {
+          execSync(`tmux ${setting}`, { stdio: 'pipe' });
+        } catch {
+          // Some settings may not be available in older tmux versions
+        }
+      }
 
       // Set environment variables
       for (const [key, value] of Object.entries({
@@ -388,11 +432,11 @@ export class TmuxWrapper {
   /**
    * Handle incoming message from relay
    */
-  private handleIncomingMessage(from: string, payload: SendPayload): void {
+  private handleIncomingMessage(from: string, payload: SendPayload, messageId: string): void {
     this.logStderr(`← ${from}: ${payload.body.substring(0, 40)}...`);
 
     // Queue for injection
-    this.messageQueue.push({ from, body: payload.body });
+    this.messageQueue.push({ from, body: payload.body, messageId });
 
     // Write to inbox if enabled
     if (this.inbox) {
@@ -430,30 +474,59 @@ export class TmuxWrapper {
     if (!msg) return;
 
     this.isInjecting = true;
-    this.logStderr(`Injecting message from ${msg.from}`);
+    this.logStderr(`Injecting message from ${msg.from} (cli: ${this.cliType})`);
 
     try {
       let sanitizedBody = msg.body.replace(/[\r\n]+/g, ' ').trim();
       // Truncate long messages to avoid display issues
       const maxLen = 500;
+      let wasTruncated = false;
       if (sanitizedBody.length > maxLen) {
-        sanitizedBody = sanitizedBody.substring(0, maxLen) + '... [truncated]';
+        sanitizedBody = sanitizedBody.substring(0, maxLen) + '...';
+        wasTruncated = true;
       }
-      const injection = `Relay message from ${msg.from}: ${sanitizedBody}`;
 
-      // Clear any partial input
-      await this.sendKeys('Escape');
-      await this.sleep(30);
-      await this.sendKeys('C-u');
-      await this.sleep(30);
+      // Build truncation hint if needed
+      const truncationHint = wasTruncated
+        ? ` [TRUNCATED - run "agent-relay msg-read ${msg.messageId}" for full message]`
+        : '';
 
-      // Type the message
-      await this.sendKeysLiteral(injection);
-      await this.sleep(50);
+      // Gemini CLI interprets input as shell commands, so we need special handling
+      if (this.cliType === 'gemini') {
+        // For Gemini: Use echo command to display the message, then clear the line
+        // This shows the message without it being interpreted as a command
+        const echoMsg = `echo "[relay ← ${msg.from}] ${sanitizedBody.replace(/"/g, '\\"')}${truncationHint.replace(/"/g, '\\"')}"`;
 
-      // Submit
-      await this.sendKeys('Enter');
-      this.logStderr(`Injection complete`);
+        // Clear any partial input
+        await this.sendKeys('Escape');
+        await this.sleep(30);
+        await this.sendKeys('C-u');
+        await this.sleep(30);
+
+        // Send echo command to display the message
+        await this.sendKeysLiteral(echoMsg);
+        await this.sleep(50);
+        await this.sendKeys('Enter');
+
+        this.logStderr(`Injection complete (gemini echo mode)`);
+      } else {
+        // Standard injection for Claude, Codex, etc.
+        const injection = `Relay message from ${msg.from}: ${sanitizedBody}${truncationHint}`;
+
+        // Clear any partial input
+        await this.sendKeys('Escape');
+        await this.sleep(30);
+        await this.sendKeys('C-u');
+        await this.sleep(30);
+
+        // Type the message
+        await this.sendKeysLiteral(injection);
+        await this.sleep(50);
+
+        // Submit
+        await this.sendKeys('Enter');
+        this.logStderr(`Injection complete`);
+      }
 
     } catch (err: any) {
       this.logStderr(`Injection failed: ${err.message}`, true);

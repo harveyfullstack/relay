@@ -124,20 +124,68 @@ program
   .description('Real-time agent-to-agent communication system')
   .version('0.1.0');
 
+// Project info command
+program
+  .command('project')
+  .description('Show project paths and info')
+  .option('--list', 'List all known projects')
+  .option('--global', 'Show global (non-project) paths')
+  .action(async (options) => {
+    const { getProjectPaths, getGlobalPaths, listProjects } = await import('../utils/project-namespace.js');
+
+    if (options.list) {
+      const projects = listProjects();
+      if (projects.length === 0) {
+        console.log('No projects found.');
+        return;
+      }
+      console.log('Known projects:\n');
+      for (const p of projects) {
+        console.log(`  ${p.projectId}`);
+        console.log(`    Root: ${p.projectRoot}`);
+        console.log(`    Data: ${p.dataDir}`);
+        console.log('');
+      }
+      return;
+    }
+
+    const paths = options.global ? getGlobalPaths() : getProjectPaths();
+
+    console.log('Project Paths:\n');
+    console.log(`  Project Root: ${paths.projectRoot}`);
+    console.log(`  Project ID:   ${paths.projectId}`);
+    console.log(`  Data Dir:     ${paths.dataDir}`);
+    console.log(`  Team Dir:     ${paths.teamDir}`);
+    console.log(`  Database:     ${paths.dbPath}`);
+    console.log(`  Socket:       ${paths.socketPath}`);
+  });
+
 // Start daemon
 program
   .command('start')
   .description('Start the relay daemon')
-  .option('-s, --socket <path>', 'Socket path', DEFAULT_SOCKET_PATH)
+  .option('-s, --socket <path>', 'Socket path (auto-detected from project if not set)')
   .option('-f, --foreground', 'Run in foreground', false)
-  .option('--db-path <path>', 'SQLite DB path for message storage (defaults near socket)')
+  .option('--db-path <path>', 'SQLite DB path for message storage (auto-detected from project if not set)')
+  .option('--global', 'Use global paths instead of project-specific paths', false)
   .action(async (options) => {
-    const socketPath = options.socket as string;
+    const { ensureProjectDir, getGlobalPaths } = await import('../utils/project-namespace.js');
+
+    // Get paths - project-specific by default, global if --global flag
+    const paths = options.global ? getGlobalPaths() : ensureProjectDir();
+
+    const socketPath = options.socket ?? paths.socketPath;
+    const dbPath = options.dbPath ?? paths.dbPath;
     const pidFilePath = pidFilePathForSocket(socketPath);
+
+    console.log(`Project: ${paths.projectRoot}`);
+    console.log(`Socket:  ${socketPath}`);
+    console.log(`DB:      ${dbPath}`);
+
     const daemon = new Daemon({
       socketPath,
       pidFilePath,
-      storagePath: options.dbPath ?? undefined,
+      storagePath: dbPath,
     });
 
     // Handle shutdown
@@ -170,16 +218,21 @@ program
 program
   .command('stop')
   .description('Stop the relay daemon (and background supervisor if running)')
-  .option('-s, --socket <path>', 'Socket path', DEFAULT_SOCKET_PATH)
-  .option('-d, --data-dir <path>', 'Data directory (for supervisor pidfile)', '/tmp/agent-relay')
+  .option('-s, --socket <path>', 'Socket path (auto-detected from project if not set)')
+  .option('-d, --data-dir <path>', 'Data directory (auto-detected from project if not set)')
+  .option('--global', 'Use global paths instead of project-specific paths', false)
   .option('--daemon-only', 'Only stop the daemon (leave supervisor running)', false)
   .action(async (options) => {
-    const socketPath = options.socket as string;
+    const { getProjectPaths, getGlobalPaths } = await import('../utils/project-namespace.js');
+    const paths = options.global ? getGlobalPaths() : getProjectPaths();
+
+    const socketPath = options.socket ?? paths.socketPath;
+    const dataDir = options.dataDir ?? paths.dataDir;
     const pidFilePath = pidFilePathForSocket(socketPath);
 
     // Stop supervisor first (best-effort) so it doesn't keep spawning while daemon stops.
     if (!options.daemonOnly) {
-      const res = stopDetachedSupervisor(options.dataDir);
+      const res = stopDetachedSupervisor(dataDir);
       if (res.pid) {
         console.log(`Supervisor stop requested (pid ${res.pid})`);
       }
@@ -229,7 +282,7 @@ program
   .command('wrap')
   .description('Wrap an agent CLI command')
   .option('-n, --name <name>', 'Agent name (auto-generated if not provided)')
-  .option('-s, --socket <path>', 'Socket path', DEFAULT_SOCKET_PATH)
+  .option('-s, --socket <path>', 'Socket path (auto-detected from project if not set)')
   .option('-r, --raw', 'Raw mode - bypass parsing for terminal-heavy CLIs', false)
   .option('--pty', 'Use direct PTY mode (legacy)', false)
   .option('-t, --tmux', 'Use tmux for message injection (old implementation)', false)
@@ -237,17 +290,28 @@ program
   .option('--log-interval <ms>', 'Throttle debug logs (ms)', (val) => parseInt(val, 10))
   .option('--inject-idle-ms <ms>', 'Idle time before injecting messages (ms)', (val) => parseInt(val, 10))
   .option('--inject-retry-ms <ms>', 'Retry interval while waiting to inject (ms)', (val) => parseInt(val, 10))
+  .option('--cli-type <type>', 'CLI type for special handling: claude, codex, gemini, other (auto-detected if not set)')
+  .option('--no-mouse', 'Disable tmux mouse mode (scroll passthrough)', false)
   .option('-o, --osascript', 'Use osascript for OS-level keyboard simulation (macOS)', false)
   .option('-i, --inbox', 'Use file-based inbox (agent reads messages from file)', false)
-  .option('--inbox-dir <path>', 'Custom inbox directory', '/tmp/agent-relay')
+  .option('--inbox-dir <path>', 'Custom inbox directory (auto-detected from project if not set)')
+  .option('--global', 'Use global paths instead of project-specific paths', false)
   .argument('<command...>', 'Command to wrap')
   .action(async (commandParts, options) => {
+    const { getProjectPaths, getGlobalPaths } = await import('../utils/project-namespace.js');
+    const paths = options.global ? getGlobalPaths() : getProjectPaths();
+
     // For tmux2, we need to preserve args separately for proper quoting
     const [mainCommand, ...commandArgs] = commandParts;
     const command = commandParts.join(' ');
 
+    // Use project-specific paths if not explicitly set
+    const socketPath = options.socket ?? paths.socketPath;
+    const inboxDir = options.inboxDir ?? paths.dataDir;
+
     // Auto-generate name if not provided
     const agentName = options.name ?? generateAgentName();
+    process.stderr.write(`Project: ${paths.projectRoot} (${paths.projectId})\n`);
     process.stderr.write(`Agent name: ${agentName}\n`);
     // Determine mode - tmux is now the default
     const usePty = options.pty || options.tmux || options.osascript;
@@ -279,13 +343,15 @@ program
         name: agentName,
         command: mainCommand,
         args: commandArgs,
-        socketPath: options.socket,
+        socketPath,
         useInbox: options.inbox,
-        inboxDir: options.inboxDir,
+        inboxDir,
         debug: !options.quiet,
         debugLogIntervalMs: options.logInterval,
         idleBeforeInjectMs: options.injectIdleMs,
         injectRetryMs: options.injectRetryMs,
+        cliType: options.cliType,
+        mouseMode: options.mouse !== false, // --no-mouse disables
       });
 
       // Handle shutdown
@@ -950,8 +1016,11 @@ program
   .description('Create a complete team from a JSON config file or inline JSON')
   .option('-f, --file <path>', 'Path to JSON config file')
   .option('-c, --config <json>', 'Inline JSON config')
-  .option('-d, --data-dir <path>', 'Team data directory', '/tmp/agent-relay-team')
-  .action((options) => {
+  .option('-d, --data-dir <path>', 'Team data directory (auto-detected from project if not set)')
+  .option('--global', 'Use global paths instead of project-specific paths', false)
+  .action(async (options) => {
+    const { ensureProjectDir, getGlobalPaths } = await import('../utils/project-namespace.js');
+
     interface AgentConfig {
       name: string;
       cli: string;
@@ -979,8 +1048,13 @@ program
       process.exit(1);
     }
 
-    const teamDir = options.dataDir;
-    const projectDir = config.project || process.cwd();
+    // Get paths - project-specific by default
+    const paths = options.global ? getGlobalPaths() : ensureProjectDir();
+    const teamDir = options.dataDir ?? paths.teamDir;
+    const projectDir = config.project || paths.projectRoot;
+
+    console.log(`Project: ${projectDir}`);
+    console.log(`Team Dir: ${teamDir}`);
 
     // Create team config
     fs.mkdirSync(teamDir, { recursive: true });
@@ -1318,16 +1392,68 @@ program
     }
   });
 
+// Read a message by ID from the database
+program
+  .command('msg-read')
+  .description('Read a message by ID from the database')
+  .argument('<id>', 'Message ID')
+  .option('--db-path <path>', 'Database path', '/tmp/agent-relay.sqlite')
+  .action(async (id, options) => {
+    const { createStorageAdapter } = await import('../storage/adapter.js');
+    const adapter = await createStorageAdapter(options.dbPath);
+
+    // Use getMessageById if available, otherwise fall back to getMessages
+    let message;
+    if (adapter.getMessageById) {
+      message = await adapter.getMessageById(id);
+    } else {
+      const messages = await adapter.getMessages({ limit: 1000 });
+      message = messages.find(m => m.id === id);
+    }
+
+    if (!message) {
+      console.error(`Message not found: ${id}`);
+      process.exit(1);
+    }
+
+    console.log('---');
+    console.log(`ID: ${message.id}`);
+    console.log(`From: ${message.from}`);
+    console.log(`To: ${message.to}`);
+    console.log(`Time: ${new Date(message.ts).toISOString()}`);
+    console.log(`Kind: ${message.kind}`);
+    if (message.topic) console.log(`Topic: ${message.topic}`);
+    console.log('---');
+    console.log(message.body);
+    console.log('---');
+    if (message.data) {
+      console.log('Data:', JSON.stringify(message.data, null, 2));
+    }
+
+    if (adapter.close) await adapter.close();
+  });
+
 // Dashboard command
 program
   .command('dashboard')
   .description('Start the web dashboard')
   .option('-p, --port <number>', 'Port to run on', DEFAULT_DASHBOARD_PORT)
-  .option('-d, --data-dir <path>', 'Team data directory', '/tmp/agent-relay-team')
-  .option('--db-path <path>', 'SQLite DB path for message storage', '/tmp/agent-relay.sqlite')
+  .option('-d, --data-dir <path>', 'Team data directory (auto-detected from project if not set)')
+  .option('--db-path <path>', 'SQLite DB path (auto-detected from project if not set)')
+  .option('--global', 'Use global paths instead of project-specific paths', false)
   .action(async (options) => {
+    const { getProjectPaths, getGlobalPaths } = await import('../utils/project-namespace.js');
+    const paths = options.global ? getGlobalPaths() : getProjectPaths();
+
+    const dataDir = options.dataDir ?? paths.teamDir;
+    const dbPath = options.dbPath ?? paths.dbPath;
+
+    console.log(`Project:   ${paths.projectRoot}`);
+    console.log(`Team Dir:  ${dataDir}`);
+    console.log(`Database:  ${dbPath}`);
+
     const { startDashboard } = await import('../dashboard/server.js');
-    await startDashboard(parseInt(options.port, 10), options.dataDir, options.dbPath);
+    await startDashboard(parseInt(options.port, 10), dataDir, dbPath);
   });
 
 // Team listen daemon - watches inboxes and spawns agents when messages arrive

@@ -51,7 +51,7 @@ export class RelayClient {
   private _destroyed = false;
 
   // Event handlers
-  onMessage?: (from: string, payload: SendPayload) => void;
+  onMessage?: (from: string, payload: SendPayload, messageId: string) => void;
   onStateChange?: (state: ClientState) => void;
   onError?: (error: Error) => void;
 
@@ -311,7 +311,7 @@ export class RelayClient {
 
     // Notify handler
     if (this.onMessage && envelope.from) {
-      this.onMessage(envelope.from, envelope.payload);
+      this.onMessage(envelope.from, envelope.payload, envelope.id);
     }
   }
 

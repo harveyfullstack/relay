@@ -127,6 +127,35 @@ export class SqliteStorageAdapter implements StorageAdapter {
     }));
   }
 
+  async getMessageById(id: string): Promise<StoredMessage | null> {
+    if (!this.db) {
+      throw new Error('SqliteStorageAdapter not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      SELECT id, ts, sender, recipient, topic, kind, body, data, delivery_seq, delivery_session_id, session_id
+      FROM messages
+      WHERE id = ?
+    `);
+
+    const row: any = stmt.get(id);
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      ts: row.ts,
+      from: row.sender,
+      to: row.recipient,
+      topic: row.topic ?? undefined,
+      kind: row.kind,
+      body: row.body,
+      data: row.data ? JSON.parse(row.data) : undefined,
+      deliverySeq: row.delivery_seq ?? undefined,
+      deliverySessionId: row.delivery_session_id ?? undefined,
+      sessionId: row.session_id ?? undefined,
+    };
+  }
+
   async close(): Promise<void> {
     if (this.db) {
       this.db.close();
