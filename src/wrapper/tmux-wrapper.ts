@@ -422,7 +422,6 @@ export class TmuxWrapper {
 
       // Send any commands found (deduplication handles repeats)
       for (const cmd of commands) {
-        this.logStderr(`Found relay command: to=${cmd.to} body=${cmd.body.substring(0, 50)}...`);
         this.sendRelayCommand(cmd);
       }
 
@@ -520,19 +519,18 @@ export class TmuxWrapper {
   private sendRelayCommand(cmd: ParsedCommand): void {
     const msgHash = `${cmd.to}:${cmd.body}`;
 
-    // Permanent dedup - never send the same message twice
+    // Permanent dedup - never send the same message twice (silent)
     if (this.sentMessageHashes.has(msgHash)) {
-      this.logStderr(`Skipping duplicate: ${cmd.to}`);
       return;
     }
 
-    this.logStderr(`Attempting to send to ${cmd.to}, client state: ${this.client.state}`);
     const success = this.client.sendMessage(cmd.to, cmd.body, cmd.kind, cmd.data);
     if (success) {
       this.sentMessageHashes.add(msgHash);
-      this.logStderr(`→ ${cmd.to}: ${cmd.body.substring(0, 40)}...`);
-    } else {
-      this.logStderr(`Failed to send to ${cmd.to} (client state: ${this.client.state})`);
+      this.logStderr(`→ ${cmd.to}: ${cmd.body.substring(0, 50)}...`);
+    } else if (this.client.state !== 'READY') {
+      // Only log failure once per state change
+      this.logStderr(`Send failed (client ${this.client.state})`);
     }
   }
 
