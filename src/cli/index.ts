@@ -5,6 +5,7 @@
  */
 
 import { Command } from 'commander';
+import { config as dotenvConfig } from 'dotenv';
 import { Daemon, DEFAULT_SOCKET_PATH } from '../daemon/server.js';
 import { RelayClient } from '../wrapper/client.js';
 import { generateAgentName } from '../utils/name-generator.js';
@@ -14,6 +15,12 @@ import type { CLIType } from '../supervisor/types.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+
+// Load .env file if present
+dotenvConfig();
+
+// Default dashboard port (can be overridden via .env or CLI)
+const DEFAULT_DASHBOARD_PORT = process.env.AGENT_RELAY_DASHBOARD_PORT || '3888';
 
 const program = new Command();
 
@@ -123,10 +130,15 @@ program
   .description('Start the relay daemon')
   .option('-s, --socket <path>', 'Socket path', DEFAULT_SOCKET_PATH)
   .option('-f, --foreground', 'Run in foreground', false)
+  .option('--db-path <path>', 'SQLite DB path for message storage (defaults near socket)')
   .action(async (options) => {
     const socketPath = options.socket as string;
     const pidFilePath = pidFilePathForSocket(socketPath);
-    const daemon = new Daemon({ socketPath, pidFilePath });
+    const daemon = new Daemon({
+      socketPath,
+      pidFilePath,
+      storagePath: options.dbPath ?? undefined,
+    });
 
     // Handle shutdown
     process.on('SIGINT', async () => {
@@ -376,9 +388,10 @@ program
       } else {
         console.error('Failed to send message');
       }
-      // Wait a bit for delivery
-      await new Promise((r) => setTimeout(r, 500));
-      client.disconnect();
+      // Wait a bit for delivery then exit cleanly
+      await new Promise((r) => setTimeout(r, 200));
+      client.destroy();
+      process.exit(0);
     } catch (err) {
       console.error('Error:', err);
       process.exit(1);
@@ -1306,11 +1319,12 @@ program
 program
   .command('dashboard')
   .description('Start the web dashboard')
-  .option('-p, --port <number>', 'Port to run on', '3456')
+  .option('-p, --port <number>', 'Port to run on', DEFAULT_DASHBOARD_PORT)
   .option('-d, --data-dir <path>', 'Team data directory', '/tmp/agent-relay-team')
+  .option('--db-path <path>', 'SQLite DB path for message storage', '/tmp/agent-relay.sqlite')
   .action(async (options) => {
     const { startDashboard } = await import('../dashboard/server.js');
-    await startDashboard(parseInt(options.port, 10), options.dataDir);
+    await startDashboard(parseInt(options.port, 10), options.dataDir, options.dbPath);
   });
 
 // Team listen daemon - watches inboxes and spawns agents when messages arrive
@@ -1649,7 +1663,7 @@ node ${projectDir}/dist/cli/index.js team-send -n ${agent.name} -t "*" -m "messa
 
           // Small delay between opening windows
           await new Promise(r => setTimeout(r, 500));
-        } catch (err) {
+        } catch (_err) {
           // Fallback: try iTerm2
           try {
             const iTermScript = `
@@ -1719,7 +1733,7 @@ NEW MESSAGES! Read ${instructionsPath}, check inbox, respond, do one task, broad
           stdio: 'inherit',
         });
         child.on('exit', () => console.log(`   ← ${agent.name} exited`));
-      } catch (err) {
+      } catch (_err) {
         console.error(`   ✗ Failed to spawn ${agent.name}`);
       }
     };

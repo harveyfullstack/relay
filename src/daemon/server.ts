@@ -9,10 +9,14 @@ import path from 'node:path';
 import { Connection, type ConnectionConfig, DEFAULT_CONFIG } from './connection.js';
 import { Router } from './router.js';
 import type { Envelope, SendPayload } from '../protocol/types.js';
+import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
+import type { StorageAdapter } from '../storage/adapter.js';
 
 export interface DaemonConfig extends ConnectionConfig {
   socketPath: string;
   pidFilePath: string;
+  storagePath?: string;
+  storageAdapter?: StorageAdapter;
 }
 
 export const DEFAULT_SOCKET_PATH = '/tmp/agent-relay.sock';
@@ -29,13 +33,16 @@ export class Daemon {
   private config: DaemonConfig;
   private running = false;
   private connections: Set<Connection> = new Set();
+  private storage?: StorageAdapter;
 
   constructor(config: Partial<DaemonConfig> = {}) {
     this.config = { ...DEFAULT_DAEMON_CONFIG, ...config };
     if (config.socketPath && !config.pidFilePath) {
       this.config.pidFilePath = `${config.socketPath}.pid`;
     }
-    this.router = new Router();
+    const storagePath = this.config.storagePath ?? path.join(path.dirname(this.config.socketPath), 'agent-relay.sqlite');
+    this.storage = this.config.storageAdapter ?? new SqliteStorageAdapter({ dbPath: storagePath });
+    this.router = new Router({ storage: this.storage });
     this.server = net.createServer(this.handleConnection.bind(this));
   }
 
@@ -44,6 +51,11 @@ export class Daemon {
    */
   async start(): Promise<void> {
     if (this.running) return;
+
+    // Initialize storage
+    if (this.storage) {
+      await this.storage.init();
+    }
 
     // Clean up stale socket (only if it's actually a socket)
     if (fs.existsSync(this.config.socketPath)) {
@@ -97,6 +109,11 @@ export class Daemon {
         // Clean up pid file
         if (fs.existsSync(this.config.pidFilePath)) {
           fs.unlinkSync(this.config.pidFilePath);
+        }
+        if (this.storage?.close) {
+          this.storage.close().catch((err) => {
+            console.error('[daemon] Failed to close storage', err);
+          });
         }
         console.log('[daemon] Stopped');
         resolve();

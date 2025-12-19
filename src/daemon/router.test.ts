@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Router } from './router.js';
 import type { Connection } from './connection.js';
+import type { StorageAdapter, StoredMessage } from '../storage/adapter.js';
 import type { Envelope, SendPayload, DeliverEnvelope } from '../protocol/types.js';
 
 /**
@@ -74,9 +75,17 @@ function createSendEnvelope(from: string, to: string, topic?: string): Envelope<
 
 describe('Router', () => {
   let router: Router;
+  let storage: StorageAdapter;
+  let saved: StoredMessage[];
 
   beforeEach(() => {
-    router = new Router();
+    saved = [];
+    storage = {
+      init: async () => {},
+      saveMessage: async (message) => { saved.push(message); },
+      getMessages: async () => saved,
+    };
+    router = new Router({ storage });
   });
 
   describe('Registration', () => {
@@ -787,6 +796,44 @@ describe('Router', () => {
       router.route(sender, envelope);
 
       expect(subscriber.sendMock).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('Persistence', () => {
+    it('persists delivered direct messages', () => {
+      const fromConn = new MockConnection('from-1', 'agentA');
+      const toConn = new MockConnection('to-1', 'agentB');
+      router.register(fromConn);
+      router.register(toConn);
+
+      const envelope = createSendEnvelope('agentA', 'agentB', 'topic1');
+      router.route(fromConn, envelope);
+
+      expect(saved).toHaveLength(1);
+      expect(saved[0]).toMatchObject({
+        from: 'agentA',
+        to: 'agentB',
+        topic: 'topic1',
+        body: 'test message',
+      });
+    });
+
+    it('persists broadcast deliveries to subscribers', () => {
+      const sender = new MockConnection('sender', 'agentA');
+      const sub1 = new MockConnection('sub1', 'agentB');
+      const sub2 = new MockConnection('sub2', 'agentC');
+      router.register(sender);
+      router.register(sub1);
+      router.register(sub2);
+      router.subscribe('agentB', 'topic1');
+      router.subscribe('agentC', 'topic1');
+
+      const envelope = createSendEnvelope('agentA', '*', 'topic1');
+      router.route(sender, envelope);
+
+      expect(saved).toHaveLength(2);
+      const recipients = saved.map(s => s.to).sort();
+      expect(recipients).toEqual(['agentB', 'agentC']);
     });
   });
 });

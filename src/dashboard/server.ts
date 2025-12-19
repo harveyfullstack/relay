@@ -4,6 +4,8 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
+import type { StorageAdapter, StoredMessage } from '../storage/adapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,11 +27,14 @@ interface Message {
   id: string; // unique-ish id
 }
 
-export function startDashboard(port: number, dataDir: string): Promise<void> {
+export async function startDashboard(port: number, dataDir: string, dbPath?: string): Promise<void> {
   console.log('Starting dashboard...');
   console.log('__dirname:', __dirname);
   const publicDir = path.join(__dirname, 'public');
   console.log('Public dir:', publicDir);
+  const storage: StorageAdapter | undefined = dbPath
+    ? new SqliteStorageAdapter({ dbPath })
+    : undefined;
 
   process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err);
@@ -42,6 +47,9 @@ export function startDashboard(port: number, dataDir: string): Promise<void> {
   const app = express();
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
+  if (storage) {
+    await storage.init();
+  }
 
   // Serve static files from public directory
   app.use(express.static(publicDir));
@@ -76,7 +84,7 @@ export function startDashboard(port: number, dataDir: string): Promise<void> {
         if (firstLineEnd === -1) return;
         
         const header = part.substring(0, firstLineEnd).trim(); // "Sender | Timestamp" or just "Sender"
-        let body = part.substring(firstLineEnd).trim();
+        const body = part.substring(firstLineEnd).trim();
         
         // Handle potential " | " in header
         let sender = header;
@@ -103,12 +111,37 @@ export function startDashboard(port: number, dataDir: string): Promise<void> {
     }
   };
 
-  const getAllData = () => {
+  const mapStoredMessages = (rows: StoredMessage[]): Message[] => rows
+    .map((row) => ({
+      from: row.from,
+      to: row.to,
+      content: row.body,
+      timestamp: new Date(row.ts).toISOString(),
+      id: row.id,
+    }));
+
+  const getMessages = async (agents: any[]): Promise<Message[]> => {
+    if (storage) {
+      const rows = await storage.getMessages({ limit: 500, order: 'desc' });
+      // Dashboard expects oldest first
+      return mapStoredMessages(rows).reverse();
+    }
+
+    // Fallback to file-based inbox parsing
+    let allMessages: Message[] = [];
+    agents.forEach((a: any) => {
+      const msgs = parseInbox(a.name);
+      allMessages = [...allMessages, ...msgs];
+    });
+    return allMessages;
+  };
+
+  const getAllData = async () => {
     const team = getTeamData();
     if (!team) return { agents: [], messages: [], activity: [] };
 
     const agentsMap = new Map<string, AgentStatus>();
-    let allMessages: Message[] = [];
+    const allMessages: Message[] = await getMessages(team.agents);
 
     // Initialize agents from config
     team.agents.forEach((a: any) => {
@@ -121,23 +154,20 @@ export function startDashboard(port: number, dataDir: string): Promise<void> {
       });
     });
 
-    // Collect messages
-    team.agents.forEach((a: any) => {
-      const msgs = parseInbox(a.name);
-      
-      // Update inbox count
-      const agent = agentsMap.get(a.name);
-      if (agent) {
-        agent.messageCount = msgs.length;
+    // Update inbox counts if fallback mode; if storage, count messages addressed to agent
+    if (storage) {
+      for (const msg of allMessages) {
+        const agent = agentsMap.get(msg.to);
+        if (agent) {
+          agent.messageCount = (agent.messageCount ?? 0) + 1;
+        }
       }
-
-      allMessages = [...allMessages, ...msgs];
-    });
-
-    // Sort by timestamp
-    allMessages.sort((a, b) => {
-      return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-    });
+    } else {
+      // Sort by timestamp
+      allMessages.sort((a, b) => {
+        return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      });
+    }
 
     // Derive status from messages sent BY agents
     // We scan all messages; if M is from A, we check if it is a STATUS message
@@ -158,8 +188,8 @@ export function startDashboard(port: number, dataDir: string): Promise<void> {
     };
   };
 
-  const broadcastData = () => {
-    const data = getAllData();
+  const broadcastData = async () => {
+    const data = await getAllData();
     const payload = JSON.stringify(data);
     wss.clients.forEach(client => {
       if (client.readyState === WebSocket.OPEN) {
@@ -169,29 +199,38 @@ export function startDashboard(port: number, dataDir: string): Promise<void> {
   };
 
   app.get('/api/data', (req, res) => {
-    res.json(getAllData());
+    getAllData().then((data) => res.json(data)).catch((err) => {
+      console.error('Failed to fetch dashboard data', err);
+      res.status(500).json({ error: 'Failed to load data' });
+    });
   });
 
   // Watch for changes
-  let fsWait: NodeJS.Timeout | null = null;
-  try {
-    if (fs.existsSync(dataDir)) {
-        console.log(`Watching ${dataDir} for changes...`);
-        fs.watch(dataDir, { recursive: true }, (eventType, filename) => {
-            if (filename && (filename.endsWith('inbox.md') || filename.endsWith('team.json'))) {
-                // Debounce
-                if (fsWait) return;
-                fsWait = setTimeout(() => {
-                    fsWait = null;
-                    broadcastData();
-                }, 100);
-            }
-        });
-    } else {
-        console.warn(`Data directory ${dataDir} does not exist yet.`);
+  if (storage) {
+    setInterval(() => {
+      broadcastData().catch((err) => console.error('Broadcast failed', err));
+    }, 1000);
+  } else {
+    let fsWait: NodeJS.Timeout | null = null;
+    try {
+      if (fs.existsSync(dataDir)) {
+          console.log(`Watching ${dataDir} for changes...`);
+          fs.watch(dataDir, { recursive: true }, (eventType, filename) => {
+              if (filename && (filename.endsWith('inbox.md') || filename.endsWith('team.json'))) {
+                  // Debounce
+                  if (fsWait) return;
+                  fsWait = setTimeout(() => {
+                      fsWait = null;
+                      broadcastData();
+                  }, 100);
+              }
+          });
+      } else {
+          console.warn(`Data directory ${dataDir} does not exist yet.`);
+      }
+    } catch (e) {
+      console.error('Watch failed:', e);
     }
-  } catch (e) {
-    console.error('Watch failed:', e);
   }
 
   return new Promise((resolve, reject) => {

@@ -146,9 +146,7 @@ describe('InboxManager', () => {
       });
       manager.init();
 
-      const before = new Date().toISOString().substring(0, 10);
       manager.addMessage('Sender', 'Test');
-      const after = new Date().toISOString().substring(0, 10);
 
       const content = fs.readFileSync(manager.getInboxPath(), 'utf-8');
       // Check timestamp is present (at least the date part)

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { OutputParser, formatIncomingMessage, type ParsedCommand } from './parser.js';
+import { OutputParser, formatIncomingMessage } from './parser.js';
 
 describe('OutputParser', () => {
   let parser: OutputParser;

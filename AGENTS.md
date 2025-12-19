@@ -12,6 +12,32 @@ This project uses [agent-relay](https://github.com/khaliqgant/agent-relay) for r
 
 ---
 
+## Quick Start: Tmux Wrapper (Recommended)
+
+Use the new tmux wrapper for real-time messaging without PTY attachment:
+
+```bash
+# Start daemon (if not already running)
+agent-relay start -f
+
+# Wrap your agent with tmux2 (real-time)
+agent-relay wrap --tmux2 -n PlayerX -- claude
+agent-relay wrap --tmux2 -n PlayerO -- claude
+```
+
+### Tmux2 tuning flags
+- `--tmux2-quiet` — disable tmux wrapper debug logs (stderr)
+- `--tmux2-log-interval <ms>` — throttle debug log frequency
+- `--tmux2-inject-idle-ms <ms>` — idle time before injecting messages (default 1500ms)
+- `--tmux2-inject-retry-ms <ms>` — retry cadence while waiting to inject (default 500ms)
+
+### Why tmux2?
+- Real terminal: you attach directly to tmux (no double PTY).
+- Background capture/parse of `@relay:` without touching stdout.
+- Reliable injection via `tmux send-keys`.
+
+---
+
 ## IMPORTANT: Team Communication (Current Session)
 
 If you have an INSTRUCTIONS.md file in `/tmp/agent-relay-team/{YourName}/`, use these commands:

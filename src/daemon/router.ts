@@ -10,6 +10,7 @@ import {
   type DeliverEnvelope,
   PROTOCOL_VERSION,
 } from '../protocol/types.js';
+import type { StorageAdapter } from '../storage/adapter.js';
 
 export interface RoutableConnection {
   id: string;
@@ -21,9 +22,14 @@ export interface RoutableConnection {
 }
 
 export class Router {
+  private storage?: StorageAdapter;
   private connections: Map<string, RoutableConnection> = new Map(); // connectionId -> Connection
   private agents: Map<string, RoutableConnection> = new Map(); // agentName -> Connection
   private subscriptions: Map<string, Set<string>> = new Map(); // topic -> Set<agentName>
+
+  constructor(options: { storage?: StorageAdapter } = {}) {
+    this.storage = options.storage;
+  }
 
   /**
    * Register a connection after successful handshake.
@@ -126,6 +132,7 @@ export class Router {
     const deliver = this.createDeliverEnvelope(from, to, envelope, target);
     const sent = target.send(deliver);
     console.log(`[router] Delivered to ${to}: ${sent ? 'success' : 'failed'}`);
+    this.persistDeliverEnvelope(deliver);
     return sent;
   }
 
@@ -148,6 +155,7 @@ export class Router {
       if (target) {
         const deliver = this.createDeliverEnvelope(from, agentName, envelope, target);
         target.send(deliver);
+        this.persistDeliverEnvelope(deliver);
       }
     }
   }
@@ -175,6 +183,29 @@ export class Router {
         session_id: target.sessionId,
       },
     };
+  }
+
+  /**
+   * Persist a delivered message if storage is configured.
+   */
+  private persistDeliverEnvelope(envelope: DeliverEnvelope): void {
+    if (!this.storage) return;
+
+    this.storage.saveMessage({
+      id: envelope.id,
+      ts: envelope.ts,
+      from: envelope.from ?? 'unknown',
+      to: envelope.to ?? 'unknown',
+      topic: envelope.topic,
+      kind: envelope.payload.kind,
+      body: envelope.payload.body,
+      data: envelope.payload.data,
+      deliverySeq: envelope.delivery.seq,
+      deliverySessionId: envelope.delivery.session_id,
+      sessionId: envelope.delivery.session_id,
+    }).catch((err) => {
+      console.error('[router] Failed to persist message', err);
+    });
   }
 
   /**
