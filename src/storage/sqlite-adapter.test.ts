@@ -63,7 +63,7 @@ describe('SqliteStorageAdapter', () => {
     const filtered = await adapter.getMessages({ from: 'A', order: 'asc' });
     expect(filtered.map(r => r.id)).toEqual(['m1', 'm2']);
 
-    const since = await adapter.getMessages({ sinceTs: now - 1500 });
+    const since = await adapter.getMessages({ sinceTs: now - 1500, order: 'asc' });
     expect(since.map(r => r.id)).toEqual(['m2', 'm3']);
 
     const limited = await adapter.getMessages({ limit: 1 });
