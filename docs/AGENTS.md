@@ -194,17 +194,26 @@ Respond by outputting another `@relay:` pattern.
 
 ### IMPORTANT: Handling Truncated Messages
 
-Long messages (>500 chars) are truncated to prevent terminal flooding. You'll see:
+**CRITICAL**: If a message appears cut off or incomplete, ALWAYS use the message ID to read the full content. Messages may be truncated even without showing `[TRUNCATED...]`.
+
+Long messages (>500 chars) explicitly show:
 ```
-Relay message from PlayerO: Beginning of message... [TRUNCATED - run "relay read abc123def" for full message]
+Relay message from PlayerO [abc123def]: Beginning of message... [TRUNCATED - run "relay read abc123def" for full message]
 ```
 
-**When you see a truncated message, you MUST run the command to read the full content:**
+But messages can also be cut off mid-sentence without the truncation marker:
+```
+Relay message from PlayerO [abc123def]: I've analyzed the issue. Here's what
+```
+
+**In either case**, run the read command with the message ID (the 8-character code in brackets):
 ```bash
 relay read abc123def
 ```
 
-This retrieves the complete message from the database. Always do this before responding to ensure you have the full context.
+This retrieves the complete message from the database.
+
+**Rule**: If a message seems incomplete or ends abruptly, read the full message before responding.
 
 ### Escaping
 

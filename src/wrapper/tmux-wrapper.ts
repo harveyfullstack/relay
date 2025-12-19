@@ -265,12 +265,37 @@ export class TmuxWrapper {
 
     this.running = true;
 
+    // Inject instructions for the agent (after a delay to let CLI initialize)
+    setTimeout(() => this.injectInstructions(), 3000);
+
     // Start background polling (silent - no stdout writes)
     this.startSilentPolling();
 
     // Attach user to tmux session
     // This takes over stdin/stdout - user sees the real terminal
     this.attachToSession();
+  }
+
+  /**
+   * Inject usage instructions for the agent
+   */
+  private async injectInstructions(): Promise<void> {
+    if (!this.running) return;
+
+    const instructions = [
+      `[Agent Relay] You are "${this.config.name}" - connected for real-time messaging.`,
+      `SEND: @relay:AgentName message (or @relay:* to broadcast)`,
+      `RECEIVE: "Relay message from X [id]: content"`,
+      `TRUNCATED: Run "agent-relay read <id>" if message seems cut off`,
+    ].join(' | ');
+
+    try {
+      await this.sendKeysLiteral(instructions);
+      await this.sleep(50);
+      await this.sendKeys('Enter');
+    } catch {
+      // Silent fail - instructions are nice-to-have
+    }
   }
 
   /**
@@ -303,7 +328,8 @@ export class TmuxWrapper {
     while (Date.now() - startTime < maxWaitMs) {
       try {
         const { stdout } = await execAsync(
-          `tmux capture-pane -t ${this.sessionName} -p 2>/dev/null`
+          // -J joins wrapped lines so long prompts/messages stay intact
+          `tmux capture-pane -t ${this.sessionName} -p -J 2>/dev/null`
         );
 
         // Check if the last non-empty line looks like a prompt
@@ -377,7 +403,8 @@ export class TmuxWrapper {
     try {
       // Capture scrollback
       const { stdout } = await execAsync(
-        `tmux capture-pane -t ${this.sessionName} -p -S - 2>/dev/null`
+        // -J joins wrapped lines to avoid truncating @relay commands mid-line
+        `tmux capture-pane -t ${this.sessionName} -p -J -S - 2>/dev/null`
       );
 
       // Always parse the FULL capture for @relay commands
@@ -412,6 +439,19 @@ export class TmuxWrapper {
   private stripAnsi(str: string): string {
     // eslint-disable-next-line no-control-regex
     return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
+  }
+
+  /**
+   * Escape string for ANSI-C quoting ($'...')
+   * This handles special characters more reliably than mixing quote styles
+   */
+  private escapeForAnsiC(str: string): string {
+    return str
+      .replace(/\\/g, '\\\\')     // Backslash
+      .replace(/'/g, "\\'")       // Single quote
+      .replace(/\n/g, '\\n')      // Newline
+      .replace(/\r/g, '\\r')      // Carriage return
+      .replace(/\t/g, '\\t');     // Tab
   }
 
   /**
@@ -498,11 +538,13 @@ export class TmuxWrapper {
 
       // Gemini CLI interprets input as shell commands, so we need special handling
       if (this.cliType === 'gemini') {
-        // For Gemini: Use echo with single quotes to avoid complex escaping
-        // Single quotes only need to escape single quotes themselves: ' -> '\''
-        const safeBody = sanitizedBody.replace(/'/g, "'\\''");
-        const safeHint = truncationHint.replace(/'/g, "'\\''");
-        const echoMsg = `echo '[relay ${idTag} ← ${msg.from}] ${safeBody}${safeHint}'`;
+        // For Gemini: Use printf with %s to safely handle any characters
+        // printf '%s\n' 'message' - the %s treats the argument as literal string
+        // We use $'...' ANSI-C quoting which handles escapes more predictably
+        const safeBody = this.escapeForAnsiC(sanitizedBody);
+        const safeFrom = this.escapeForAnsiC(msg.from);
+        const safeHint = this.escapeForAnsiC(truncationHint);
+        const printfMsg = `printf '%s\\n' $'Relay message from ${safeFrom} ${idTag}: ${safeBody}${safeHint}'`;
 
         // Clear any partial input
         await this.sendKeys('Escape');
@@ -510,12 +552,12 @@ export class TmuxWrapper {
         await this.sendKeys('C-u');
         await this.sleep(30);
 
-        // Send echo command to display the message
-        await this.sendKeysLiteral(echoMsg);
+        // Send printf command to display the message
+        await this.sendKeysLiteral(printfMsg);
         await this.sleep(50);
         await this.sendKeys('Enter');
 
-        this.logStderr(`Injection complete (gemini echo mode)`);
+        this.logStderr(`Injection complete (gemini printf mode)`);
       } else {
         // Standard injection for Claude, Codex, etc.
         // Format: Relay message from Sender [abc12345]: content
