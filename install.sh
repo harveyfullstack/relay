@@ -42,7 +42,7 @@ install_source() {
         curl -fsSL "https://github.com/$REPO/archive/main.tar.gz" | tar -xz -C "$INSTALL_DIR" --strip-components=1
     fi
 
-    cd "$INSTALL_DIR" && npm ci && npm run build
+    cd "$INSTALL_DIR" && npm ci && npm rebuild better-sqlite3 && npm run build
 
     # Create wrapper script that runs from install dir (for node_modules resolution)
     cat > "$BIN_DIR/agent-relay" << WRAPPER
