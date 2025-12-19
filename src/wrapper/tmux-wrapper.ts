@@ -555,7 +555,13 @@ export class TmuxWrapper {
    */
   private async sendKeysLiteral(text: string): Promise<void> {
     // Escape for shell and use -l for literal
-    const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$');
+    // Must escape: \ " $ ` !
+    const escaped = text
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\$/g, '\\$')
+      .replace(/`/g, '\\`')
+      .replace(/!/g, '\\!');
     await execAsync(`tmux send-keys -t ${this.sessionName} -l "${escaped}"`);
   }
 
