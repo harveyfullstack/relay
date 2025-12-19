@@ -27,7 +27,7 @@ interface Message {
   id: string; // unique-ish id
 }
 
-export async function startDashboard(port: number, dataDir: string, dbPath?: string): Promise<void> {
+export async function startDashboard(port: number, dataDir: string, dbPath?: string): Promise<number> {
   console.log('Starting dashboard...');
   console.log('__dirname:', __dirname);
   const publicDir = path.join(__dirname, 'public');
@@ -277,12 +277,15 @@ export async function startDashboard(port: number, dataDir: string, dbPath?: str
   };
 
   const availablePort = await findAvailablePort(port);
+  if (availablePort !== port) {
+    console.log(`Requested dashboard port ${port} is busy; switching to ${availablePort}.`);
+  }
 
   return new Promise((resolve, reject) => {
     server.listen(availablePort, () => {
       console.log(`Dashboard running at http://localhost:${availablePort}`);
       console.log(`Monitoring: ${dataDir}`);
-      resolve();
+      resolve(availablePort);
     });
 
     server.on('error', (err) => {

@@ -122,8 +122,8 @@ program
       if (options.dashboard !== false) {
         const port = parseInt(options.port, 10);
         const { startDashboard } = await import('../dashboard/server.js');
-        startDashboard(port, paths.teamDir, dbPath).catch(console.error);
-        console.log(`Dashboard: http://localhost:${port}`);
+        const actualPort = await startDashboard(port, paths.teamDir, dbPath);
+        console.log(`Dashboard: http://localhost:${actualPort}`);
       }
 
       console.log('Press Ctrl+C to stop.');
