@@ -380,18 +380,304 @@ src/
 
 | Metric | Current | Target |
 |--------|---------|--------|
-| Lines of code | ~2500 | ~2000 |
-| Message types | 10 | 6 |
-| Dependencies | 12 | 10 |
-| Memory (1hr session) | Unbounded | <50MB |
-| Message detection latency | 0-200ms | 0-200ms (or <10ms with streaming) |
+| Lines of code | ~2500 | ~2800 (with TUI) |
+| Message types | 10 | 8 (added GROUP, TOPIC) |
+| Max agents | ~3 practical | 10+ comfortable |
+| Dependencies | 12 | 14 (adds blessed for TUI) |
+| Memory (1hr session) | Unbounded | <100MB (10 agents) |
+| Message detection latency | 0-200ms | 0-200ms |
 | Data persistence | Lost on reboot | Permanent |
+| Visibility | None | TUI dashboard |
+
+---
+
+## Phase 5: Multi-Agent Coordination (5-10 Agents)
+
+Scaling from 2-3 agents to 5-10 requires better visibility, organization, and coordination patterns.
+
+### 5.1 Agent Groups
+
+Group agents for targeted messaging:
+
+```bash
+# Define groups in teams.json
+{
+  "groups": {
+    "backend": ["ApiDev", "DbAdmin", "AuthService"],
+    "frontend": ["UiDev", "Stylist"],
+    "review": ["Reviewer", "QA"]
+  }
+}
+
+# Send to group
+@relay:@backend We need to refactor the user service
+# → Message delivered to ApiDev, DbAdmin, AuthService
+
+# Broadcast to all
+@relay:* Starting deployment in 5 minutes
+```
+
+**Implementation:**
+```typescript
+// In router.ts
+route(from: Connection, envelope: Envelope<SendPayload>) {
+  const to = envelope.to;
+
+  if (to === '*') {
+    this.broadcast(from, envelope);
+  } else if (to.startsWith('@')) {
+    // Group message
+    const groupName = to.slice(1);
+    const members = this.groups.get(groupName) || [];
+    for (const member of members) {
+      if (member !== from.agentName) {
+        this.sendTo(member, envelope);
+      }
+    }
+  } else {
+    this.sendTo(to, envelope);
+  }
+}
+```
+
+### 5.2 Terminal-Based Dashboard (TUI)
+
+A simple terminal UI for monitoring all agents without leaving the terminal:
+
+```bash
+agent-relay watch
+```
+
+```
+┌─ Agent Relay ──────────────────────────────────────────────┐
+│ Agents (8 connected)                                        │
+├─────────────────────────────────────────────────────────────┤
+│ ● Coordinator    idle 2m     msgs: 12↑ 8↓                  │
+│ ● ApiDev         active      msgs: 5↑ 14↓    typing...     │
+│ ● DbAdmin        active      msgs: 3↑ 6↓                   │
+│ ● AuthService    idle 45s    msgs: 2↑ 4↓                   │
+│ ● UiDev          active      msgs: 8↑ 10↓   typing...      │
+│ ● Stylist        idle 5m     msgs: 1↑ 2↓                   │
+│ ● Reviewer       active      msgs: 0↑ 15↓                  │
+│ ○ QA             offline     queued: 3                      │
+├─────────────────────────────────────────────────────────────┤
+│ Recent Messages                                             │
+│ 14:23:01 ApiDev → DbAdmin: Can you check the user table?   │
+│ 14:23:15 DbAdmin → ApiDev: Schema looks correct            │
+│ 14:23:30 Coordinator → @backend: Stand up in 5 mins        │
+│ 14:24:01 UiDev → Reviewer: PR ready for auth flow          │
+├─────────────────────────────────────────────────────────────┤
+│ [a]ttach  [s]end  [g]roups  [q]uit                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Features:**
+- Real-time agent status (active/idle/offline)
+- Message counts and queue depth
+- Recent message feed
+- Quick attach to any agent's tmux session
+- Send messages from dashboard
+
+**Implementation:** Use `blessed` or `ink` for terminal UI:
+```typescript
+// src/cli/watch.ts
+import blessed from 'blessed';
+
+const screen = blessed.screen({ smartCSR: true });
+const agentList = blessed.list({
+  parent: screen,
+  label: 'Agents',
+  // ...
+});
+
+// Subscribe to daemon events via WebSocket
+const ws = new WebSocket(`ws+unix://${socketPath}`);
+ws.on('message', (data) => {
+  const event = JSON.parse(data);
+  updateDisplay(event);
+});
+```
+
+### 5.3 Coordination Patterns
+
+#### Pattern 1: Coordinator Agent
+
+One agent orchestrates the others:
+
+```
+Coordinator
+    ├── @relay:ApiDev Implement /api/users endpoint
+    ├── @relay:DbAdmin Create users table
+    └── @relay:UiDev Build user profile page
+
+ApiDev → Coordinator: Done, endpoint at /api/users
+DbAdmin → Coordinator: Table created with schema...
+UiDev → Coordinator: Need API spec first
+
+Coordinator → UiDev: Here's the spec: GET /api/users...
+```
+
+#### Pattern 2: Pipeline
+
+Agents pass work sequentially:
+
+```
+Developer → Reviewer → QA → Deployer
+
+@relay:Reviewer PR #123 ready for review
+          ↓
+@relay:QA Review passed, ready for testing
+          ↓
+@relay:Deployer Tests passed, deploy when ready
+```
+
+#### Pattern 3: Pub/Sub Topics
+
+Agents subscribe to topics of interest:
+
+```bash
+# Agent subscribes to topic
+@relay:subscribe security-alerts
+
+# Any agent can publish
+@relay:topic:security-alerts Found SQL injection in auth.ts
+
+# All subscribers receive the message
+```
+
+**Implementation:**
+```typescript
+// Subscribe syntax
+@relay:+topic-name      # Subscribe
+@relay:-topic-name      # Unsubscribe
+@relay:#topic-name msg  # Publish to topic
+
+// In parser.ts
+const TOPIC_SUBSCRIBE = /^@relay:\+(\S+)$/;
+const TOPIC_UNSUBSCRIBE = /^@relay:-(\S+)$/;
+const TOPIC_PUBLISH = /^@relay:#(\S+)\s+(.+)$/;
+```
+
+### 5.4 Tmux Layout Helper
+
+Quickly set up multi-agent tmux layouts:
+
+```bash
+# Create tiled layout with all agents
+agent-relay layout tile
+
+# Create layout from teams.json
+agent-relay layout teams
+
+# Custom layout
+agent-relay layout grid 3x3
+```
+
+**Generated tmux layout:**
+```
+┌─────────────┬─────────────┬─────────────┐
+│ Coordinator │   ApiDev    │   DbAdmin   │
+├─────────────┼─────────────┼─────────────┤
+│ AuthService │    UiDev    │   Stylist   │
+├─────────────┼─────────────┼─────────────┤
+│  Reviewer   │     QA      │  (empty)    │
+└─────────────┴─────────────┴─────────────┘
+```
+
+**Implementation:**
+```bash
+#!/bin/bash
+# agent-relay layout tile
+AGENTS=$(agent-relay agents --json | jq -r '.[].name')
+COUNT=$(echo "$AGENTS" | wc -l)
+
+tmux new-session -d -s relay-overview
+for agent in $AGENTS; do
+  tmux split-window -t relay-overview
+  tmux send-keys -t relay-overview "tmux attach -t relay-$agent-*" Enter
+done
+tmux select-layout -t relay-overview tiled
+tmux attach -t relay-overview
+```
+
+### 5.5 Agent Roles & Capabilities
+
+Define what each agent can do:
+
+```json
+// teams.json
+{
+  "agents": {
+    "Coordinator": {
+      "role": "coordinator",
+      "canMessage": ["*"],
+      "canReceiveFrom": ["*"]
+    },
+    "ApiDev": {
+      "role": "developer",
+      "groups": ["backend"],
+      "canMessage": ["Coordinator", "@backend", "Reviewer"],
+      "canReceiveFrom": ["Coordinator", "@backend"]
+    },
+    "Reviewer": {
+      "role": "reviewer",
+      "canMessage": ["Coordinator", "QA"],
+      "canReceiveFrom": ["*"]
+    }
+  }
+}
+```
+
+**Use cases:**
+- Prevent junior agents from messaging senior ones directly
+- Ensure QA only receives from Reviewer (enforced pipeline)
+- Coordinator can message anyone
+
+### 5.6 Message Priority & Filtering
+
+With more agents, message prioritization becomes important:
+
+```bash
+# Urgent message (interrupts immediately)
+@relay:!ApiDev Production is down, check auth service
+
+# Normal message (waits for idle)
+@relay:ApiDev When you have time, review this PR
+
+# Low priority (batched, delivered during quiet periods)
+@relay:?ApiDev FYI: Updated the style guide
+```
+
+**Injection behavior:**
+| Priority | Syntax | Behavior |
+|----------|--------|----------|
+| Urgent | `@relay:!Name` | Inject immediately, even if busy |
+| Normal | `@relay:Name` | Wait for idle (current behavior) |
+| Low | `@relay:?Name` | Batch and deliver during long idle |
+
+### 5.7 Status Broadcasts
+
+Agents automatically announce state changes:
+
+```typescript
+// Automatic status messages
+@relay:* STATUS: ApiDev is now idle
+@relay:* STATUS: Reviewer completed task (closed PR #123)
+@relay:* STATUS: QA disconnected
+
+// Agents can filter these
+// In wrapper config:
+{
+  "hideStatusMessages": true,  // Don't inject STATUS broadcasts
+  "showStatusInLogs": true     // But log them for visibility
+}
+```
 
 ---
 
 ## Non-Goals
 
-- **Dashboard/Web UI**: Out of scope. Use `agent-relay logs` for visibility.
+- **Browser Dashboard**: Out of scope. TUI (`agent-relay watch`) provides visibility.
 - **Multi-host support**: Single machine focus. Use SSH for remote.
 - **Agent memory/RAG**: Separate concern. Agents manage their own context.
 - **Authentication**: Unix socket permissions are sufficient for local use.
@@ -406,6 +692,18 @@ src/
 | Phase 2 | Reliability | 2-3 days |
 | Phase 3 | DX improvements | 1-2 days |
 | Phase 4 | Optional enhancements | As needed |
+| Phase 5 | Multi-agent coordination | 3-5 days |
+
+### Phase 5 Breakdown
+
+| Feature | Effort | Priority |
+|---------|--------|----------|
+| Agent groups (`@relay:@groupname`) | 1 day | P1 |
+| TUI dashboard (`agent-relay watch`) | 2 days | P1 |
+| Tmux layout helper | 0.5 day | P2 |
+| Message priority (`!`, `?`) | 0.5 day | P2 |
+| Pub/sub topics | 1 day | P3 |
+| Agent roles/permissions | 1 day | P3 |
 
 ---
 
