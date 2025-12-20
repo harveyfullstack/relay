@@ -14,6 +14,7 @@ const makeMessage = (overrides: Partial<StoredMessage> = {}): StoredMessage => (
   kind: overrides.kind ?? 'message',
   body: overrides.body ?? 'hello',
   data: overrides.data,
+  thread: overrides.thread,
   deliverySeq: overrides.deliverySeq,
   deliverySessionId: overrides.deliverySessionId,
   sessionId: overrides.sessionId,
@@ -22,6 +23,7 @@ const makeMessage = (overrides: Partial<StoredMessage> = {}): StoredMessage => (
 describe('SqliteStorageAdapter', () => {
   let dbPath: string;
   let adapter: SqliteStorageAdapter;
+  const originalDriver = process.env.AGENT_RELAY_SQLITE_DRIVER;
 
   beforeEach(async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-sqlite-'));
@@ -31,6 +33,11 @@ describe('SqliteStorageAdapter', () => {
   });
 
   afterEach(async () => {
+    if (originalDriver === undefined) {
+      delete process.env.AGENT_RELAY_SQLITE_DRIVER;
+    } else {
+      process.env.AGENT_RELAY_SQLITE_DRIVER = originalDriver;
+    }
     await adapter.close();
     try {
       fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
@@ -68,5 +75,36 @@ describe('SqliteStorageAdapter', () => {
 
     const limited = await adapter.getMessages({ limit: 1 });
     expect(limited).toHaveLength(1);
+  });
+
+  it('supports thread filtering', async () => {
+    await adapter.saveMessage(makeMessage({ id: 't1', thread: 'th-1', body: 'a' }));
+    await adapter.saveMessage(makeMessage({ id: 't2', thread: 'th-2', body: 'b' }));
+    await adapter.saveMessage(makeMessage({ id: 't3', body: 'c' }));
+
+    const rows = await adapter.getMessages({ thread: 'th-1', order: 'asc' });
+    expect(rows.map(r => r.id)).toEqual(['t1']);
+  });
+
+  it('can force node sqlite driver', async () => {
+    await adapter.close();
+    process.env.AGENT_RELAY_SQLITE_DRIVER = 'node';
+    adapter = new SqliteStorageAdapter({ dbPath });
+    await adapter.init();
+
+    await adapter.saveMessage(makeMessage({ id: 'node-1', body: 'hi' }));
+    const rows = await adapter.getMessages();
+    expect(rows.map(r => r.id)).toEqual(['node-1']);
+  });
+
+  it('prefers better-sqlite3 but falls back when unavailable', async () => {
+    await adapter.close();
+    process.env.AGENT_RELAY_SQLITE_DRIVER = 'better-sqlite3';
+    adapter = new SqliteStorageAdapter({ dbPath });
+    await adapter.init();
+
+    await adapter.saveMessage(makeMessage({ id: 'fallback-1', body: 'ok' }));
+    const rows = await adapter.getMessages();
+    expect(rows.map(r => r.id)).toEqual(['fallback-1']);
   });
 });

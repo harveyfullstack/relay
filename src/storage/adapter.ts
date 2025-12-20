@@ -9,6 +9,8 @@ export interface StoredMessage {
   kind: PayloadKind;
   body: string;
   data?: Record<string, unknown>;
+  /** Optional thread ID for grouping related messages */
+  thread?: string;
   deliverySeq?: number;
   deliverySessionId?: string;
   sessionId?: string;
@@ -20,6 +22,8 @@ export interface MessageQuery {
   from?: string;
   to?: string;
   topic?: string;
+  /** Filter by thread ID */
+  thread?: string;
   order?: 'asc' | 'desc';
 }
 
@@ -74,6 +78,9 @@ export class MemoryStorageAdapter implements StorageAdapter {
     }
     if (query?.topic) {
       result = result.filter(m => m.topic === query.topic);
+    }
+    if (query?.thread) {
+      result = result.filter(m => m.thread === query.thread);
     }
     if (query?.sinceTs) {
       result = result.filter(m => m.ts >= query.sinceTs!);

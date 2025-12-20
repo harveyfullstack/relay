@@ -17,6 +17,7 @@ import {
   type SendPayload,
   type PongPayload,
   type ErrorPayload,
+  type AckPayload,
   PROTOCOL_VERSION,
 } from '../protocol/types.js';
 import { encodeFrame, FrameParser } from '../protocol/framing.js';
@@ -56,6 +57,7 @@ export class Connection {
   onClose?: () => void;
   onError?: (error: Error) => void;
   onActive?: () => void; // Fires when connection transitions to ACTIVE state
+  onAck?: (envelope: Envelope<AckPayload>) => void;
 
   constructor(socket: net.Socket, config: Partial<ConnectionConfig> = {}) {
     this.id = uuid();
@@ -112,7 +114,9 @@ export class Connection {
         this.handleSend(envelope as Envelope<SendPayload>);
         break;
       case 'ACK':
-        // ACKs are currently accepted but not used for reliability in the daemon.
+        if (this.onAck) {
+          this.onAck(envelope as Envelope<AckPayload>);
+        }
         break;
       case 'PONG':
         this.handlePong(envelope as Envelope<PongPayload>);

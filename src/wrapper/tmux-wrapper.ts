@@ -20,6 +20,7 @@ import { InboxManager } from './inbox.js';
 import type { SendPayload } from '../protocol/types.js';
 
 const execAsync = promisify(exec);
+const escapeRegex = (str: string): string => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export interface TmuxWrapperConfig {
   name: string;
@@ -44,10 +45,29 @@ export interface TmuxWrapperConfig {
   idleBeforeInjectMs?: number;
   /** Retry interval while waiting for idle window (ms) */
   injectRetryMs?: number;
+  /** How long with no output before marking session idle (ms) */
+  activityIdleThresholdMs?: number;
   /** CLI type for special handling (auto-detected from command if not set) */
   cliType?: 'claude' | 'codex' | 'gemini' | 'other';
   /** Enable tmux mouse mode for scroll passthrough (default: true) */
   mouseMode?: boolean;
+  /** Relay prefix pattern (default: '@relay:' or '>>' for Gemini) */
+  relayPrefix?: string;
+}
+
+/**
+ * Get the default relay prefix for a given CLI type.
+ * Gemini uses '>>' to avoid conflict with @ file references.
+ */
+export function getDefaultPrefix(cliType: 'claude' | 'codex' | 'gemini' | 'other'): string {
+  switch (cliType) {
+    case 'gemini':
+      return '>>'; // Avoid @ conflict with Gemini file references
+    case 'claude':
+    case 'codex':
+    default:
+      return '@relay:'; // Original, works fine
+  }
 }
 
 export class TmuxWrapper {
@@ -61,6 +81,8 @@ export class TmuxWrapper {
   private attachProcess?: ChildProcess;
   private lastCapturedOutput = '';
   private lastOutputTime = 0;
+  private lastActivityTime = Date.now();
+  private activityState: 'active' | 'idle' | 'disconnected' = 'disconnected';
   private recentlySentMessages: Map<string, number> = new Map();
   private sentMessageHashes: Set<string> = new Set(); // Permanent dedup
   private messageQueue: Array<{ from: string; body: string; messageId: string }> = [];
@@ -69,6 +91,7 @@ export class TmuxWrapper {
   private processedOutputLength = 0;
   private lastDebugLog = 0;
   private cliType: 'claude' | 'codex' | 'gemini' | 'other';
+  private relayPrefix: string;
 
   constructor(config: TmuxWrapperConfig) {
     this.config = {
@@ -80,6 +103,7 @@ export class TmuxWrapper {
       debug: true,
       debugLogIntervalMs: 0,
       mouseMode: true, // Enable mouse scroll passthrough by default
+      activityIdleThresholdMs: 30_000, // Consider idle after 30s with no output
       ...config,
     };
 
@@ -97,6 +121,9 @@ export class TmuxWrapper {
       this.cliType = 'other';
     }
 
+    // Determine relay prefix: explicit config > auto-detect from CLI type
+    this.relayPrefix = config.relayPrefix ?? getDefaultPrefix(this.cliType);
+
     // Generate unique session name
     this.sessionName = `relay-${config.name}-${process.pid}`;
 
@@ -106,7 +133,7 @@ export class TmuxWrapper {
       cli: this.cliType,
     });
 
-    this.parser = new OutputParser();
+    this.parser = new OutputParser({ prefix: this.relayPrefix });
 
     // Initialize inbox if using file-based messaging
     if (config.useInbox) {
@@ -206,6 +233,7 @@ export class TmuxWrapper {
     // Build the command - properly quote args that contain spaces
     const fullCommand = this.buildCommand();
     this.logStderr(`Command: ${fullCommand}`);
+    this.logStderr(`Prefix: ${this.relayPrefix} (use ${this.relayPrefix}AgentName to send)`);
 
     // Create tmux session
     try {
@@ -264,6 +292,8 @@ export class TmuxWrapper {
     await this.waitForSession();
 
     this.running = true;
+    this.lastActivityTime = Date.now();
+    this.activityState = 'active';
 
     // Inject instructions for the agent (after a delay to let CLI initialize)
     setTimeout(() => this.injectInstructions(), 3000);
@@ -284,7 +314,7 @@ export class TmuxWrapper {
 
     const instructions = [
       `[Agent Relay] You are "${this.config.name}" - connected for real-time messaging.`,
-      `SEND: @relay:AgentName message (or @relay:* to broadcast)`,
+      `SEND: ${this.relayPrefix}AgentName message (or ${this.relayPrefix}* to broadcast)`,
       `RECEIVE: "Relay message from X [id]: content"`,
       `TRUNCATED: Run "agent-relay read <id>" if message seems cut off`,
     ].join(' | ');
@@ -417,6 +447,7 @@ export class TmuxWrapper {
       // Track last output time for injection timing
       if (stdout.length !== this.processedOutputLength) {
         this.lastOutputTime = Date.now();
+        this.markActivity();
         this.processedOutputLength = stdout.length;
       }
 
@@ -424,6 +455,8 @@ export class TmuxWrapper {
       for (const cmd of commands) {
         this.sendRelayCommand(cmd);
       }
+
+      this.updateActivityState();
 
       // Also check for injection opportunity
       this.checkForInjectionOpportunity();
@@ -453,10 +486,13 @@ export class TmuxWrapper {
     const lines = content.split('\n');
     const result: string[] = [];
 
-    // Pattern to detect @relay command line (with optional bullet prefix)
-    const relayPattern = /^(?:\s*(?:[>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■]\s*)*)?@relay:/;
+    // Pattern to detect relay command line (with optional bullet prefix)
+    const escapedPrefix = escapeRegex(this.relayPrefix);
+    const relayPattern = new RegExp(
+      `^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■]\\s*)*)?${escapedPrefix}`
+    );
     // Pattern to detect a continuation line (starts with spaces, no bullet/command)
-    const continuationPattern = /^[ \t]+[^>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■@\s]/;
+    const continuationPattern = /^[ \t]+[^>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■\s]/;
     // Pattern to detect a new block/bullet (stops continuation)
     const newBlockPattern = /^(?:\s*)?[>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■]/;
 
@@ -498,6 +534,37 @@ export class TmuxWrapper {
     }
 
     return result.join('\n');
+  }
+
+  /**
+   * Record recent activity and transition back to active if needed.
+   */
+  private markActivity(): void {
+    this.lastActivityTime = Date.now();
+    if (this.activityState === 'idle') {
+      this.activityState = 'active';
+      this.logStderr('Session active');
+    }
+  }
+
+  /**
+   * Update activity state based on idle threshold and trigger injections when idle.
+   */
+  private updateActivityState(): void {
+    if (this.activityState === 'disconnected') return;
+
+    const now = Date.now();
+    const idleThreshold = this.config.activityIdleThresholdMs ?? 30000;
+    const timeSinceActivity = now - this.lastActivityTime;
+
+    if (timeSinceActivity > idleThreshold && this.activityState === 'active') {
+      this.activityState = 'idle';
+      this.logStderr('Session went idle');
+      this.checkForInjectionOpportunity();
+    } else if (timeSinceActivity <= idleThreshold && this.activityState === 'idle') {
+      this.activityState = 'active';
+      this.logStderr('Session active');
+    }
   }
 
   /**
@@ -686,6 +753,7 @@ export class TmuxWrapper {
   stop(): void {
     if (!this.running) return;
     this.running = false;
+    this.activityState = 'disconnected';
 
     // Stop polling
     if (this.pollTimer) {

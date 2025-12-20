@@ -481,6 +481,68 @@ Out3
       expect(result.commands[1].to).toBe('agent2');
     });
   });
+
+  describe('Configurable prefix', () => {
+    it('uses default @relay: prefix', () => {
+      const defaultParser = new OutputParser();
+      expect(defaultParser.prefix).toBe('@relay:');
+
+      const result = defaultParser.parse('@relay:agent2 Hello\n');
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].to).toBe('agent2');
+    });
+
+    it('uses custom prefix >>', () => {
+      const customParser = new OutputParser({ prefix: '>>' });
+      expect(customParser.prefix).toBe('>>');
+
+      const result = customParser.parse('>>agent2 Hello from Gemini\n');
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].to).toBe('agent2');
+      expect(result.commands[0].body).toBe('Hello from Gemini');
+    });
+
+    it('ignores @relay: when using >> prefix', () => {
+      const customParser = new OutputParser({ prefix: '>>' });
+
+      const result = customParser.parse('@relay:agent2 Should not match\n');
+      expect(result.commands).toHaveLength(0);
+      expect(result.output).toBe('@relay:agent2 Should not match\n');
+    });
+
+    it('uses custom prefix /relay', () => {
+      const customParser = new OutputParser({ prefix: '/relay' });
+
+      const result = customParser.parse('/relayagent2 Slash style\n');
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].to).toBe('agent2');
+    });
+
+    it('handles prefix with special regex characters', () => {
+      const customParser = new OutputParser({ prefix: '$$msg:' });
+
+      const result = customParser.parse('$$msg:agent2 Dollar prefix\n');
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].to).toBe('agent2');
+    });
+
+    it('supports >> prefix with bullet points', () => {
+      const customParser = new OutputParser({ prefix: '>>' });
+
+      const result = customParser.parse('- >>agent2 Bulleted message\n');
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].to).toBe('agent2');
+    });
+
+    it('supports broadcast with custom prefix', () => {
+      const customParser = new OutputParser({ prefix: '>>' });
+
+      const result = customParser.parse('>>* Broadcast to all\n');
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].to).toBe('*');
+      expect(result.commands[0].body).toBe('Broadcast to all');
+    });
+  });
 });
 
 describe('formatIncomingMessage', () => {

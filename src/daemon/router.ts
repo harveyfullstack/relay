@@ -8,6 +8,7 @@ import {
   type Envelope,
   type SendPayload,
   type DeliverEnvelope,
+  type AckPayload,
   PROTOCOL_VERSION,
 } from '../protocol/types.js';
 import type { StorageAdapter } from '../storage/adapter.js';
@@ -22,14 +23,40 @@ export interface RoutableConnection {
   getNextSeq(topic: string, peer: string): number;
 }
 
+export interface DeliveryReliabilityOptions {
+  /** How long to wait for an ACK before retrying (ms) */
+  ackTimeoutMs: number;
+  /** Maximum attempts (initial send counts as attempt 1) */
+  maxAttempts: number;
+  /** How long to keep retrying before dropping (ms) */
+  deliveryTtlMs: number;
+}
+
+const DEFAULT_DELIVERY_OPTIONS: DeliveryReliabilityOptions = {
+  ackTimeoutMs: 2000,
+  maxAttempts: 5,
+  deliveryTtlMs: 60_000,
+};
+
+interface PendingDelivery {
+  envelope: DeliverEnvelope;
+  connectionId: string;
+  attempts: number;
+  firstSentAt: number;
+  timer?: NodeJS.Timeout;
+}
+
 export class Router {
   private storage?: StorageAdapter;
   private connections: Map<string, RoutableConnection> = new Map(); // connectionId -> Connection
   private agents: Map<string, RoutableConnection> = new Map(); // agentName -> Connection
   private subscriptions: Map<string, Set<string>> = new Map(); // topic -> Set<agentName>
+  private pendingDeliveries: Map<string, PendingDelivery> = new Map(); // deliverId -> pending
+  private deliveryOptions: DeliveryReliabilityOptions;
 
-  constructor(options: { storage?: StorageAdapter } = {}) {
+  constructor(options: { storage?: StorageAdapter; delivery?: Partial<DeliveryReliabilityOptions> } = {}) {
     this.storage = options.storage;
+    this.deliveryOptions = { ...DEFAULT_DELIVERY_OPTIONS, ...options.delivery };
   }
 
   /**
@@ -65,6 +92,8 @@ export class Router {
         subscribers.delete(connection.agentName);
       }
     }
+
+    this.clearPendingForConnection(connection.id);
   }
 
   /**
@@ -134,6 +163,9 @@ export class Router {
     const sent = target.send(deliver);
     console.log(`[router] Delivered to ${to}: ${sent ? 'success' : 'failed'}`);
     this.persistDeliverEnvelope(deliver);
+    if (sent) {
+      this.trackDelivery(target, deliver);
+    }
     return sent;
   }
 
@@ -155,8 +187,11 @@ export class Router {
       const target = this.agents.get(agentName);
       if (target) {
         const deliver = this.createDeliverEnvelope(from, agentName, envelope, target);
-        target.send(deliver);
+        const sent = target.send(deliver);
         this.persistDeliverEnvelope(deliver);
+        if (sent) {
+          this.trackDelivery(target, deliver);
+        }
       }
     }
   }
@@ -228,5 +263,92 @@ export class Router {
    */
   get connectionCount(): number {
     return this.connections.size;
+  }
+
+  get pendingDeliveryCount(): number {
+    return this.pendingDeliveries.size;
+  }
+
+  /**
+   * Handle ACK for previously delivered messages.
+   */
+  handleAck(connection: RoutableConnection, envelope: Envelope<AckPayload>): void {
+    const ackId = envelope.payload.ack_id;
+    const pending = this.pendingDeliveries.get(ackId);
+    if (!pending) return;
+
+    // Only accept ACKs from the same connection that received the deliver
+    if (pending.connectionId !== connection.id) return;
+
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+    }
+    this.pendingDeliveries.delete(ackId);
+    console.log(`[router] ACK received for ${ackId}`);
+  }
+
+  /**
+   * Clear pending deliveries for a connection (e.g., on disconnect).
+   */
+  clearPendingForConnection(connectionId: string): void {
+    for (const [id, pending] of this.pendingDeliveries.entries()) {
+      if (pending.connectionId === connectionId) {
+        if (pending.timer) clearTimeout(pending.timer);
+        this.pendingDeliveries.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Track a delivery and schedule retries until ACKed or TTL/attempts exhausted.
+   */
+  private trackDelivery(target: RoutableConnection, deliver: DeliverEnvelope): void {
+    const pending: PendingDelivery = {
+      envelope: deliver,
+      connectionId: target.id,
+      attempts: 1,
+      firstSentAt: Date.now(),
+    };
+
+    pending.timer = this.scheduleRetry(deliver.id);
+    this.pendingDeliveries.set(deliver.id, pending);
+  }
+
+  private scheduleRetry(deliverId: string): NodeJS.Timeout | undefined {
+    return setTimeout(() => {
+      const pending = this.pendingDeliveries.get(deliverId);
+      if (!pending) return;
+
+      const now = Date.now();
+      const elapsed = now - pending.firstSentAt;
+      if (elapsed > this.deliveryOptions.deliveryTtlMs) {
+        console.warn(`[router] Dropping ${deliverId} after TTL (${this.deliveryOptions.deliveryTtlMs}ms)`);
+        this.pendingDeliveries.delete(deliverId);
+        return;
+      }
+
+      if (pending.attempts >= this.deliveryOptions.maxAttempts) {
+        console.warn(`[router] Dropping ${deliverId} after max attempts (${this.deliveryOptions.maxAttempts})`);
+        this.pendingDeliveries.delete(deliverId);
+        return;
+      }
+
+      const target = this.connections.get(pending.connectionId);
+      if (!target) {
+        console.warn(`[router] Dropping ${deliverId} - connection unavailable`);
+        this.pendingDeliveries.delete(deliverId);
+        return;
+      }
+
+      pending.attempts++;
+      const sent = target.send(pending.envelope);
+      if (!sent) {
+        console.warn(`[router] Retry failed for ${deliverId} (attempt ${pending.attempts})`);
+      } else {
+        console.log(`[router] Retried ${deliverId} (attempt ${pending.attempts})`);
+      }
+
+      pending.timer = this.scheduleRetry(deliverId);
+    }, this.deliveryOptions.ackTimeoutMs);
   }
 }

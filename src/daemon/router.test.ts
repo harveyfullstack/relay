@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Router } from './router.js';
 import type { Connection } from './connection.js';
 import type { StorageAdapter, StoredMessage } from '../storage/adapter.js';
-import type { Envelope, SendPayload, DeliverEnvelope } from '../protocol/types.js';
+import type { Envelope, SendPayload, DeliverEnvelope, AckPayload } from '../protocol/types.js';
 
 /**
  * Mock Connection class for testing.
@@ -246,6 +246,90 @@ describe('Router', () => {
 
       router.unregister(conn1);
       expect(router.connectionCount).toBe(1);
+    });
+  });
+
+  describe('Delivery reliability (ACK)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('tracks pending deliveries and clears on ACK', () => {
+      router = new Router({
+        storage,
+        delivery: { ackTimeoutMs: 10, maxAttempts: 3, deliveryTtlMs: 100 },
+      });
+      const sender = new MockConnection('conn-1', 'agent1');
+      const receiver = new MockConnection('conn-2', 'agent2');
+      router.register(sender);
+      router.register(receiver);
+
+      const envelope = createSendEnvelope('agent1', 'agent2');
+      router.route(sender, envelope);
+
+      expect(router.pendingDeliveryCount).toBe(1);
+      expect(receiver.sentEnvelopes).toHaveLength(1);
+      const deliverId = receiver.sentEnvelopes[0].id;
+
+      const ackEnvelope: Envelope<AckPayload> = {
+        v: 1,
+        type: 'ACK',
+        id: 'ack-1',
+        ts: Date.now(),
+        payload: {
+          ack_id: deliverId,
+          seq: 1,
+        },
+      };
+
+      router.handleAck(receiver, ackEnvelope);
+      expect(router.pendingDeliveryCount).toBe(0);
+    });
+
+    it('retries until maxAttempts then drops pending delivery', () => {
+      router = new Router({
+        storage,
+        delivery: { ackTimeoutMs: 5, maxAttempts: 3, deliveryTtlMs: 100 },
+      });
+      const sender = new MockConnection('conn-1', 'agent1');
+      const receiver = new MockConnection('conn-2', 'agent2');
+      router.register(sender);
+      router.register(receiver);
+
+      const envelope = createSendEnvelope('agent1', 'agent2');
+      router.route(sender, envelope);
+
+      expect(receiver.sentEnvelopes).toHaveLength(1);
+      expect(router.pendingDeliveryCount).toBe(1);
+
+      // Advance timers to trigger retries
+      vi.advanceTimersByTime(5 * 3 + 1);
+
+      // Initial send + 2 retries (maxAttempts = 3)
+      expect(receiver.sentEnvelopes.length).toBe(3);
+      expect(router.pendingDeliveryCount).toBe(0);
+    });
+
+    it('clears pending deliveries when connection unregisters', () => {
+      router = new Router({
+        storage,
+        delivery: { ackTimeoutMs: 50, maxAttempts: 2, deliveryTtlMs: 100 },
+      });
+      const sender = new MockConnection('conn-1', 'agent1');
+      const receiver = new MockConnection('conn-2', 'agent2');
+      router.register(sender);
+      router.register(receiver);
+
+      const envelope = createSendEnvelope('agent1', 'agent2');
+      router.route(sender, envelope);
+      expect(router.pendingDeliveryCount).toBe(1);
+
+      router.unregister(receiver);
+      expect(router.pendingDeliveryCount).toBe(0);
     });
   });
 

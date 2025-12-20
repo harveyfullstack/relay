@@ -16,6 +16,8 @@ import { RelayClient } from '../wrapper/client.js';
 import { generateAgentName } from '../utils/name-generator.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
+import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 dotenvConfig();
@@ -28,6 +30,7 @@ const __dirname = path.dirname(__filename);
 const packageJsonPath = path.resolve(__dirname, '../../package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 const VERSION = packageJson.version;
+const execAsync = promisify(exec);
 
 const program = new Command();
 
@@ -44,6 +47,7 @@ program
 program
   .option('-n, --name <name>', 'Agent name (auto-generated if not set)')
   .option('-q, --quiet', 'Disable debug output', false)
+  .option('--prefix <pattern>', 'Relay prefix pattern (default: @relay: or >> for Gemini)')
   .argument('[command...]', 'Command to wrap (e.g., claude)')
   .action(async (commandParts, options) => {
     // If no command provided, show help
@@ -69,6 +73,7 @@ program
       args: commandArgs,
       socketPath: paths.socketPath,
       debug: !options.quiet,
+      relayPrefix: options.prefix,
     });
 
     process.on('SIGINT', () => {
@@ -165,9 +170,11 @@ program
   .action(async () => {
     const { getProjectPaths } = await import('../utils/project-namespace.js');
     const paths = getProjectPaths();
+    const relaySessions = await discoverRelaySessions();
 
     if (!fs.existsSync(paths.socketPath)) {
       console.log('Status: STOPPED');
+      logRelaySessions(relaySessions);
       return;
     }
 
@@ -181,9 +188,11 @@ program
       await client.connect();
       console.log('Status: RUNNING');
       console.log(`Socket: ${paths.socketPath}`);
+      logRelaySessions(relaySessions);
       client.disconnect();
     } catch {
       console.log('Status: STOPPED');
+      logRelaySessions(relaySessions);
     }
   });
 
@@ -225,5 +234,62 @@ program
   .action(() => {
     console.log(`agent-relay v${VERSION}`);
   });
+
+interface RelaySessionInfo {
+  sessionName: string;
+  agentName?: string;
+  cwd?: string;
+}
+
+async function discoverRelaySessions(): Promise<RelaySessionInfo[]> {
+  try {
+    const { stdout } = await execAsync('tmux list-sessions -F "#{session_name}"');
+    const sessionNames = stdout
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const relaySessions = sessionNames
+      .map(name => {
+        const match = name.match(/^relay-(.+)-\d+$/);
+        if (!match) return undefined;
+        return { sessionName: name, agentName: match[1] };
+      })
+      .filter((s): s is { sessionName: string; agentName: string } => Boolean(s));
+
+    return await Promise.all(
+      relaySessions.map(async (session) => {
+        let cwd: string | undefined;
+        try {
+          const { stdout: cwdOut } = await execAsync(
+            `tmux display-message -t ${session.sessionName} -p '#{pane_current_path}'`
+          );
+          cwd = cwdOut.trim() || undefined;
+        } catch {
+          cwd = undefined;
+        }
+        return { ...session, cwd };
+      })
+    );
+  } catch {
+    return [];
+  }
+}
+
+function logRelaySessions(sessions: RelaySessionInfo[]): void {
+  if (!sessions.length) {
+    console.log('Relay tmux sessions: none detected');
+    return;
+  }
+
+  console.log('Relay tmux sessions:');
+  sessions.forEach((session) => {
+    const parts = [
+      `agent: ${session.agentName ?? 'unknown'}`,
+      session.cwd ? `cwd: ${session.cwd}` : undefined,
+    ].filter(Boolean);
+    console.log(`- ${session.sessionName}${parts.length ? ` (${parts.join(', ')})` : ''}`);
+  });
+}
 
 program.parse();
