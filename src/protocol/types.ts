@@ -68,6 +68,8 @@ export interface SendPayload {
   kind: PayloadKind;
   body: string;
   data?: Record<string, unknown>;
+  /** Optional thread ID for grouping related messages (e.g., "feature-123", "bd-456") */
+  thread?: string;
 }
 
 export interface SendMeta {

@@ -96,6 +96,8 @@ agent-relay read abc123
 
 `agent-relay up` starts a web dashboard at http://localhost:3888
 
+![Agent Relay Dashboard](dashboard.png)
+
 ## Troubleshooting
 
 | Issue | Solution |
@@ -111,6 +113,16 @@ git clone https://github.com/khaliqgant/agent-relay.git
 cd agent-relay
 npm install && npm run build
 ```
+
+## Inspiration
+
+This project was inspired by some excellent work in the multi-agent coordination space:
+
+- **[mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail)** - A brilliant MCP-based approach to agent messaging with file-based inboxes and structured message handling. Great patterns for durable, asynchronous agent communication.
+
+- **[swarm-tools / swarm-mail](https://github.com/joelhooks/swarm-tools)** - An exceptional event-sourced coordination system with durable cursors, locks, deferred responses, and ask/respond patterns. The gold standard for robust multi-agent workflows with full audit trails.
+
+Both projects informed our thinking around durability, message threading, and coordination primitives. Check them out!
 
 ## License
 

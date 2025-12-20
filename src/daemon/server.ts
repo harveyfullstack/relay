@@ -179,6 +179,10 @@ export class Daemon {
       this.handleMessage(connection, envelope);
     };
 
+    connection.onAck = (envelope) => {
+      this.router.handleAck(connection, envelope);
+    };
+
     // Register agent when connection becomes active (after successful handshake)
     connection.onActive = () => {
       if (connection.agentName) {

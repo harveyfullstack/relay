@@ -20,6 +20,8 @@ export interface ParsedCommand {
   kind: PayloadKind;
   body: string;
   data?: Record<string, unknown>;
+  /** Optional thread ID for grouping related messages */
+  thread?: string;
   raw: string;
 }
 
@@ -27,21 +29,53 @@ export interface ParserOptions {
   maxBlockBytes?: number;
   enableInline?: boolean;
   enableBlock?: boolean;
+  /** Relay prefix pattern (default: '@relay:') */
+  prefix?: string;
+  /** Thinking prefix pattern (default: '@thinking:') */
+  thinkingPrefix?: string;
 }
 
 const DEFAULT_OPTIONS: Required<ParserOptions> = {
   maxBlockBytes: 1024 * 1024, // 1 MiB
   enableInline: true,
   enableBlock: true,
+  prefix: '@relay:',
+  thinkingPrefix: '@thinking:',
 };
 
-// Patterns
-// Allow common input prefixes: >, $, %, #, →, ➜, bullets (●•◦‣⁃-*⏺◆◇○□■), and their variations
-const INLINE_RELAY = /^(?:\s*(?:[>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■]\s*)*)?@relay:(\S+)\s+(.+)$/;
-const INLINE_THINKING = /^(?:\s*(?:[>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■]\s*)*)?@thinking:(\S+)\s+(.+)$/;
+// Static patterns (not prefix-dependent)
 const BLOCK_END = /\[\[\/RELAY\]\]/;
 const CODE_FENCE = /^```/;
-const ESCAPE_PREFIX = /^(\s*)\\@(relay|thinking):/;
+
+/**
+ * Escape special regex characters in a string
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build inline pattern for a given prefix
+ * Allow common input prefixes: >, $, %, #, →, ➜, bullets (●•◦‣⁃-*⏺◆◇○□■), and their variations
+ *
+ * Supports optional thread syntax: @relay:Target [thread:id] message
+ * Thread IDs can contain alphanumeric chars, hyphens, underscores
+ */
+function buildInlinePattern(prefix: string): RegExp {
+  const escaped = escapeRegex(prefix);
+  // Group 1: target, Group 2: optional thread ID (without brackets), Group 3: message body
+  return new RegExp(`^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■]\\s*)*)?${escaped}(\\S+)(?:\\s+\\[thread:([\\w-]+)\\])?\\s+(.+)$`);
+}
+
+/**
+ * Build escape pattern for a given prefix (e.g., \@relay: or \>>)
+ */
+function buildEscapePattern(prefix: string, thinkingPrefix: string): RegExp {
+  // Extract the first character(s) that would be escaped
+  const prefixEscaped = escapeRegex(prefix);
+  const thinkingEscaped = escapeRegex(thinkingPrefix);
+  return new RegExp(`^(\\s*)\\\\(${prefixEscaped}|${thinkingEscaped})`);
+}
 
 // ANSI escape sequence pattern for stripping
 // eslint-disable-next-line no-control-regex
@@ -60,8 +94,25 @@ export class OutputParser {
   private inBlock = false;
   private blockBuffer = '';
 
+  // Dynamic patterns based on prefix configuration
+  private inlineRelayPattern: RegExp;
+  private inlineThinkingPattern: RegExp;
+  private escapePattern: RegExp;
+
   constructor(options: ParserOptions = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
+
+    // Build patterns based on configured prefixes
+    this.inlineRelayPattern = buildInlinePattern(this.options.prefix);
+    this.inlineThinkingPattern = buildInlinePattern(this.options.thinkingPrefix);
+    this.escapePattern = buildEscapePattern(this.options.prefix, this.options.thinkingPrefix);
+  }
+
+  /**
+   * Get the configured relay prefix
+   */
+  get prefix(): string {
+    return this.options.prefix;
   }
 
   /**
@@ -252,8 +303,8 @@ export class OutputParser {
 
             // Stop if the next line starts another inline command, code fence, or block marker
             if (
-              INLINE_RELAY.test(nextStripped) ||
-              INLINE_THINKING.test(nextStripped) ||
+              this.inlineRelayPattern.test(nextStripped) ||
+              this.inlineThinkingPattern.test(nextStripped) ||
               CODE_FENCE.test(nextStripped) ||
               nextStripped.includes('[[RELAY]]') ||
               BLOCK_END.test(nextStripped)
@@ -365,37 +416,39 @@ export class OutputParser {
     }
 
     // Check for escaped inline (on stripped text)
-    const escapeMatch = stripped.match(ESCAPE_PREFIX);
+    const escapeMatch = stripped.match(this.escapePattern);
     if (escapeMatch) {
-      // Output with escape removed
-      const unescaped = line.replace(/\\@/, '@');
+      // Output with escape removed (remove the backslash before the prefix)
+      const unescaped = line.replace(/\\/, '');
       return { command: null, output: unescaped };
     }
 
     // Check for inline relay (on stripped text)
     if (this.options.enableInline) {
-      const relayMatch = stripped.match(INLINE_RELAY);
+      const relayMatch = stripped.match(this.inlineRelayPattern);
       if (relayMatch) {
-        const [raw, target, body] = relayMatch;
+        const [raw, target, threadId, body] = relayMatch;
         return {
           command: {
             to: target,
             kind: 'message',
             body,
+            thread: threadId || undefined, // undefined if no thread specified
             raw,
           },
           output: null, // Don't output relay commands
         };
       }
 
-      const thinkingMatch = stripped.match(INLINE_THINKING);
+      const thinkingMatch = stripped.match(this.inlineThinkingPattern);
       if (thinkingMatch) {
-        const [raw, target, body] = thinkingMatch;
+        const [raw, target, threadId, body] = thinkingMatch;
         return {
           command: {
             to: target,
             kind: 'thinking',
             body,
+            thread: threadId || undefined,
             raw,
           },
           output: null,
@@ -434,6 +487,7 @@ export class OutputParser {
           kind: parsed.type as PayloadKind,
           body: parsed.body ?? parsed.text ?? '',
           data: parsed.data,
+          thread: parsed.thread || undefined,
           raw: jsonStr,
         },
         remaining,

@@ -81,6 +81,18 @@ export class RelayClient {
     }
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const settleResolve = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const settleReject = (err: Error): void => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
+
       this.setState('CONNECTING');
 
       this.socket = net.createConnection(this.config.socketPath, () => {
@@ -96,7 +108,7 @@ export class RelayClient {
 
       this.socket.on('error', (err) => {
         if (this._state === 'CONNECTING') {
-          reject(err);
+          settleReject(err);
         }
         this.handleError(err);
       });
@@ -105,15 +117,17 @@ export class RelayClient {
       const checkReady = setInterval(() => {
         if (this._state === 'READY') {
           clearInterval(checkReady);
-          resolve();
+          clearTimeout(timeout);
+          settleResolve();
         }
       }, 10);
 
       // Timeout
-      setTimeout(() => {
+      const timeout = setTimeout(() => {
         if (this._state !== 'READY') {
           clearInterval(checkReady);
-          reject(new Error('Connection timeout'));
+          this.socket?.destroy();
+          settleReject(new Error('Connection timeout'));
         }
       }, 5000);
     });
@@ -153,8 +167,13 @@ export class RelayClient {
 
   /**
    * Send a message to another agent.
+   * @param to - Target agent name or '*' for broadcast
+   * @param body - Message body
+   * @param kind - Message type (default: 'message')
+   * @param data - Optional structured data
+   * @param thread - Optional thread ID for grouping related messages
    */
-  sendMessage(to: string, body: string, kind: PayloadKind = 'message', data?: Record<string, unknown>): boolean {
+  sendMessage(to: string, body: string, kind: PayloadKind = 'message', data?: Record<string, unknown>, thread?: string): boolean {
     if (this._state !== 'READY') {
       return false;
     }
@@ -169,6 +188,7 @@ export class RelayClient {
         kind,
         body,
         data,
+        thread,
       },
     };
 
@@ -343,6 +363,11 @@ export class RelayClient {
       this.scheduleReconnect();
     } else {
       this.setState('DISCONNECTED');
+      if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
+        console.error(
+          `[client] Max reconnect attempts reached (${this.config.maxReconnectAttempts}), giving up`
+        );
+      }
     }
   }
 
