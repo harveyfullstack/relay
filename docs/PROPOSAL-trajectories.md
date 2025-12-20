@@ -8,6 +8,512 @@ Store the complete "trajectory" of agent work on tasks - prompts, reasoning, int
 
 ---
 
+## The Bigger Picture: Notion for Agents
+
+Trajectories are one piece of a larger vision: **a knowledge workspace where agents can read, write, and learn** - just like Notion is for humans.
+
+### What Notion Does for Humans
+
+| Capability | How Humans Use It |
+|------------|-------------------|
+| **Knowledge base** | Company wiki, documentation, runbooks |
+| **Linked documents** | Connect related ideas, reference past work |
+| **Templates** | Reusable structures for common tasks |
+| **Databases** | Structured data with multiple views |
+| **Search** | Find anything across all content |
+| **Collaboration** | Comments, mentions, shared editing |
+
+### What Agents Need (Agent Notion)
+
+| Capability | Agent Equivalent |
+|------------|------------------|
+| **Trajectory archive** | Past work with full reasoning history |
+| **Codebase knowledge** | Architecture docs, patterns, conventions |
+| **Decision log** | Why things are the way they are |
+| **Team context** | Who knows what, who's working on what |
+| **Pattern library** | Reusable approaches to common problems |
+| **Communication history** | Past agent-to-agent conversations |
+
+### How Agent Notion Helps
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        AGENT NOTION WORKSPACE                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  📚 KNOWLEDGE BASE                    🛤️ TRAJECTORIES                   │
+│  ├── Architecture decisions           ├── Active (3)                   │
+│  ├── Code patterns we use             ├── This week (12)               │
+│  ├── API conventions                  └── Archive (156)                │
+│  └── Testing philosophy                                                │
+│                                                                         │
+│  🧠 DECISION LOG                      👥 TEAM CONTEXT                   │
+│  ├── "Why we use Postgres"            ├── Alice: auth expert           │
+│  ├── "Why no Redux"                   ├── Bob: API design              │
+│  └── "Error handling approach"        └── Carol: testing lead          │
+│                                                                         │
+│  📋 PATTERNS                          💬 CONVERSATIONS                  │
+│  ├── API endpoint template            ├── Today's discussions          │
+│  ├── React component pattern          ├── Decisions made               │
+│  └── Test file structure              └── Open questions               │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Use Cases: How Agent Notion Helps
+
+#### 1. New Agent Onboarding
+
+**Without Agent Notion:**
+```
+New agent spawns → Reads codebase → Makes assumptions →
+Possibly repeats past mistakes → Violates conventions
+```
+
+**With Agent Notion:**
+```
+New agent spawns → Queries workspace:
+  "How do we handle authentication in this codebase?"
+  → Gets: trajectory of auth implementation + decision log + patterns
+  → Understands context in seconds
+```
+
+#### 2. Consistent Decision Making
+
+**Without:** Each agent reinvents approaches, leading to inconsistent code.
+
+**With:** Agent queries pattern library:
+```
+Agent: "I need to add a new API endpoint"
+
+Workspace returns:
+- Template: Standard endpoint structure
+- Pattern: Error handling approach
+- Trajectory: How /api/users was built (for reference)
+- Decision: "We use Zod for validation (see decision-2024-03)"
+```
+
+#### 3. Learning from Past Work
+
+**Query:** "How have we solved caching problems before?"
+
+**Returns:**
+- 3 trajectories involving caching
+- Key decisions: Redis for sessions, in-memory for hot data
+- Gotchas: "Cache invalidation was tricky in trajectory-abc, see retrospective"
+
+#### 4. Cross-Agent Collaboration
+
+When Alice asks Bob a question:
+```
+Alice → Bob: "How should I structure the payment webhook handler?"
+
+Bob can reference:
+- Past trajectory where similar webhook was built
+- Pattern for webhook handlers
+- Known issues from retrospectives
+```
+
+The answer becomes **reusable knowledge**, not ephemeral chat.
+
+### Data Model: Agent Workspace
+
+```typescript
+interface AgentWorkspace {
+  projectId: string;
+
+  // The layers of knowledge
+  trajectories: TrajectoryStore;      // Work history
+  decisions: DecisionLog;              // Why things are
+  patterns: PatternLibrary;            // How to do things
+  knowledge: KnowledgeBase;            // What things are
+  conversations: ConversationArchive;  // Who said what
+  team: TeamContext;                   // Who knows what
+
+  // Cross-cutting
+  search: UnifiedSearch;               // Find across all layers
+  links: LinkGraph;                    // Connections between items
+}
+
+interface DecisionLog {
+  decisions: Decision[];
+
+  // Query interface
+  getDecision(topic: string): Decision | null;
+  findRelated(context: string): Decision[];
+}
+
+interface Decision {
+  id: string;
+  title: string;                    // "Use PostgreSQL for primary database"
+  context: string;                  // Why this came up
+  decision: string;                 // What was decided
+  alternatives: Alternative[];      // What was rejected
+  consequences: string[];           // What this means going forward
+  relatedTrajectories: string[];    // Where this was implemented
+  date: string;
+  participants: string[];           // Who was involved
+}
+
+interface PatternLibrary {
+  patterns: Pattern[];
+
+  // Query interface
+  findPattern(task: string): Pattern | null;
+  suggestPatterns(context: string): Pattern[];
+}
+
+interface Pattern {
+  id: string;
+  name: string;                     // "API Endpoint"
+  description: string;              // When to use this
+  template: string;                 // The actual pattern/template
+  examples: string[];               // File paths showing real usage
+  relatedTrajectories: string[];    // Where this was used
+  tags: string[];
+}
+
+interface KnowledgeBase {
+  documents: KnowledgeDoc[];
+
+  // Query interface
+  query(question: string): KnowledgeDoc[];
+  getContext(topic: string): string;
+}
+
+interface KnowledgeDoc {
+  id: string;
+  title: string;
+  content: string;                  // Markdown content
+  source: 'manual' | 'extracted' | 'generated';
+  relatedFiles: string[];           // Code files this relates to
+  lastUpdated: string;
+  tags: string[];
+}
+```
+
+### How It Gets Populated
+
+#### 1. Automatic Extraction
+
+```typescript
+// After each trajectory completes
+async function extractKnowledge(trajectory: Trajectory): Promise<void> {
+  // Extract decisions
+  for (const decision of trajectory.retrospective?.decisions ?? []) {
+    await decisionLog.add({
+      ...decision,
+      relatedTrajectories: [trajectory.id],
+      date: trajectory.completedAt
+    });
+  }
+
+  // Extract patterns (if agent documented any)
+  const patterns = extractPatternsFromTrajectory(trajectory);
+  for (const pattern of patterns) {
+    await patternLibrary.add(pattern);
+  }
+
+  // Update knowledge base with new understanding
+  await knowledgeBase.updateFromTrajectory(trajectory);
+}
+```
+
+#### 2. Agent Contribution
+
+Agents can explicitly add to the workspace:
+
+```
+[[KNOWLEDGE:decision]]
+{
+  "title": "Use React Query for server state",
+  "context": "Needed to manage API data fetching",
+  "decision": "React Query over Redux for server state",
+  "alternatives": ["Redux + RTK Query", "SWR", "Custom hooks"],
+  "reasoning": "Better caching, less boilerplate, team familiarity"
+}
+[[/KNOWLEDGE]]
+
+[[KNOWLEDGE:pattern]]
+{
+  "name": "Feature Flag Check",
+  "description": "How to check feature flags in components",
+  "template": "const isEnabled = useFeatureFlag('flag-name');\nif (!isEnabled) return null;"
+}
+[[/KNOWLEDGE]]
+```
+
+#### 3. Human Curation
+
+Humans can add/edit knowledge directly:
+
+```bash
+# Add a decision
+agent-relay knowledge add-decision "Why we don't use GraphQL" \
+  --context "Evaluated for API layer" \
+  --decision "REST with OpenAPI" \
+  --reasoning "Team experience, tooling maturity"
+
+# Add a pattern
+agent-relay knowledge add-pattern "Error Boundary" \
+  --file templates/error-boundary.tsx
+
+# Add documentation
+agent-relay knowledge add-doc "Architecture Overview" \
+  --file docs/architecture.md
+```
+
+### Query Interface for Agents
+
+Agents query the workspace naturally:
+
+```typescript
+interface WorkspaceQuery {
+  // Natural language queries
+  ask(question: string): Promise<QueryResult>;
+
+  // Specific lookups
+  getTrajectory(id: string): Promise<Trajectory>;
+  getDecision(topic: string): Promise<Decision | null>;
+  getPattern(name: string): Promise<Pattern | null>;
+
+  // Contextual suggestions
+  suggestForTask(taskDescription: string): Promise<Suggestions>;
+}
+
+interface Suggestions {
+  relevantTrajectories: TrajectorySummary[];
+  applicablePatterns: Pattern[];
+  relatedDecisions: Decision[];
+  teamExperts: AgentInfo[];           // Who might help
+  potentialGotchas: string[];          // From past retrospectives
+}
+```
+
+**Example agent interaction:**
+
+```
+Agent starting task: "Add rate limiting to API endpoints"
+
+Agent queries: workspace.suggestForTask("Add rate limiting to API endpoints")
+
+Returns:
+{
+  relevantTrajectories: [
+    { id: "traj-abc", title: "Implemented auth rate limiting", confidence: 0.9 }
+  ],
+  applicablePatterns: [
+    { name: "Middleware Pattern", description: "How we add cross-cutting concerns" }
+  ],
+  relatedDecisions: [
+    { title: "Use Redis for distributed state", relevant: true }
+  ],
+  teamExperts: [
+    { name: "Alice", expertise: "Previously implemented rate limiting" }
+  ],
+  potentialGotchas: [
+    "Previous rate limiting had issues with Redis connection pooling - see traj-abc retrospective"
+  ]
+}
+```
+
+### Storage: Where Does It Live?
+
+```
+.agent-workspace/
+├── trajectories/           # Work history (detailed above)
+├── decisions/
+│   ├── index.json
+│   └── decisions.jsonl     # Append-only decision log
+├── patterns/
+│   ├── index.json
+│   └── api-endpoint.md
+│   └── react-component.md
+├── knowledge/
+│   ├── index.json
+│   ├── architecture.md
+│   └── conventions.md
+├── conversations/
+│   └── 2024-01-15.jsonl    # Daily conversation logs
+└── team/
+    └── context.json        # Team member expertise/status
+```
+
+### The Flywheel Effect
+
+```
+More trajectories → More extracted knowledge → Better agent context →
+Better decisions → Better retrospectives → Richer trajectories → ...
+```
+
+Over time, the workspace becomes increasingly valuable:
+- Agents make fewer mistakes
+- Decisions are more consistent
+- Onboarding is instant
+- Institutional memory persists
+- Humans can audit and understand agent work
+
+---
+
+## Integration: claude-mem
+
+[claude-mem](https://github.com/thedotmack/claude-mem) is a persistent memory system for Claude Code that captures tool usage and observations. It's solving a similar problem at a different layer.
+
+### How They Compare
+
+| Aspect | claude-mem | Trajectories |
+|--------|------------|--------------|
+| **Focus** | Tool observations | Task narratives |
+| **Granularity** | Per-tool-call | Per-task |
+| **Scope** | Single agent | Multi-agent |
+| **Structure** | Observations + concepts | Chapters + decisions |
+| **Query** | Semantic search | Task/decision lookup |
+| **Persistence** | SQLite + Chroma | File + SQLite |
+
+### They're Complementary, Not Competing
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     AGENT MEMORY STACK                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  TRAJECTORIES (Task Layer)                                     │
+│  "The story of the work"                                       │
+│  - Multi-agent coordination                                    │
+│  - Decisions & retrospectives                                  │
+│  - Human-readable narratives                                   │
+│           │                                                     │
+│           │ aggregates                                          │
+│           ▼                                                     │
+│  CLAUDE-MEM (Observation Layer)                                │
+│  "What happened during the work"                               │
+│  - Tool call observations                                      │
+│  - Semantic concepts                                           │
+│  - Session continuity                                          │
+│           │                                                     │
+│           │ captures                                            │
+│           ▼                                                     │
+│  RAW EVENTS (Execution Layer)                                  │
+│  - Tool calls                                                  │
+│  - File changes                                                │
+│  - Messages                                                    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Integration Strategy
+
+#### 1. Use claude-mem as Observation Source
+
+claude-mem already captures tool observations via hooks. Trajectories can aggregate these:
+
+```typescript
+// When trajectory chapter ends, pull observations from claude-mem
+async function enrichChapterFromClaudeMem(chapter: Chapter): Promise<void> {
+  const observations = await claudeMemClient.search({
+    timeRange: { start: chapter.startedAt, end: chapter.endedAt },
+    types: ['decision', 'discovery', 'bugfix']
+  });
+
+  chapter.events.push(...observations.map(obs => ({
+    ts: obs.timestamp,
+    type: 'observation',
+    content: obs.content,
+    source: 'claude-mem',
+    concepts: obs.concepts
+  })));
+}
+```
+
+#### 2. Shared Storage Layer
+
+Both could use the same SQLite database with different tables:
+
+```sql
+-- claude-mem tables
+CREATE TABLE observations (...);
+CREATE TABLE sessions (...);
+
+-- trajectory tables
+CREATE TABLE trajectories (...);
+CREATE TABLE chapters (...);
+
+-- linking table
+CREATE TABLE trajectory_observations (
+  trajectory_id TEXT,
+  observation_id TEXT,
+  FOREIGN KEY ...
+);
+```
+
+#### 3. Cross-Query Support
+
+Query trajectories, get relevant observations:
+
+```bash
+# "What observations were captured during task bd-123?"
+agent-relay trajectory bd-123 --show-observations
+
+# "What tasks used these concepts?"
+agent-relay search --concept "authentication" --include-trajectories
+```
+
+#### 4. Export/Import
+
+```bash
+# Export claude-mem session as trajectory
+claude-mem export session-123 --format trajectory > traj.json
+
+# Import trajectory into claude-mem for observation search
+agent-relay trajectory export bd-123 --format claude-mem | claude-mem import
+```
+
+### Proposed Hook Integration
+
+claude-mem uses Claude Code hooks. Trajectories can add complementary hooks:
+
+```typescript
+// SessionStart: Load active trajectory context
+hooks.onSessionStart(async () => {
+  const active = await trajectoryStore.getActive();
+  if (active) {
+    return {
+      context: `Active trajectory: ${active.task.title}\n` +
+               `Chapter: ${active.currentChapter.title}\n` +
+               `Decisions so far: ${active.decisions.map(d => d.title).join(', ')}`
+    };
+  }
+});
+
+// SessionEnd: Prompt for trajectory update
+hooks.onSessionEnd(async () => {
+  const active = await trajectoryStore.getActive();
+  if (active) {
+    return {
+      prompt: 'Before ending, update the trajectory with key decisions/learnings.'
+    };
+  }
+});
+```
+
+### Why Both Together
+
+| Use Case | claude-mem | Trajectories | Together |
+|----------|------------|--------------|----------|
+| "What tool did I use for X?" | ✅ | ❌ | ✅ |
+| "Why did we build it this way?" | ❌ | ✅ | ✅ |
+| "What happened in this session?" | ✅ | partial | ✅ |
+| "What's the full story of feature X?" | ❌ | ✅ | ✅ |
+| "What concepts are relevant to Y?" | ✅ | ❌ | ✅ |
+| "Who worked on what?" | ❌ | ✅ | ✅ |
+
+**claude-mem = operational memory** (detailed, semantic, per-agent)
+**Trajectories = narrative memory** (structured, task-centric, multi-agent)
+
+Together they create a complete memory stack.
+
+---
+
 ## Vision: Notion/Linear for Agent Work
 
 Think of trajectories as **the document layer for agent work**:
