@@ -36,6 +36,8 @@ interface SessionInfo {
   duration?: string;
   messageCount: number;
   summary?: string;
+  /** true if session is still active (no endedAt) */
+  isActive: boolean;
 }
 
 interface AgentSummary {
@@ -199,6 +201,7 @@ export async function startDashboard(port: number, dataDir: string, dbPath?: str
         duration: formatDuration(s.startedAt, s.endedAt),
         messageCount: s.messageCount,
         summary: s.summary,
+        isActive: !s.endedAt, // Active if no end time
       }));
     }
     return [];
