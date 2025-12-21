@@ -11,7 +11,7 @@
 
 import { Command } from 'commander';
 import { config as dotenvConfig } from 'dotenv';
-import { Daemon, DEFAULT_SOCKET_PATH } from '../daemon/server.js';
+import { Daemon } from '../daemon/server.js';
 import { RelayClient } from '../wrapper/client.js';
 import { generateAgentName } from '../utils/name-generator.js';
 import fs from 'node:fs';

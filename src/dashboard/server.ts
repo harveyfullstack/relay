@@ -4,7 +4,7 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { SqliteStorageAdapter, type StoredSession } from '../storage/sqlite-adapter.js';
+import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
 import type { StorageAdapter, StoredMessage } from '../storage/adapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
