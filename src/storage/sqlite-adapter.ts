@@ -1,32 +1,21 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { type MessageQuery, type StorageAdapter, type StoredMessage } from './adapter.js';
+import {
+  type AgentSummary,
+  type MessageQuery,
+  type SessionQuery,
+  type StorageAdapter,
+  type StoredMessage,
+  type StoredSession,
+} from './adapter.js';
 
 export interface SqliteAdapterOptions {
   dbPath: string;
 }
 
-export interface StoredSession {
-  id: string;
-  agentName: string;
-  cli?: string;
-  projectId?: string;
-  projectRoot?: string;
-  startedAt: number;
-  endedAt?: number;
-  messageCount: number;
-  summary?: string;
-  /** How the session was closed: 'agent' (explicit), 'disconnect', 'error', or undefined (still active) */
-  closedBy?: 'agent' | 'disconnect' | 'error';
-}
-
-export interface SessionQuery {
-  agentName?: string;
-  projectId?: string;
-  since?: number;
-  limit?: number;
-}
+// Re-export types for backwards compatibility
+export type { StoredSession, SessionQuery } from './adapter.js';
 
 type SqliteDriverName = 'better-sqlite3' | 'node';
 
@@ -439,16 +428,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
     );
   }
 
-  async getAgentSummary(agentName: string): Promise<{
-    agentName: string;
-    projectId?: string;
-    lastUpdated: number;
-    currentTask?: string;
-    completedTasks?: string[];
-    decisions?: string[];
-    context?: string;
-    files?: string[];
-  } | null> {
+  async getAgentSummary(agentName: string): Promise<AgentSummary | null> {
     if (!this.db) {
       throw new Error('SqliteStorageAdapter not initialized');
     }
@@ -474,16 +454,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
     };
   }
 
-  async getAllAgentSummaries(): Promise<Array<{
-    agentName: string;
-    projectId?: string;
-    lastUpdated: number;
-    currentTask?: string;
-    completedTasks?: string[];
-    decisions?: string[];
-    context?: string;
-    files?: string[];
-  }>> {
+  async getAllAgentSummaries(): Promise<AgentSummary[]> {
     if (!this.db) {
       throw new Error('SqliteStorageAdapter not initialized');
     }

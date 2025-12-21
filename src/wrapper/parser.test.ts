@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { OutputParser, formatIncomingMessage } from './parser.js';
+import { OutputParser, formatIncomingMessage, parseSummaryFromOutput, parseSessionEndFromOutput } from './parser.js';
 
 describe('OutputParser', () => {
   let parser: OutputParser;
@@ -592,5 +592,121 @@ describe('formatIncomingMessage', () => {
     const result = formatIncomingMessage('agent1', 'Line 1\nLine 2\nLine 3');
 
     expect(result).toBe('\n[MSG] from agent1: Line 1\nLine 2\nLine 3\n');
+  });
+});
+
+describe('parseSummaryFromOutput', () => {
+  it('parses valid JSON summary block', () => {
+    const output = `Some output
+[[SUMMARY]]
+{
+  "currentTask": "Implementing auth",
+  "context": "Working on login flow",
+  "files": ["src/auth.ts"]
+}
+[[/SUMMARY]]
+More output`;
+
+    const summary = parseSummaryFromOutput(output);
+    expect(summary).not.toBeNull();
+    expect(summary).toEqual({
+      currentTask: 'Implementing auth',
+      context: 'Working on login flow',
+      files: ['src/auth.ts'],
+    });
+  });
+
+  it('parses summary with all fields', () => {
+    const output = `[[SUMMARY]]{"currentTask":"Task 1","completedTasks":["T0"],"decisions":["Use JWT"],"context":"Auth work","files":["a.ts","b.ts"]}[[/SUMMARY]]`;
+
+    const summary = parseSummaryFromOutput(output);
+    expect(summary).toEqual({
+      currentTask: 'Task 1',
+      completedTasks: ['T0'],
+      decisions: ['Use JWT'],
+      context: 'Auth work',
+      files: ['a.ts', 'b.ts'],
+    });
+  });
+
+  it('returns null when no summary block exists', () => {
+    const output = 'Just regular output without any summary block';
+
+    const summary = parseSummaryFromOutput(output);
+    expect(summary).toBeNull();
+  });
+
+  it('returns null for invalid JSON', () => {
+    const output = '[[SUMMARY]]not valid json[[/SUMMARY]]';
+
+    const summary = parseSummaryFromOutput(output);
+    expect(summary).toBeNull();
+  });
+
+  it('handles empty summary block', () => {
+    const output = '[[SUMMARY]]{}[[/SUMMARY]]';
+
+    const summary = parseSummaryFromOutput(output);
+    expect(summary).toEqual({});
+  });
+});
+
+describe('parseSessionEndFromOutput', () => {
+  it('parses valid JSON session end block', () => {
+    const output = `Some output
+[[SESSION_END]]
+{
+  "summary": "Completed auth module",
+  "completedTasks": ["login", "logout"]
+}
+[[/SESSION_END]]
+More output`;
+
+    const result = parseSessionEndFromOutput(output);
+    expect(result).not.toBeNull();
+    expect(result).toEqual({
+      summary: 'Completed auth module',
+      completedTasks: ['login', 'logout'],
+    });
+  });
+
+  it('parses empty session end block', () => {
+    const output = '[[SESSION_END]][[/SESSION_END]]';
+
+    const result = parseSessionEndFromOutput(output);
+    expect(result).toEqual({});
+  });
+
+  it('parses session end with only summary', () => {
+    const output = '[[SESSION_END]]{"summary":"All done!"}[[/SESSION_END]]';
+
+    const result = parseSessionEndFromOutput(output);
+    expect(result).toEqual({ summary: 'All done!' });
+  });
+
+  it('treats non-JSON content as plain summary', () => {
+    const output = '[[SESSION_END]]Work completed successfully[[/SESSION_END]]';
+
+    const result = parseSessionEndFromOutput(output);
+    expect(result).toEqual({ summary: 'Work completed successfully' });
+  });
+
+  it('returns null when no session end block exists', () => {
+    const output = 'Regular output without session end';
+
+    const result = parseSessionEndFromOutput(output);
+    expect(result).toBeNull();
+  });
+
+  it('handles multiline plain text summary', () => {
+    const output = `[[SESSION_END]]
+Completed the following:
+- Feature A
+- Feature B
+[[/SESSION_END]]`;
+
+    const result = parseSessionEndFromOutput(output);
+    expect(result?.summary).toContain('Completed the following:');
+    expect(result?.summary).toContain('Feature A');
   });
 });
