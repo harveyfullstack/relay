@@ -10,6 +10,8 @@ import { Connection, type ConnectionConfig, DEFAULT_CONFIG } from './connection.
 import { Router } from './router.js';
 import type { Envelope, SendPayload } from '../protocol/types.js';
 import { createStorageAdapter, type StorageAdapter, type StorageConfig } from '../storage/adapter.js';
+import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
+import { getProjectPaths } from '../utils/project-namespace.js';
 
 export interface DaemonConfig extends ConnectionConfig {
   socketPath: string;
@@ -189,6 +191,19 @@ export class Daemon {
         this.router.register(connection);
         console.log(`[daemon] Agent registered: ${connection.agentName}`);
         this.writeAgentsFile();
+
+        // Record session start
+        if (this.storage instanceof SqliteStorageAdapter) {
+          const projectPaths = getProjectPaths();
+          this.storage.startSession({
+            id: connection.sessionId,
+            agentName: connection.agentName,
+            cli: connection.cli,
+            projectId: projectPaths.projectId,
+            projectRoot: projectPaths.projectRoot,
+            startedAt: Date.now(),
+          }).catch(err => console.error('[daemon] Failed to record session start:', err));
+        }
       }
     };
 
@@ -197,6 +212,12 @@ export class Daemon {
       this.connections.delete(connection);
       this.router.unregister(connection);
       this.writeAgentsFile();
+
+      // Record session end
+      if (this.storage instanceof SqliteStorageAdapter) {
+        this.storage.endSession(connection.sessionId)
+          .catch(err => console.error('[daemon] Failed to record session end:', err));
+      }
     };
 
     connection.onError = (error: Error) => {
@@ -204,6 +225,12 @@ export class Daemon {
       this.connections.delete(connection);
       this.router.unregister(connection);
       this.writeAgentsFile();
+
+      // Record session end on error too
+      if (this.storage instanceof SqliteStorageAdapter) {
+        this.storage.endSession(connection.sessionId)
+          .catch(err => console.error('[daemon] Failed to record session end:', err));
+      }
     };
   }
 

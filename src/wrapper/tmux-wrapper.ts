@@ -15,9 +15,11 @@
 import { exec, execSync, spawn, ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { RelayClient } from './client.js';
-import { OutputParser, type ParsedCommand } from './parser.js';
+import { OutputParser, type ParsedCommand, parseSummaryFromOutput, type ParsedSummary } from './parser.js';
 import { InboxManager } from './inbox.js';
 import type { SendPayload } from '../protocol/types.js';
+import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
+import { getProjectPaths } from '../utils/project-namespace.js';
 
 const execAsync = promisify(exec);
 const escapeRegex = (str: string): string => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -76,6 +78,7 @@ export class TmuxWrapper {
   private client: RelayClient;
   private parser: OutputParser;
   private inbox?: InboxManager;
+  private storage?: SqliteStorageAdapter;
   private running = false;
   private pollTimer?: NodeJS.Timeout;
   private attachProcess?: ChildProcess;
@@ -92,6 +95,7 @@ export class TmuxWrapper {
   private lastDebugLog = 0;
   private cliType: 'claude' | 'codex' | 'gemini' | 'other';
   private relayPrefix: string;
+  private lastSummaryHash = ''; // Dedup summary saves
 
   constructor(config: TmuxWrapperConfig) {
     this.config = {
@@ -142,6 +146,15 @@ export class TmuxWrapper {
         inboxDir: config.inboxDir,
       });
     }
+
+    // Initialize storage for session/summary persistence
+    const projectPaths = getProjectPaths();
+    this.storage = new SqliteStorageAdapter({ dbPath: projectPaths.dbPath });
+    // Initialize asynchronously (don't block constructor)
+    this.storage.init().catch(err => {
+      this.logStderr(`Failed to initialize storage: ${err.message}`, true);
+      this.storage = undefined;
+    });
 
     // Handle incoming messages from relay
     this.client.onMessage = (from: string, payload: SendPayload, messageId: string) => {
@@ -456,6 +469,9 @@ export class TmuxWrapper {
         this.sendRelayCommand(cmd);
       }
 
+      // Check for [[SUMMARY]] blocks and save to storage
+      this.parseSummaryAndSave(cleanContent);
+
       this.updateActivityState();
 
       // Also check for injection opportunity
@@ -599,6 +615,44 @@ export class TmuxWrapper {
       // Only log failure once per state change
       this.logStderr(`Send failed (client ${this.client.state})`);
     }
+  }
+
+  /**
+   * Parse [[SUMMARY]] blocks from output and save to storage.
+   * Agents can output summaries to maintain running context:
+   *
+   * [[SUMMARY]]
+   * {"currentTask": "Implementing auth", "context": "Completed login flow"}
+   * [[/SUMMARY]]
+   */
+  private parseSummaryAndSave(content: string): void {
+    const summary = parseSummaryFromOutput(content);
+    if (!summary) return;
+
+    // Dedup - don't save same summary twice
+    const summaryHash = JSON.stringify(summary);
+    if (summaryHash === this.lastSummaryHash) return;
+    this.lastSummaryHash = summaryHash;
+
+    if (!this.storage) {
+      this.logStderr('Cannot save summary: storage not initialized');
+      return;
+    }
+
+    const projectPaths = getProjectPaths();
+    this.storage.saveAgentSummary({
+      agentName: this.config.name,
+      projectId: projectPaths.projectId,
+      currentTask: summary.currentTask,
+      completedTasks: summary.completedTasks,
+      decisions: summary.decisions,
+      context: summary.context,
+      files: summary.files,
+    }).then(() => {
+      this.logStderr(`Saved agent summary: ${summary.currentTask || 'updated context'}`);
+    }).catch(err => {
+      this.logStderr(`Failed to save summary: ${err.message}`, true);
+    });
   }
 
   /**

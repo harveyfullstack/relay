@@ -526,3 +526,42 @@ export function formatIncomingMessage(from: string, body: string, kind: PayloadK
   const prefix = kind === 'thinking' ? '[THINKING]' : '[MSG]';
   return `\n${prefix} from ${from}: ${body}\n`;
 }
+
+/**
+ * Parsed summary block from agent output.
+ */
+export interface ParsedSummary {
+  currentTask?: string;
+  completedTasks?: string[];
+  decisions?: string[];
+  context?: string;
+  files?: string[];
+}
+
+/**
+ * Parse [[SUMMARY]]...[[/SUMMARY]] blocks from agent output.
+ * Agents can output summaries to keep a running context of their work.
+ *
+ * Format:
+ * [[SUMMARY]]
+ * {
+ *   "currentTask": "Working on auth module",
+ *   "context": "Completed login flow, now implementing logout",
+ *   "files": ["src/auth.ts", "src/session.ts"]
+ * }
+ * [[/SUMMARY]]
+ */
+export function parseSummaryFromOutput(output: string): ParsedSummary | null {
+  const match = output.match(/\[\[SUMMARY\]\]([\s\S]*?)\[\[\/SUMMARY\]\]/);
+
+  if (!match) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(match[1].trim()) as ParsedSummary;
+  } catch {
+    console.error('[parser] Invalid JSON in SUMMARY block');
+    return null;
+  }
+}

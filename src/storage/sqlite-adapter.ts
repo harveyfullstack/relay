@@ -7,6 +7,25 @@ export interface SqliteAdapterOptions {
   dbPath: string;
 }
 
+export interface StoredSession {
+  id: string;
+  agentName: string;
+  cli?: string;
+  projectId?: string;
+  projectRoot?: string;
+  startedAt: number;
+  endedAt?: number;
+  messageCount: number;
+  summary?: string;
+}
+
+export interface SessionQuery {
+  agentName?: string;
+  projectId?: string;
+  since?: number;
+  limit?: number;
+}
+
 type SqliteDriverName = 'better-sqlite3' | 'node';
 
 interface SqliteStatement {
@@ -26,6 +45,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
   private dbPath: string;
   private db?: SqliteDatabase;
   private insertStmt?: SqliteStatement;
+  private insertSessionStmt?: SqliteStatement;
   private driver?: SqliteDriverName;
 
   constructor(options: SqliteAdapterOptions) {
@@ -110,6 +130,33 @@ export class SqliteStorageAdapter implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages (recipient);
       CREATE INDEX IF NOT EXISTS idx_messages_topic ON messages (topic);
       CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages (thread);
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        agent_name TEXT NOT NULL,
+        cli TEXT,
+        project_id TEXT,
+        project_root TEXT,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        message_count INTEGER DEFAULT 0,
+        summary TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions (agent_name);
+      CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions (started_at);
+      CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions (project_id);
+
+      CREATE TABLE IF NOT EXISTS agent_summaries (
+        agent_name TEXT PRIMARY KEY,
+        project_id TEXT,
+        last_updated INTEGER NOT NULL,
+        current_task TEXT,
+        completed_tasks TEXT,
+        decisions TEXT,
+        context TEXT,
+        files TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_summaries_updated ON agent_summaries (last_updated);
     `);
 
     // Migration: add thread column if missing (for existing databases)
@@ -243,5 +290,208 @@ export class SqliteStorageAdapter implements StorageAdapter {
       this.db.close();
       this.db = undefined;
     }
+  }
+
+  // ============ Session Management ============
+
+  async startSession(session: Omit<StoredSession, 'messageCount'>): Promise<void> {
+    if (!this.db) {
+      throw new Error('SqliteStorageAdapter not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO sessions
+      (id, agent_name, cli, project_id, project_root, started_at, ended_at, message_count, summary)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      session.id,
+      session.agentName,
+      session.cli ?? null,
+      session.projectId ?? null,
+      session.projectRoot ?? null,
+      session.startedAt,
+      session.endedAt ?? null,
+      0,
+      session.summary ?? null
+    );
+  }
+
+  async endSession(sessionId: string, summary?: string): Promise<void> {
+    if (!this.db) {
+      throw new Error('SqliteStorageAdapter not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      UPDATE sessions
+      SET ended_at = ?, summary = COALESCE(?, summary)
+      WHERE id = ?
+    `);
+
+    stmt.run(Date.now(), summary ?? null, sessionId);
+  }
+
+  async incrementSessionMessageCount(sessionId: string): Promise<void> {
+    if (!this.db) {
+      throw new Error('SqliteStorageAdapter not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      UPDATE sessions SET message_count = message_count + 1 WHERE id = ?
+    `);
+
+    stmt.run(sessionId);
+  }
+
+  async getSessions(query: SessionQuery = {}): Promise<StoredSession[]> {
+    if (!this.db) {
+      throw new Error('SqliteStorageAdapter not initialized');
+    }
+
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (query.agentName) {
+      clauses.push('agent_name = ?');
+      params.push(query.agentName);
+    }
+    if (query.projectId) {
+      clauses.push('project_id = ?');
+      params.push(query.projectId);
+    }
+    if (query.since) {
+      clauses.push('started_at >= ?');
+      params.push(query.since);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limit = query.limit ?? 50;
+
+    const stmt = this.db.prepare(`
+      SELECT id, agent_name, cli, project_id, project_root, started_at, ended_at, message_count, summary
+      FROM sessions
+      ${where}
+      ORDER BY started_at DESC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(...params, limit);
+    return rows.map((row: any) => ({
+      id: row.id,
+      agentName: row.agent_name,
+      cli: row.cli ?? undefined,
+      projectId: row.project_id ?? undefined,
+      projectRoot: row.project_root ?? undefined,
+      startedAt: row.started_at,
+      endedAt: row.ended_at ?? undefined,
+      messageCount: row.message_count,
+      summary: row.summary ?? undefined,
+    }));
+  }
+
+  async getRecentSessions(limit: number = 10): Promise<StoredSession[]> {
+    return this.getSessions({ limit });
+  }
+
+  // ============ Agent Summaries ============
+
+  async saveAgentSummary(summary: {
+    agentName: string;
+    projectId?: string;
+    currentTask?: string;
+    completedTasks?: string[];
+    decisions?: string[];
+    context?: string;
+    files?: string[];
+  }): Promise<void> {
+    if (!this.db) {
+      throw new Error('SqliteStorageAdapter not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO agent_summaries
+      (agent_name, project_id, last_updated, current_task, completed_tasks, decisions, context, files)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      summary.agentName,
+      summary.projectId ?? null,
+      Date.now(),
+      summary.currentTask ?? null,
+      summary.completedTasks ? JSON.stringify(summary.completedTasks) : null,
+      summary.decisions ? JSON.stringify(summary.decisions) : null,
+      summary.context ?? null,
+      summary.files ? JSON.stringify(summary.files) : null
+    );
+  }
+
+  async getAgentSummary(agentName: string): Promise<{
+    agentName: string;
+    projectId?: string;
+    lastUpdated: number;
+    currentTask?: string;
+    completedTasks?: string[];
+    decisions?: string[];
+    context?: string;
+    files?: string[];
+  } | null> {
+    if (!this.db) {
+      throw new Error('SqliteStorageAdapter not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      SELECT agent_name, project_id, last_updated, current_task, completed_tasks, decisions, context, files
+      FROM agent_summaries
+      WHERE agent_name = ?
+    `);
+
+    const row: any = stmt.get(agentName);
+    if (!row) return null;
+
+    return {
+      agentName: row.agent_name,
+      projectId: row.project_id ?? undefined,
+      lastUpdated: row.last_updated,
+      currentTask: row.current_task ?? undefined,
+      completedTasks: row.completed_tasks ? JSON.parse(row.completed_tasks) : undefined,
+      decisions: row.decisions ? JSON.parse(row.decisions) : undefined,
+      context: row.context ?? undefined,
+      files: row.files ? JSON.parse(row.files) : undefined,
+    };
+  }
+
+  async getAllAgentSummaries(): Promise<Array<{
+    agentName: string;
+    projectId?: string;
+    lastUpdated: number;
+    currentTask?: string;
+    completedTasks?: string[];
+    decisions?: string[];
+    context?: string;
+    files?: string[];
+  }>> {
+    if (!this.db) {
+      throw new Error('SqliteStorageAdapter not initialized');
+    }
+
+    const stmt = this.db.prepare(`
+      SELECT agent_name, project_id, last_updated, current_task, completed_tasks, decisions, context, files
+      FROM agent_summaries
+      ORDER BY last_updated DESC
+    `);
+
+    const rows = stmt.all();
+    return rows.map((row: any) => ({
+      agentName: row.agent_name,
+      projectId: row.project_id ?? undefined,
+      lastUpdated: row.last_updated,
+      currentTask: row.current_task ?? undefined,
+      completedTasks: row.completed_tasks ? JSON.parse(row.completed_tasks) : undefined,
+      decisions: row.decisions ? JSON.parse(row.decisions) : undefined,
+      context: row.context ?? undefined,
+      files: row.files ? JSON.parse(row.files) : undefined,
+    }));
   }
 }
