@@ -328,8 +328,8 @@ export class TmuxWrapper {
     const instructions = [
       `[Agent Relay] You are "${this.config.name}" - connected for real-time messaging.`,
       `SEND: ${this.relayPrefix}AgentName message (or ${this.relayPrefix}* to broadcast)`,
-      `RECEIVE: "Relay message from X [id]: content"`,
-      `TRUNCATED: Run "agent-relay read <id>" if message seems cut off`,
+      `RECEIVE: Messages appear as "Relay message from X [id]: content"`,
+      `SUMMARY: Periodically output [[SUMMARY]]{"currentTask":"...","context":"..."}[[/SUMMARY]] to track your progress`,
     ].join(' | ');
 
     try {
