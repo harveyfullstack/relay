@@ -565,3 +565,42 @@ export function parseSummaryFromOutput(output: string): ParsedSummary | null {
     return null;
   }
 }
+
+/**
+ * Session end marker from agent output.
+ */
+export interface SessionEndMarker {
+  summary?: string;
+  completedTasks?: string[];
+}
+
+/**
+ * Parse [[SESSION_END]]...[[/SESSION_END]] blocks from agent output.
+ * Agents output this to explicitly mark their session as complete.
+ *
+ * Format:
+ * [[SESSION_END]]
+ * {"summary": "Completed auth module implementation", "completedTasks": ["login", "logout"]}
+ * [[/SESSION_END]]
+ *
+ * Or simply: [[SESSION_END]][[/SESSION_END]] for a clean close without summary.
+ */
+export function parseSessionEndFromOutput(output: string): SessionEndMarker | null {
+  const match = output.match(/\[\[SESSION_END\]\]([\s\S]*?)\[\[\/SESSION_END\]\]/);
+
+  if (!match) {
+    return null;
+  }
+
+  const content = match[1].trim();
+  if (!content) {
+    return {}; // Empty marker = session ended without summary
+  }
+
+  try {
+    return JSON.parse(content) as SessionEndMarker;
+  } catch {
+    // If not valid JSON, treat the content as a plain summary string
+    return { summary: content };
+  }
+}

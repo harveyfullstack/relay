@@ -17,6 +17,8 @@ export interface StoredSession {
   endedAt?: number;
   messageCount: number;
   summary?: string;
+  /** How the session was closed: 'agent' (explicit), 'disconnect', 'error', or undefined (still active) */
+  closedBy?: 'agent' | 'disconnect' | 'error';
 }
 
 export interface SessionQuery {
@@ -140,7 +142,8 @@ export class SqliteStorageAdapter implements StorageAdapter {
         started_at INTEGER NOT NULL,
         ended_at INTEGER,
         message_count INTEGER DEFAULT 0,
-        summary TEXT
+        summary TEXT,
+        closed_by TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions (agent_name);
       CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions (started_at);
@@ -318,18 +321,26 @@ export class SqliteStorageAdapter implements StorageAdapter {
     );
   }
 
-  async endSession(sessionId: string, summary?: string): Promise<void> {
+  async endSession(
+    sessionId: string,
+    options?: { summary?: string; closedBy?: 'agent' | 'disconnect' | 'error' }
+  ): Promise<void> {
     if (!this.db) {
       throw new Error('SqliteStorageAdapter not initialized');
     }
 
     const stmt = this.db.prepare(`
       UPDATE sessions
-      SET ended_at = ?, summary = COALESCE(?, summary)
+      SET ended_at = ?, summary = COALESCE(?, summary), closed_by = ?
       WHERE id = ?
     `);
 
-    stmt.run(Date.now(), summary ?? null, sessionId);
+    stmt.run(
+      Date.now(),
+      options?.summary ?? null,
+      options?.closedBy ?? null,
+      sessionId
+    );
   }
 
   async incrementSessionMessageCount(sessionId: string): Promise<void> {
@@ -369,7 +380,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
     const limit = query.limit ?? 50;
 
     const stmt = this.db.prepare(`
-      SELECT id, agent_name, cli, project_id, project_root, started_at, ended_at, message_count, summary
+      SELECT id, agent_name, cli, project_id, project_root, started_at, ended_at, message_count, summary, closed_by
       FROM sessions
       ${where}
       ORDER BY started_at DESC
@@ -387,6 +398,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
       endedAt: row.ended_at ?? undefined,
       messageCount: row.message_count,
       summary: row.summary ?? undefined,
+      closedBy: row.closed_by ?? undefined,
     }));
   }
 

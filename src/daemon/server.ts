@@ -213,9 +213,9 @@ export class Daemon {
       this.router.unregister(connection);
       this.writeAgentsFile();
 
-      // Record session end
+      // Record session end (disconnect - agent may still mark it closed explicitly)
       if (this.storage instanceof SqliteStorageAdapter) {
-        this.storage.endSession(connection.sessionId)
+        this.storage.endSession(connection.sessionId, { closedBy: 'disconnect' })
           .catch(err => console.error('[daemon] Failed to record session end:', err));
       }
     };
@@ -226,9 +226,9 @@ export class Daemon {
       this.router.unregister(connection);
       this.writeAgentsFile();
 
-      // Record session end on error too
+      // Record session end on error
       if (this.storage instanceof SqliteStorageAdapter) {
-        this.storage.endSession(connection.sessionId)
+        this.storage.endSession(connection.sessionId, { closedBy: 'error' })
           .catch(err => console.error('[daemon] Failed to record session end:', err));
       }
     };

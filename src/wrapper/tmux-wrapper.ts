@@ -15,7 +15,7 @@
 import { exec, execSync, spawn, ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { RelayClient } from './client.js';
-import { OutputParser, type ParsedCommand, parseSummaryFromOutput, type ParsedSummary } from './parser.js';
+import { OutputParser, type ParsedCommand, parseSummaryFromOutput, parseSessionEndFromOutput, type ParsedSummary } from './parser.js';
 import { InboxManager } from './inbox.js';
 import type { SendPayload } from '../protocol/types.js';
 import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
@@ -329,7 +329,8 @@ export class TmuxWrapper {
       `[Agent Relay] You are "${this.config.name}" - connected for real-time messaging.`,
       `SEND: ${this.relayPrefix}AgentName message (or ${this.relayPrefix}* to broadcast)`,
       `RECEIVE: Messages appear as "Relay message from X [id]: content"`,
-      `SUMMARY: Periodically output [[SUMMARY]]{"currentTask":"...","context":"..."}[[/SUMMARY]] to track your progress`,
+      `SUMMARY: Periodically output [[SUMMARY]]{"currentTask":"...","context":"..."}[[/SUMMARY]] to track progress`,
+      `END: Output [[SESSION_END]]{"summary":"..."}[[/SESSION_END]] when your task is complete`,
     ].join(' | ');
 
     try {
@@ -471,6 +472,9 @@ export class TmuxWrapper {
 
       // Check for [[SUMMARY]] blocks and save to storage
       this.parseSummaryAndSave(cleanContent);
+
+      // Check for [[SESSION_END]] blocks to explicitly close session
+      this.parseSessionEndAndClose(cleanContent);
 
       this.updateActivityState();
 
@@ -652,6 +656,46 @@ export class TmuxWrapper {
       this.logStderr(`Saved agent summary: ${summary.currentTask || 'updated context'}`);
     }).catch(err => {
       this.logStderr(`Failed to save summary: ${err.message}`, true);
+    });
+  }
+
+  private sessionEndProcessed = false; // Track if we've already processed session end
+
+  /**
+   * Parse [[SESSION_END]] blocks from output and close session explicitly.
+   * Agents output this to mark their work session as complete:
+   *
+   * [[SESSION_END]]
+   * {"summary": "Completed auth module", "completedTasks": ["login", "logout"]}
+   * [[/SESSION_END]]
+   */
+  private parseSessionEndAndClose(content: string): void {
+    if (this.sessionEndProcessed) return; // Only process once
+
+    const sessionEnd = parseSessionEndFromOutput(content);
+    if (!sessionEnd) return;
+
+    this.sessionEndProcessed = true;
+
+    if (!this.storage) {
+      this.logStderr('Cannot close session: storage not initialized');
+      return;
+    }
+
+    // Get session ID from client connection
+    const sessionId = this.client.sessionId;
+    if (!sessionId) {
+      this.logStderr('Cannot close session: no session ID');
+      return;
+    }
+
+    this.storage.endSession(sessionId, {
+      summary: sessionEnd.summary,
+      closedBy: 'agent',
+    }).then(() => {
+      this.logStderr(`Session closed by agent: ${sessionEnd.summary || 'complete'}`);
+    }).catch(err => {
+      this.logStderr(`Failed to close session: ${err.message}`, true);
     });
   }
 
