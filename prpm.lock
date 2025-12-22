@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "lockfileVersion": 1,
+  "packages": {
+    "@prpm/creating-claude-hooks-skill#claude": {
+      "version": "1.0.0",
+      "resolved": "https://registry.prpm.dev/api/v1/packages/%40prpm%2Fcreating-claude-hooks-skill/1.0.0.tar.gz",
+      "integrity": "sha256-2d10ad7a10204009d73b34172a9f54e5ad0858c76581a9f9579ee0e194f94505",
+      "format": "claude",
+      "subtype": "skill",
+      "sourceFormat": "claude",
+      "sourceSubtype": "skill",
+      "installedPath": ".claude/skills/creating-claude-hooks-skill/SKILL.md"
+    },
+    "@anthropic/frontend-design#claude": {
+      "version": "1.0.0",
+      "resolved": "https://registry.prpm.dev/api/v1/packages/%40anthropic%2Ffrontend-design/1.0.0.tar.gz",
+      "integrity": "sha256-404d3d731beb8feaf0d7fff7fa967538686246cd930da612db753fa76e5fb057",
+      "format": "claude",
+      "subtype": "skill",
+      "sourceFormat": "claude",
+      "sourceSubtype": "skill",
+      "installedPath": ".claude/skills/frontend-design/SKILL.md"
+    },
+    "@prpm/creating-skills-skill#claude": {
+      "version": "1.0.4",
+      "resolved": "https://registry.prpm.dev/api/v1/packages/%40prpm%2Fcreating-skills-skill/1.0.4.tar.gz",
+      "integrity": "sha256-845d12bda6e5b37ed3177e2a867f57319327704b2206d58643d8e06cecb64241",
+      "format": "claude",
+      "subtype": "skill",
+      "sourceFormat": "claude",
+      "sourceSubtype": "skill",
+      "installedPath": ".claude/skills/creating-skills-skill/SKILL.md"
+    },
+    "@prpm/prpm-json-best-practices-skill#claude": {
+      "version": "1.2.0",
+      "resolved": "https://registry.prpm.dev/api/v1/packages/%40prpm%2Fprpm-json-best-practices-skill/1.2.0.tar.gz",
+      "integrity": "sha256-13f5c9204ef0db4cd37ef2339fa9cc5743de993c73244230760e73612476d826",
+      "format": "claude",
+      "subtype": "skill",
+      "sourceFormat": "claude",
+      "sourceSubtype": "skill",
+      "installedPath": ".claude/skills/prpm-json-best-practices-skill"
+    }
+  },
+  "generated": "2025-12-22T20:42:17.879Z"
+}
