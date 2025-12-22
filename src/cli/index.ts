@@ -74,6 +74,8 @@ program
       socketPath: paths.socketPath,
       debug: false,  // Use -q to keep quiet (debug off by default)
       relayPrefix: options.prefix,
+      useInbox: true,
+      inboxDir: paths.dataDir, // Use the project-specific data directory for the inbox
     });
 
     process.on('SIGINT', () => {
