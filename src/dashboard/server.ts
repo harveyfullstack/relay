@@ -26,6 +26,7 @@ interface Message {
   content: string;
   timestamp: string;
   id: string; // unique-ish id
+  thread?: string;
 }
 
 interface SessionInfo {
@@ -55,7 +56,7 @@ interface AgentSummary {
   context?: string;
 }
 
-export async function startDashboard(port: number, dataDir: string, dbPath?: string): Promise<number> {
+export async function startDashboard(port: number, dataDir: string, teamDir: string, dbPath?: string): Promise<number> {
   console.log('Starting dashboard...');
   console.log('__dirname:', __dirname);
   const publicDir = path.join(__dirname, 'public');
@@ -153,7 +154,7 @@ export async function startDashboard(port: number, dataDir: string, dbPath?: str
 
   const getTeamData = () => {
     // Try team.json first (file-based team mode)
-    const teamPath = path.join(dataDir, 'team.json');
+    const teamPath = path.join(teamDir, 'team.json');
     if (fs.existsSync(teamPath)) {
       try {
         return JSON.parse(fs.readFileSync(teamPath, 'utf-8'));
@@ -163,7 +164,7 @@ export async function startDashboard(port: number, dataDir: string, dbPath?: str
     }
 
     // Fall back to agents.json (daemon mode - live connected agents)
-    const agentsPath = path.join(dataDir, 'agents.json');
+    const agentsPath = path.join(teamDir, 'agents.json');
     if (fs.existsSync(agentsPath)) {
       try {
         const data = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
@@ -235,6 +236,7 @@ export async function startDashboard(port: number, dataDir: string, dbPath?: str
       content: row.body,
       timestamp: new Date(row.ts).toISOString(),
       id: row.id,
+      thread: row.thread,
     }));
 
   const getMessages = async (agents: any[]): Promise<Message[]> => {

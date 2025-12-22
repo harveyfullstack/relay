@@ -283,6 +283,36 @@
       margin-left: auto;
     }
 
+    .thread-badge {
+      background: var(--primary-muted);
+      color: var(--primary);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 500;
+    }
+
+    .filter-section {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .thread-filter {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.75rem;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+
+    .thread-filter:focus {
+      border-color: var(--primary);
+      outline: none;
+    }
+
     .msg-text {
       font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
       font-size: 0.8rem;
@@ -486,6 +516,11 @@
         <div class="activity-log">
             <div class="log-header">
                 <h2>Activity</h2>
+                <div class="filter-section">
+                    <select id="thread-filter" class="thread-filter">
+                        <option value="">All threads</option>
+                    </select>
+                </div>
                 <div class="live-indicator">
                     <span class="live-dot"></span>
                     <span>Live</span>
@@ -526,10 +561,13 @@
     const messageInput = document.getElementById('message-input');
     const sendBtn = document.getElementById('send-btn');
     const sendStatus = document.getElementById('send-status');
+    const threadFilter = document.getElementById('thread-filter');
 
     // Track last data hash to prevent unnecessary re-renders
     let lastDataHash = '';
     let currentAgents = [];
+    let currentThreads = [];
+    let allMessages = [];
 
     function connect() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -604,13 +642,18 @@
 
         // Render Messages (Activity Log)
         if (data.messages && data.messages.length > 0) {
-            const currentCount = logContainer.querySelectorAll('.message').length;
-            const newCount = data.messages.length;
+            allMessages = data.messages;
 
-            if (currentCount !== newCount) {
-                logContainer.innerHTML = data.messages.map(m => createMessageHTML(m)).join('');
+            // Update thread filter dropdown
+            const threads = [...new Set(data.messages.filter(m => m.thread).map(m => m.thread))].sort();
+            if (JSON.stringify(threads) !== JSON.stringify(currentThreads)) {
+                currentThreads = threads;
+                updateThreadDropdown(threads);
             }
+
+            renderMessages();
         } else if (!logContainer.querySelector('.empty-state')) {
+            allMessages = [];
             logContainer.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-text">No messages yet</div>
@@ -619,16 +662,50 @@
         }
     }
 
+    function renderMessages() {
+        const selectedThread = threadFilter.value;
+        const filtered = selectedThread
+            ? allMessages.filter(m => m.thread === selectedThread)
+            : allMessages;
+
+        if (filtered.length > 0) {
+            logContainer.innerHTML = filtered.map(m => createMessageHTML(m)).join('');
+        } else {
+            logContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-text">No messages${selectedThread ? ' in this thread' : ''}</div>
+                </div>
+            `;
+        }
+    }
+
+    function updateThreadDropdown(threads) {
+        const currentValue = threadFilter.value;
+        threadFilter.innerHTML = `
+            <option value="">All threads (${allMessages.length})</option>
+            ${threads.map(t => {
+                const count = allMessages.filter(m => m.thread === t).length;
+                return `<option value="${escapeHtml(t)}">#${escapeHtml(t)} (${count})</option>`;
+            }).join('')}
+        `;
+        // Restore selection if still valid
+        if (currentValue && threads.includes(currentValue)) {
+            threadFilter.value = currentValue;
+        }
+    }
+
     function createMessageHTML(m) {
         const initials = m.from.substring(0, 2).toUpperCase();
+        const threadBadge = m.thread ? `<span class="thread-badge" title="Thread: ${escapeHtml(m.thread)}">#${escapeHtml(m.thread)}</span>` : '';
         return `
-            <div class="message">
+            <div class="message" ${m.thread ? `data-thread="${escapeHtml(m.thread)}"` : ''}>
                 <div class="msg-avatar">${initials}</div>
                 <div class="msg-body">
                     <div class="msg-meta">
                         <span class="msg-sender">${m.from}</span>
                         <span class="msg-arrow">→</span>
                         <span class="msg-target">${m.to}</span>
+                        ${threadBadge}
                         <span class="msg-time">${new Date(m.timestamp).toLocaleTimeString()}</span>
                     </div>
                     <div class="msg-text">${escapeHtml(m.content)}</div>
@@ -720,6 +797,9 @@
 
     // Send button click handler
     sendBtn.addEventListener('click', sendMessage);
+
+    // Thread filter change handler
+    threadFilter.addEventListener('change', renderMessages);
 
     // Allow Ctrl+Enter to send
     messageInput.addEventListener('keydown', (e) => {

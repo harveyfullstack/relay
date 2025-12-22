@@ -130,7 +130,7 @@ program
       if (options.dashboard !== false) {
         const port = parseInt(options.port, 10);
         const { startDashboard } = await import('../dashboard/server.js');
-        const actualPort = await startDashboard(port, paths.teamDir, dbPath);
+        const actualPort = await startDashboard(port, paths.dataDir, paths.teamDir, dbPath);
         console.log(`Dashboard: http://localhost:${actualPort}`);
       }
 
@@ -337,6 +337,76 @@ program
   .description('Show version information')
   .action(() => {
     console.log(`agent-relay v${VERSION}`);
+  });
+
+// gc - Clean up orphaned tmux sessions
+program
+  .command('gc')
+  .description('Clean up orphaned tmux sessions (sessions with no connected agent)')
+  .option('--dry-run', 'Show what would be cleaned without actually doing it')
+  .option('--force', 'Kill all relay sessions regardless of connection status')
+  .action(async (options: { dryRun?: boolean; force?: boolean }) => {
+    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const paths = getProjectPaths();
+    const agentsPath = path.join(paths.teamDir, 'agents.json');
+
+    // Get all relay tmux sessions
+    const sessions = await discoverRelaySessions();
+    if (!sessions.length) {
+      console.log('No relay tmux sessions found.');
+      return;
+    }
+
+    // Get connected agents
+    const connectedAgents = new Set<string>();
+    if (!options.force) {
+      const agents = loadAgents(agentsPath);
+      // Consider an agent "connected" if last seen within 30 seconds
+      const staleThresholdMs = 30_000;
+      const now = Date.now();
+      agents.forEach(a => {
+        if (a.name && a.lastSeen) {
+          const lastSeenTs = Date.parse(a.lastSeen);
+          if (!Number.isNaN(lastSeenTs) && now - lastSeenTs < staleThresholdMs) {
+            connectedAgents.add(a.name);
+          }
+        }
+      });
+    }
+
+    // Find orphaned sessions
+    const orphaned = sessions.filter(s =>
+      options.force || (s.agentName && !connectedAgents.has(s.agentName))
+    );
+
+    if (!orphaned.length) {
+      console.log(`All ${sessions.length} session(s) have active agents.`);
+      return;
+    }
+
+    console.log(`Found ${orphaned.length} orphaned session(s):`);
+    for (const session of orphaned) {
+      console.log(`  - ${session.sessionName} (agent: ${session.agentName ?? 'unknown'})`);
+    }
+
+    if (options.dryRun) {
+      console.log('\nDry run - no sessions killed.');
+      return;
+    }
+
+    // Kill orphaned sessions
+    let killed = 0;
+    for (const session of orphaned) {
+      try {
+        await execAsync(`tmux kill-session -t ${session.sessionName}`);
+        killed++;
+        console.log(`Killed: ${session.sessionName}`);
+      } catch (err) {
+        console.error(`Failed to kill ${session.sessionName}: ${(err as Error).message}`);
+      }
+    }
+
+    console.log(`\nCleaned up ${killed}/${orphaned.length} session(s).`);
   });
 
 interface RelaySessionInfo {

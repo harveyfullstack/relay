@@ -43,6 +43,9 @@ export class Connection {
   private _state: ConnectionState = 'CONNECTING';
   private _agentName?: string;
   private _cli?: string;
+  private _program?: string;
+  private _model?: string;
+  private _task?: string;
   private _workingDirectory?: string;
   private _sessionId: string;
   private _resumeToken: string;
@@ -82,6 +85,18 @@ export class Connection {
 
   get cli(): string | undefined {
     return this._cli;
+  }
+
+  get program(): string | undefined {
+    return this._program;
+  }
+
+  get model(): string | undefined {
+    return this._model;
+  }
+
+  get task(): string | undefined {
+    return this._task;
   }
 
   get workingDirectory(): string | undefined {
@@ -144,6 +159,9 @@ export class Connection {
 
     this._agentName = envelope.payload.agent;
     this._cli = envelope.payload.cli;
+    this._program = envelope.payload.program;
+    this._model = envelope.payload.model;
+    this._task = envelope.payload.task;
     this._workingDirectory = envelope.payload.workingDirectory;
 
     // Check for session resume

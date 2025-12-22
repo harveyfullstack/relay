@@ -189,17 +189,20 @@ export class Daemon {
 
     // Register agent when connection becomes active (after successful handshake)
     connection.onActive = () => {
-      if (connection.agentName) {
-        this.router.register(connection);
-        console.log(`[daemon] Agent registered: ${connection.agentName}`);
         if (connection.agentName) {
-          this.registry?.registerOrUpdate({
-            name: connection.agentName,
-            cli: connection.cli,
-            workingDirectory: connection.workingDirectory,
-          });
-          this.writeAgentsFile();
-        }
+          this.router.register(connection);
+          console.log(`[daemon] Agent registered: ${connection.agentName}`);
+          if (connection.agentName) {
+            this.registry?.registerOrUpdate({
+              name: connection.agentName,
+              cli: connection.cli,
+              program: connection.program,
+              model: connection.model,
+              task: connection.task,
+              workingDirectory: connection.workingDirectory,
+            });
+            this.writeAgentsFile();
+          }
 
         // Record session start
         if (this.storage instanceof SqliteStorageAdapter) {
