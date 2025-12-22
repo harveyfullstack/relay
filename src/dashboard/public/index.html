@@ -365,104 +365,237 @@
       line-height: 1.6;
     }
 
-    /* Compose Section */
+    /* Compose Section - Command Center Aesthetic */
     .compose-section {
-      padding: 16px 20px;
+      padding: 20px 24px;
       border-top: 1px solid var(--border-color);
-      background: var(--bg-secondary);
+      background: linear-gradient(180deg, var(--bg-secondary) 0%, rgba(9, 9, 11, 0.95) 100%);
+      position: relative;
     }
 
-    .compose-header {
-      font-size: 0.75rem;
-      font-weight: 500;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 12px;
+    .compose-section::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 24px;
+      right: 24px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+      opacity: 0.3;
     }
 
-    .compose-form {
+    .compose-wrapper {
       display: flex;
-      flex-direction: column;
-      gap: 12px;
+      gap: 16px;
+      align-items: stretch;
     }
 
-    .compose-row {
-      display: flex;
-      gap: 12px;
-      align-items: flex-end;
-    }
-
-    .compose-field {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .compose-field.grow {
+    .compose-input-area {
       flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
 
-    .compose-field label {
-      font-size: 0.75rem;
-      color: var(--text-secondary);
+    .compose-meta-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
     }
 
-    .compose-field select,
-    .compose-field textarea {
+    .compose-to {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .compose-to label {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    }
+
+    .compose-to select {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font-size: 0.8125rem;
+      padding: 8px 12px;
+      outline: none;
+      transition: all 0.2s ease;
+      cursor: pointer;
+      min-width: 180px;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 32px;
+    }
+
+    .compose-to select:hover {
+      border-color: var(--border-hover);
+    }
+
+    .compose-to select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-muted), inset 0 0 20px rgba(59, 130, 246, 0.05);
+    }
+
+    .compose-hint {
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      margin-left: auto;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+
+    .compose-section:focus-within .compose-hint {
+      opacity: 1;
+    }
+
+    .compose-hint kbd {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-color);
+      border-radius: 3px;
+      padding: 3px 6px;
+      font-family: inherit;
+      font-size: 0.625rem;
+      box-shadow: 0 1px 0 var(--border-color);
+    }
+
+    .compose-input-row {
+      display: flex;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .compose-textarea-wrapper {
+      flex: 1;
+      position: relative;
+    }
+
+    .compose-textarea-wrapper::before {
+      content: '>';
+      position: absolute;
+      left: 14px;
+      top: 14px;
+      color: var(--primary);
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font-size: 0.875rem;
+      font-weight: 600;
+      opacity: 0.6;
+      transition: opacity 0.2s;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .compose-textarea-wrapper:focus-within::before {
+      opacity: 1;
+      animation: blink 1.2s step-end infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .compose-textarea-wrapper textarea {
+      width: 100%;
       background: var(--bg-primary);
       border: 1px solid var(--border-color);
       border-radius: 6px;
       color: var(--text);
-      font-family: inherit;
-      font-size: 0.875rem;
-      padding: 8px 12px;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-
-    .compose-field select:focus,
-    .compose-field textarea:focus {
-      border-color: var(--primary);
-    }
-
-    .compose-field select {
-      min-width: 150px;
-      cursor: pointer;
-    }
-
-    .compose-field textarea {
-      resize: none;
-      min-height: 60px;
       font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font-size: 0.8125rem;
+      padding: 12px 14px 12px 32px;
+      outline: none;
+      transition: all 0.2s ease;
+      resize: none;
+      min-height: 80px;
+      line-height: 1.6;
+    }
+
+    .compose-textarea-wrapper textarea:hover {
+      border-color: var(--border-hover);
+    }
+
+    .compose-textarea-wrapper textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-muted), inset 0 0 30px rgba(59, 130, 246, 0.03);
+      background: linear-gradient(180deg, var(--bg-primary) 0%, rgba(59, 130, 246, 0.02) 100%);
+    }
+
+    .compose-textarea-wrapper textarea::placeholder {
+      color: var(--text-muted);
+      opacity: 0.5;
     }
 
     .send-btn {
-      background: var(--primary);
+      background: linear-gradient(180deg, var(--primary) 0%, #2563eb 100%);
       color: white;
       border: none;
       border-radius: 6px;
-      padding: 8px 16px;
-      font-size: 0.875rem;
-      font-weight: 500;
+      padding: 0 24px;
+      min-width: 100px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
       cursor: pointer;
-      transition: background 0.15s, opacity 0.15s;
+      transition: all 0.2s ease;
       white-space: nowrap;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .send-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+      pointer-events: none;
     }
 
     .send-btn:hover {
-      background: #2563eb;
+      background: linear-gradient(180deg, #4f8ff7 0%, var(--primary) 100%);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .send-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 6px rgba(59, 130, 246, 0.2);
     }
 
     .send-btn:disabled {
-      opacity: 0.5;
+      opacity: 0.4;
       cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .send-btn svg {
+      width: 14px;
+      height: 14px;
     }
 
     .send-status {
-      font-size: 0.75rem;
-      padding: 4px 0;
-      min-height: 20px;
+      font-size: 0.6875rem;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      padding: 6px 0 0;
+      min-height: 22px;
+      letter-spacing: 0.02em;
     }
 
     .send-status.success {
@@ -531,23 +664,34 @@
             </div>
         </div>
         <div class="compose-section">
-            <div class="compose-header">Send Message</div>
-            <div class="compose-form">
-                <div class="compose-row">
-                    <div class="compose-field">
-                        <label for="agent-select">To</label>
-                        <select id="agent-select">
-                            <option value="">Select agent...</option>
-                            <option value="*">* (Broadcast)</option>
-                        </select>
+            <div class="compose-wrapper">
+                <div class="compose-input-area">
+                    <div class="compose-meta-row">
+                        <div class="compose-to">
+                            <label for="agent-select">Target</label>
+                            <select id="agent-select">
+                                <option value="">Select agent...</option>
+                                <option value="*">* (Broadcast all)</option>
+                            </select>
+                        </div>
+                        <div class="compose-hint">
+                            <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to send
+                        </div>
                     </div>
-                    <div class="compose-field grow">
-                        <label for="message-input">Message</label>
-                        <textarea id="message-input" placeholder="Type your message..."></textarea>
+                    <div class="compose-input-row">
+                        <div class="compose-textarea-wrapper">
+                            <textarea id="message-input" placeholder="Enter your message..."></textarea>
+                        </div>
+                        <button class="send-btn" id="send-btn">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                            </svg>
+                            Send
+                        </button>
                     </div>
-                    <button class="send-btn" id="send-btn">Send</button>
+                    <div class="send-status" id="send-status"></div>
                 </div>
-                <div class="send-status" id="send-status"></div>
             </div>
         </div>
     </div>
