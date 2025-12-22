@@ -8,20 +8,20 @@ import { getDefaultPrefix } from './tmux-wrapper.js';
 describe('TmuxWrapper constants', () => {
   // Unified prefix across all CLI types
   describe('getDefaultPrefix', () => {
-    it('returns >>relay: for gemini CLI type', () => {
-      expect(getDefaultPrefix('gemini')).toBe('>>relay:');
+    it('returns ->relay: for gemini CLI type', () => {
+      expect(getDefaultPrefix('gemini')).toBe('->relay:');
     });
 
-    it('returns >>relay: for claude CLI type', () => {
-      expect(getDefaultPrefix('claude')).toBe('>>relay:');
+    it('returns ->relay: for claude CLI type', () => {
+      expect(getDefaultPrefix('claude')).toBe('->relay:');
     });
 
-    it('returns >>relay: for codex CLI type', () => {
-      expect(getDefaultPrefix('codex')).toBe('>>relay:');
+    it('returns ->relay: for codex CLI type', () => {
+      expect(getDefaultPrefix('codex')).toBe('->relay:');
     });
 
-    it('returns >>relay: for other CLI type', () => {
-      expect(getDefaultPrefix('other')).toBe('>>relay:');
+    it('returns ->relay: for other CLI type', () => {
+      expect(getDefaultPrefix('other')).toBe('->relay:');
     });
   });
 });

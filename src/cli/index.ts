@@ -47,7 +47,7 @@ program
 program
   .option('-n, --name <name>', 'Agent name (auto-generated if not set)')
   .option('-q, --quiet', 'Disable debug output', false)
-  .option('--prefix <pattern>', 'Relay prefix pattern (default: >>relay:)')
+  .option('--prefix <pattern>', 'Relay prefix pattern (default: ->relay:)')
   .argument('[command...]', 'Command to wrap (e.g., claude)')
   .action(async (commandParts, options) => {
     // If no command provided, show help
