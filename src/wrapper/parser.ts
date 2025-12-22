@@ -574,6 +574,16 @@ export interface ParsedSummary {
 }
 
 /**
+ * Result of attempting to parse a SUMMARY block.
+ */
+export interface SummaryParseResult {
+  found: boolean;
+  valid: boolean;
+  summary: ParsedSummary | null;
+  rawContent: string | null;  // Raw block content for deduplication
+}
+
+/**
  * Parse [[SUMMARY]]...[[/SUMMARY]] blocks from agent output.
  * Agents can output summaries to keep a running context of their work.
  *
@@ -587,17 +597,28 @@ export interface ParsedSummary {
  * [[/SUMMARY]]
  */
 export function parseSummaryFromOutput(output: string): ParsedSummary | null {
+  const result = parseSummaryWithDetails(output);
+  return result.summary;
+}
+
+/**
+ * Parse SUMMARY block with full details for deduplication.
+ * Returns raw content to allow caller to dedupe before logging errors.
+ */
+export function parseSummaryWithDetails(output: string): SummaryParseResult {
   const match = output.match(/\[\[SUMMARY\]\]([\s\S]*?)\[\[\/SUMMARY\]\]/);
 
   if (!match) {
-    return null;
+    return { found: false, valid: false, summary: null, rawContent: null };
   }
 
+  const rawContent = match[1].trim();
+
   try {
-    return JSON.parse(match[1].trim()) as ParsedSummary;
+    const summary = JSON.parse(rawContent) as ParsedSummary;
+    return { found: true, valid: true, summary, rawContent };
   } catch {
-    console.error('[parser] Invalid JSON in SUMMARY block');
-    return null;
+    return { found: true, valid: false, summary: null, rawContent };
   }
 }
 

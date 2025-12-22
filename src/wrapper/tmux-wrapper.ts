@@ -15,7 +15,7 @@
 import { exec, execSync, spawn, ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { RelayClient } from './client.js';
-import { OutputParser, type ParsedCommand, parseSummaryFromOutput, parseSessionEndFromOutput } from './parser.js';
+import { OutputParser, type ParsedCommand, parseSummaryWithDetails, parseSessionEndFromOutput } from './parser.js';
 import { InboxManager } from './inbox.js';
 import type { SendPayload } from '../protocol/types.js';
 import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
@@ -105,6 +105,7 @@ export class TmuxWrapper {
   private cliType: 'claude' | 'codex' | 'gemini' | 'other';
   private relayPrefix: string;
   private lastSummaryHash = ''; // Dedup summary saves
+  private lastSummaryRawContent = ''; // Dedup invalid JSON error logging
   private sessionEndProcessed = false; // Track if we've already processed session end
 
   constructor(config: TmuxWrapperConfig) {
@@ -274,6 +275,7 @@ export class TmuxWrapper {
         'setw -g alternate-screen on',        // Ensure alternate screen works
         // Pass through mouse scroll to application in alternate screen mode
         'set -ga terminal-overrides ",xterm*:Tc"',
+        'set -g status-left-length 100',      // Provide ample space for agent name in status bar
       ];
 
       // Add mouse mode if enabled (allows scroll passthrough to CLI apps)
@@ -629,10 +631,24 @@ export class TmuxWrapper {
    * [[/SUMMARY]]
    */
   private parseSummaryAndSave(content: string): void {
-    const summary = parseSummaryFromOutput(content);
-    if (!summary) return;
+    const result = parseSummaryWithDetails(content);
 
-    // Dedup - don't save same summary twice
+    // No SUMMARY block found
+    if (!result.found) return;
+
+    // Dedup based on raw content - prevents repeated error logging for same invalid JSON
+    if (result.rawContent === this.lastSummaryRawContent) return;
+    this.lastSummaryRawContent = result.rawContent || '';
+
+    // Invalid JSON - log error once (deduped above)
+    if (!result.valid) {
+      this.logStderr('[parser] Invalid JSON in SUMMARY block');
+      return;
+    }
+
+    const summary = result.summary!;
+
+    // Dedup valid summaries - don't save same summary twice
     const summaryHash = JSON.stringify(summary);
     if (summaryHash === this.lastSummaryHash) return;
     this.lastSummaryHash = summaryHash;
@@ -752,7 +768,14 @@ export class TmuxWrapper {
     this.logStderr(`Injecting message from ${msg.from} (cli: ${this.cliType})`);
 
     try {
-      const sanitizedBody = msg.body.replace(/[\r\n]+/g, ' ').trim();
+      let sanitizedBody = msg.body.replace(/[\r\n]+/g, ' ').trim();
+
+      // Gemini interprets certain keywords (While, For, If, etc.) as shell commands
+      // Wrap in backticks to prevent shell keyword interpretation
+      if (this.cliType === 'gemini') {
+        sanitizedBody = `\`${sanitizedBody.replace(/`/g, "'")}\``;
+      }
+
       // Short message ID for display (first 8 chars)
       const shortId = msg.messageId.substring(0, 8);
 
@@ -835,6 +858,7 @@ export class TmuxWrapper {
   resetSessionState(): void {
     this.sessionEndProcessed = false;
     this.lastSummaryHash = '';
+    this.lastSummaryRawContent = '';
   }
 
   /**
