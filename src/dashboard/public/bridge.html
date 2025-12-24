@@ -1,537 +1,519 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent Relay - Bridge</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
+    /* ========================================
+       Design Tokens (matching index.html)
+       ======================================== */
     :root {
-      --bg-primary: #09090b;
-      --bg-secondary: #18181b;
-      --bg-card: #18181b;
-      --bg-elevated: #27272a;
-      --border-color: #27272a;
-      --border-hover: #3f3f46;
-      --primary: #3b82f6;
-      --primary-muted: rgba(59, 130, 246, 0.15);
-      --text: #fafafa;
-      --text-secondary: #a1a1aa;
-      --text-muted: #71717a;
-      --success: #22c55e;
-      --success-muted: rgba(34, 197, 94, 0.15);
-      --error: #ef4444;
-      --error-muted: rgba(239, 68, 68, 0.15);
-      --warning: #f59e0b;
-      --warning-muted: rgba(245, 158, 11, 0.15);
-      --purple: #a855f7;
-      --purple-muted: rgba(168, 85, 247, 0.15);
-      --cyan: #06b6d4;
-      --cyan-muted: rgba(6, 182, 212, 0.15);
+      /* Background colors */
+      --bg-workspace: #1a1d21;
+      --bg-sidebar: #19171d;
+      --bg-channel-active: #1164a3;
+      --bg-channel-hover: rgba(255, 255, 255, 0.04);
+      --bg-main: #222529;
+      --bg-message-hover: rgba(255, 255, 255, 0.03);
+      --bg-card: #2a2d32;
+      --bg-card-hover: #32363c;
+
+      /* Text colors */
+      --text-primary: #d1d2d3;
+      --text-secondary: #ababad;
+      --text-muted: #8d8d8e;
+      --text-channel: #bcabbc;
+      --text-channel-active: #ffffff;
+      --text-link: #1d9bd1;
+
+      /* Accent colors */
+      --accent-primary: #1264a3;
+      --accent-green: #2bac76;
+      --accent-yellow: #e8a427;
+      --accent-red: #e01e5a;
+      --accent-purple: #7c3aed;
+
+      /* Status colors */
+      --status-online: #2bac76;
+      --status-away: #e8a427;
+      --status-offline: #616061;
+
+      /* Border colors */
+      --border-subtle: rgba(255, 255, 255, 0.1);
+      --border-divider: rgba(255, 255, 255, 0.06);
+
+      /* Dimensions */
+      --sidebar-width: 260px;
+      --header-height: 49px;
+
+      /* Typography */
+      --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+      /* Transitions */
+      --transition-fast: 0.1s ease;
+      --transition-normal: 0.2s ease;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* ========================================
+       Reset & Base
+       ======================================== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
 
     body {
-      font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
-      background: var(--bg-primary);
-      background-image:
-        radial-gradient(ellipse at top, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
-        linear-gradient(rgba(59, 130, 246, 0.02) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(59, 130, 246, 0.02) 1px, transparent 1px);
-      background-size: 100% 100%, 24px 24px, 24px 24px;
-      color: var(--text);
-      min-height: 100vh;
-      overflow-x: hidden;
+      font-family: var(--font-family);
+      font-size: 15px;
+      line-height: 1.46668;
+      color: var(--text-primary);
+      background: var(--bg-workspace);
+      -webkit-font-smoothing: antialiased;
     }
 
-    @keyframes pulse-glow {
-      0%, 100% { box-shadow: 0 0 4px currentColor, 0 0 8px currentColor; }
-      50% { box-shadow: 0 0 8px currentColor, 0 0 16px currentColor; }
-    }
-
-    @keyframes slideIn {
-      from { opacity: 0; transform: translateY(-8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-
-    .container {
-      display: grid;
-      grid-template-rows: auto 1fr auto;
+    /* ========================================
+       Layout Structure
+       ======================================== */
+    .app-container {
+      display: flex;
       height: 100vh;
-      max-width: 1600px;
-      margin: 0 auto;
+      width: 100vw;
     }
 
-    /* Header */
-    .header {
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-width);
+      background: var(--bg-sidebar);
       display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border-divider);
+    }
+
+    /* Main Content */
+    .main-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: var(--bg-main);
+    }
+
+    /* ========================================
+       Sidebar Components
+       ======================================== */
+    .workspace-header {
+      height: var(--header-height);
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
       justify-content: space-between;
-      align-items: center;
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--border-color);
-      background: linear-gradient(180deg, rgba(59, 130, 246, 0.05) 0%, transparent 100%);
+      border-bottom: 1px solid var(--border-divider);
+      flex-shrink: 0;
     }
 
-    .logo {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .logo-icon {
-      width: 36px;
-      height: 36px;
-      background: linear-gradient(135deg, var(--primary) 0%, var(--purple) 100%);
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
+    .workspace-name {
+      font-size: 18px;
       font-weight: 700;
-      font-size: 12px;
-      letter-spacing: -0.5px;
-    }
-
-    .title-group h1 {
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--text);
-      line-height: 1.2;
-    }
-
-    .title-group .subtitle {
-      font-size: 0.7rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-
-    .nav-link {
-      color: var(--text-secondary);
-      text-decoration: none;
-      font-size: 0.75rem;
-      font-weight: 500;
-      padding: 6px 12px;
-      border-radius: 6px;
-      transition: all 0.15s;
-    }
-
-    .nav-link:hover {
-      color: var(--text);
-      background: var(--bg-elevated);
-    }
-
-    #connection-status {
-      font-size: 0.7rem;
-      font-weight: 500;
-      padding: 6px 12px;
-      border-radius: 6px;
-      background: var(--success-muted);
-      color: var(--success);
+      color: var(--text-primary);
       display: flex;
       align-items: center;
       gap: 6px;
     }
 
-    #connection-status .dot {
-      width: 6px;
-      height: 6px;
+    .workspace-name .status-dot {
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
-      background: currentColor;
-      animation: pulse-glow 2s ease-in-out infinite;
+      background: var(--status-online);
+      flex-shrink: 0;
     }
 
-    /* Main Content */
-    .main {
-      display: grid;
-      grid-template-columns: 1fr 380px;
-      gap: 1px;
-      background: var(--border-color);
-      overflow: hidden;
+    .workspace-name .status-dot.offline {
+      background: var(--status-offline);
     }
 
-    /* Projects Grid */
-    .projects-section {
-      background: var(--bg-primary);
+    /* Command Palette Trigger */
+    .search-bar {
+      margin: 12px 12px 8px;
+      padding: 6px 12px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid transparent;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .search-bar:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .search-bar svg {
+      width: 16px;
+      height: 16px;
+      color: var(--text-muted);
+    }
+
+    .search-bar span {
+      font-size: 13px;
+      color: var(--text-muted);
+      flex: 1;
+    }
+
+    .search-bar kbd {
+      font-family: var(--font-family);
+      font-size: 11px;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.1);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .sidebar-content {
+      flex: 1;
       overflow-y: auto;
-      padding: 20px;
+      padding: 12px 0;
     }
 
     .section-header {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      margin-bottom: 16px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--border-color);
+      justify-content: space-between;
+      padding: 0 16px 0 12px;
+      height: 26px;
+      cursor: pointer;
+    }
+
+    .section-header:hover {
+      background: var(--bg-channel-hover);
     }
 
     .section-title {
-      font-size: 0.75rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-
-    .project-count {
-      font-size: 0.7rem;
-      color: var(--text-muted);
-      background: var(--bg-elevated);
-      padding: 4px 10px;
-      border-radius: 12px;
-    }
-
-    .projects-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-      gap: 16px;
-    }
-
-    /* Project Card */
-    .project-card {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 16px;
-      transition: all 0.2s;
-      animation: fadeIn 0.3s ease-out;
-    }
-
-    .project-card:hover {
-      border-color: var(--border-hover);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-    }
-
-    .project-card.disconnected {
-      opacity: 0.5;
-      border-color: var(--error);
-    }
-
-    .project-header {
       display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 12px;
+      align-items: center;
+      gap: 4px;
+      font-size: 15px;
+      color: var(--text-channel);
+    }
+
+    .section-title svg {
+      width: 10px;
+      height: 10px;
+      opacity: 0.7;
+    }
+
+    .section-count {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .project-list {
+      list-style: none;
+      padding: 4px 8px;
+    }
+
+    .project-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background var(--transition-fast);
+    }
+
+    .project-item:hover {
+      background: var(--bg-channel-hover);
+    }
+
+    .project-item.active {
+      background: var(--bg-channel-active);
+    }
+
+    .project-item.active .project-name {
+      color: var(--text-channel-active);
+    }
+
+    .project-status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--status-offline);
+      flex-shrink: 0;
+    }
+
+    .project-item.connected .project-status-dot {
+      background: var(--status-online);
     }
 
     .project-name {
-      font-size: 0.9rem;
-      font-weight: 600;
-      color: var(--text);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .project-name .icon {
-      width: 24px;
-      height: 24px;
-      background: var(--primary-muted);
-      border-radius: 6px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.7rem;
-    }
-
-    .project-status {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.7rem;
-      color: var(--success);
-      background: var(--success-muted);
-      padding: 4px 8px;
-      border-radius: 4px;
-    }
-
-    .project-status.offline {
-      color: var(--error);
-      background: var(--error-muted);
-    }
-
-    .project-status .dot {
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: currentColor;
-    }
-
-    /* Lead Section */
-    .lead-section {
-      background: var(--bg-elevated);
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 12px;
-    }
-
-    .lead-label {
-      font-size: 0.65rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      margin-bottom: 6px;
-    }
-
-    .lead-info {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .lead-avatar {
-      width: 32px;
-      height: 32px;
-      background: linear-gradient(135deg, var(--purple) 0%, var(--primary) 100%);
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 600;
-      font-size: 0.75rem;
-      color: white;
-    }
-
-    .lead-details {
-      flex: 1;
-    }
-
-    .lead-name {
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--text);
-    }
-
-    .lead-status {
-      font-size: 0.7rem;
-      color: var(--text-secondary);
-    }
-
-    /* Workers Section */
-    .workers-section {
-      border-top: 1px solid var(--border-color);
-      padding-top: 12px;
-    }
-
-    .workers-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-
-    .workers-label {
-      font-size: 0.65rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-
-    .workers-count {
-      font-size: 0.65rem;
-      color: var(--cyan);
-      background: var(--cyan-muted);
-      padding: 2px 8px;
-      border-radius: 10px;
-    }
-
-    .workers-list {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .worker-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px;
-      background: var(--bg-primary);
-      border-radius: 6px;
-      font-size: 0.75rem;
-    }
-
-    .worker-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--success);
-    }
-
-    .worker-dot.idle {
-      background: var(--warning);
-    }
-
-    .worker-dot.offline {
-      background: var(--error);
-    }
-
-    .worker-name {
-      font-weight: 500;
-      color: var(--text);
-    }
-
-    .worker-task {
-      flex: 1;
-      color: var(--text-secondary);
+      font-size: 15px;
+      color: var(--text-channel);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
-    .no-workers {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      font-style: italic;
-      padding: 12px;
-      text-align: center;
-      background: var(--bg-primary);
-      border-radius: 6px;
+    .sidebar-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border-divider);
     }
 
-    /* Message Flow Panel */
-    .messages-section {
-      background: var(--bg-primary);
+    .nav-link {
       display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    .messages-header {
-      padding: 16px 20px;
-      border-bottom: 1px solid var(--border-color);
-      display: flex;
-      justify-content: space-between;
       align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      color: var(--text-channel);
+      text-decoration: none;
+      font-size: 15px;
+      border-radius: 6px;
+      transition: background var(--transition-fast);
     }
 
-    .live-indicator {
+    .nav-link:hover {
+      background: var(--bg-channel-hover);
+    }
+
+    .nav-link svg {
+      width: 18px;
+      height: 18px;
+      opacity: 0.7;
+    }
+
+    /* ========================================
+       Main Panel Header
+       ======================================== */
+    .channel-header {
+      height: var(--header-height);
+      padding: 0 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-divider);
+      flex-shrink: 0;
+    }
+
+    .channel-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .channel-name {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .channel-stats {
+      display: flex;
+      gap: 16px;
+    }
+
+    .stat-badge {
       display: flex;
       align-items: center;
       gap: 6px;
-      font-size: 0.7rem;
-      color: var(--text-muted);
+      padding: 4px 10px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 12px;
+      font-size: 13px;
+      color: var(--text-secondary);
     }
 
-    .live-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--success);
-      animation: pulse-glow 2s ease-in-out infinite;
-      color: var(--success);
+    .stat-badge .value {
+      font-weight: 600;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
     }
 
-    .messages-list {
+    /* ========================================
+       Project Cards Grid
+       ======================================== */
+    .cards-container {
       flex: 1;
       overflow-y: auto;
+      padding: 20px;
+    }
+
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 16px;
+    }
+
+    .project-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-divider);
+      border-radius: 8px;
+      padding: 16px;
+      transition: all var(--transition-normal);
+    }
+
+    .project-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-subtle);
+    }
+
+    .project-card.offline {
+      opacity: 0.6;
+    }
+
+    .card-header {
       display: flex;
-      flex-direction: column-reverse;
-    }
-
-    .message {
-      padding: 12px 20px;
-      border-bottom: 1px solid var(--border-color);
-      animation: slideIn 0.2s ease-out;
-    }
-
-    .message:hover {
-      background: var(--bg-secondary);
-    }
-
-    .msg-route {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-bottom: 6px;
-      font-size: 0.75rem;
-    }
-
-    .msg-project {
-      background: var(--primary-muted);
-      color: var(--primary);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-weight: 500;
-    }
-
-    .msg-agent {
-      color: var(--text);
-      font-weight: 500;
-    }
-
-    .msg-arrow {
-      color: var(--text-muted);
-    }
-
-    .msg-time {
-      margin-left: auto;
-      color: var(--text-muted);
-      font-size: 0.7rem;
-    }
-
-    .msg-body {
-      font-size: 0.8rem;
-      color: var(--text-secondary);
-      background: var(--bg-secondary);
-      padding: 10px 12px;
-      border-radius: 6px;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .message.cross-project .msg-route {
-      color: var(--warning);
-    }
-
-    .message.cross-project .msg-arrow {
-      color: var(--warning);
-    }
-
-    /* Footer Stats */
-    .footer {
-      display: flex;
+      align-items: flex-start;
       justify-content: space-between;
-      align-items: center;
-      padding: 12px 24px;
-      background: var(--bg-secondary);
-      border-top: 1px solid var(--border-color);
-      font-size: 0.7rem;
-      color: var(--text-muted);
+      margin-bottom: 12px;
     }
 
-    .stats {
+    .card-title-group {
       display: flex;
-      gap: 24px;
+      align-items: center;
+      gap: 10px;
     }
 
-    .stat {
+    .card-icon {
+      width: 36px;
+      height: 36px;
+      background: var(--accent-primary);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+    }
+
+    .card-icon svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .card-path {
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .card-status {
       display: flex;
       align-items: center;
       gap: 6px;
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
     }
 
-    .stat-value {
+    .card-status.online {
+      background: rgba(43, 172, 118, 0.15);
+      color: var(--status-online);
+    }
+
+    .card-status.offline {
+      background: rgba(97, 96, 97, 0.15);
+      color: var(--status-offline);
+    }
+
+    .card-status .dot {
+      width: 6px;
+      height: 6px;
+      background: currentColor;
+      border-radius: 50%;
+    }
+
+    /* Agent List in Card */
+    .agents-section {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-divider);
+    }
+
+    .agents-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .agents-label {
+      font-size: 12px;
       font-weight: 600;
-      color: var(--text);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
-    .stat-label {
+    .agents-count {
+      font-size: 12px;
+      font-family: var(--font-mono);
       color: var(--text-muted);
+    }
+
+    .agents-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .agent-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 6px;
+    }
+
+    .agent-status-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--status-online);
+      border-radius: 50%;
+    }
+
+    .agent-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .agent-cli {
+      margin-left: auto;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .no-agents {
+      padding: 12px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 6px;
     }
 
     /* Empty State */
@@ -540,295 +522,613 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
+      height: 100%;
       padding: 48px;
       text-align: center;
-      color: var(--text-muted);
     }
 
     .empty-icon {
-      font-size: 3rem;
+      width: 64px;
+      height: 64px;
+      background: var(--bg-card);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       margin-bottom: 16px;
-      opacity: 0.5;
+      color: var(--text-muted);
     }
 
     .empty-title {
-      font-size: 1rem;
+      font-size: 18px;
       font-weight: 600;
-      color: var(--text-secondary);
+      color: var(--text-primary);
       margin-bottom: 8px;
     }
 
     .empty-text {
-      font-size: 0.8rem;
+      font-size: 14px;
+      color: var(--text-muted);
       max-width: 300px;
-      line-height: 1.5;
+      margin-bottom: 16px;
     }
 
     .empty-code {
-      font-family: inherit;
-      background: var(--bg-elevated);
-      padding: 2px 8px;
-      border-radius: 4px;
-      margin-top: 12px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 10px 14px;
+      background: var(--bg-card);
+      border-radius: 6px;
+      color: var(--accent-green);
     }
 
-    /* Scrollbar */
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb {
-      background: var(--border-hover);
+    /* ========================================
+       Messages Panel
+       ======================================== */
+    .messages-panel {
+      width: 360px;
+      background: var(--bg-sidebar);
+      border-left: 1px solid var(--border-divider);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .messages-header {
+      height: var(--header-height);
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-divider);
+    }
+
+    .messages-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--status-online);
+    }
+
+    .live-indicator .dot {
+      width: 6px;
+      height: 6px;
+      background: var(--status-online);
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .messages-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .message-item {
+      padding: 10px 12px;
+      background: var(--bg-main);
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+
+    .message-item:hover {
+      background: var(--bg-card);
+    }
+
+    .message-route {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+
+    .route-tag {
+      padding: 2px 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+    }
+
+    .route-agent {
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .route-arrow {
+      color: var(--text-muted);
+    }
+
+    .route-time {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+
+    .message-body {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+    }
+
+    .messages-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .messages-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border-divider);
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    /* ========================================
+       Command Palette
+       ======================================== */
+    .command-palette-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 15vh;
+      z-index: 1000;
+    }
+
+    .command-palette-overlay.visible {
+      display: flex;
+    }
+
+    .command-palette {
+      width: 600px;
+      max-width: 90vw;
+      background: var(--bg-sidebar);
+      border-radius: 8px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+      overflow: hidden;
+      animation: paletteSlideIn 0.15s ease-out;
+    }
+
+    @keyframes paletteSlideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .palette-search {
+      padding: 16px;
+      border-bottom: 1px solid var(--border-divider);
+    }
+
+    .palette-search-input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-family: var(--font-family);
+      font-size: 18px;
+      outline: none;
+    }
+
+    .palette-search-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .palette-results {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .palette-section {
+      padding: 8px 0;
+    }
+
+    .palette-section-title {
+      padding: 8px 16px 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .palette-item {
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: background var(--transition-fast);
+    }
+
+    .palette-item:hover,
+    .palette-item.selected {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .palette-item-icon {
+      width: 20px;
+      height: 20px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .palette-item-content {
+      flex: 1;
+    }
+
+    .palette-item-title {
+      font-size: 14px;
+      color: var(--text-primary);
+    }
+
+    .palette-item-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .palette-item-shortcut {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .palette-item-shortcut kbd {
+      font-family: var(--font-family);
+      background: rgba(255, 255, 255, 0.1);
+      padding: 2px 6px;
       border-radius: 3px;
     }
+
+    /* ========================================
+       Scrollbars
+       ======================================== */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+
     ::-webkit-scrollbar-thumb:hover {
-      background: var(--text-muted);
+      background: rgba(255, 255, 255, 0.2);
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <!-- Header -->
-    <header class="header">
-      <div class="logo">
-        <div class="logo-icon">BR</div>
-        <div class="title-group">
-          <h1>Agent Relay</h1>
-          <div class="subtitle">Bridge Dashboard</div>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="workspace-header">
+        <div class="workspace-name">
+          <span class="status-dot" id="status-dot"></span>
+          Bridge Mode
         </div>
       </div>
-      <div class="header-actions">
-        <a href="/" class="nav-link">← Standard View</a>
-        <div id="connection-status">
-          <span class="dot"></span>
-          <span>Connected</span>
-        </div>
-      </div>
-    </header>
 
-    <!-- Main Content -->
-    <main class="main">
-      <!-- Projects Grid -->
-      <section class="projects-section">
+      <div class="search-bar" id="search-bar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <span>Search...</span>
+        <kbd>⌘K</kbd>
+      </div>
+
+      <div class="sidebar-content">
         <div class="section-header">
-          <h2 class="section-title">Connected Projects</h2>
-          <span class="project-count" id="project-count">0 projects</span>
+          <div class="section-title">
+            <svg viewBox="0 0 10 10" fill="currentColor"><path d="M5 7L1 3h8z"/></svg>
+            Projects
+          </div>
+          <span class="section-count" id="project-count">0</span>
         </div>
-        <div class="projects-grid" id="projects-grid">
+        <ul class="project-list" id="project-list">
           <!-- Projects injected here -->
-          <div class="empty-state">
-            <div class="empty-icon">📡</div>
-            <div class="empty-title">No Projects Connected</div>
-            <div class="empty-text">
-              Start the bridge with project paths to connect multiple projects
-            </div>
-            <code class="empty-code">agent-relay bridge ~/proj1 ~/proj2</code>
-          </div>
-        </div>
-      </section>
+        </ul>
+      </div>
 
-      <!-- Cross-Project Message Flow -->
-      <aside class="messages-section">
-        <div class="messages-header">
-          <h2 class="section-title">Cross-Project Messages</h2>
-          <div class="live-indicator">
-            <span class="live-dot"></span>
-            <span>Live</span>
+      <div class="sidebar-footer">
+        <a href="/" class="nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+          Back to Dashboard
+        </a>
+      </div>
+    </aside>
+
+    <!-- Main Panel -->
+    <main class="main-panel">
+      <header class="channel-header">
+        <div class="channel-info">
+          <h1 class="channel-name">All Projects</h1>
+        </div>
+        <div class="channel-stats">
+          <div class="stat-badge">
+            <span class="value" id="stat-agents">0</span>
+            <span>agents</span>
+          </div>
+          <div class="stat-badge">
+            <span class="value" id="stat-messages">0</span>
+            <span>messages</span>
           </div>
         </div>
-        <div class="messages-list" id="messages-list">
-          <div class="empty-state">
-            <div class="empty-text">No cross-project messages yet</div>
+      </header>
+
+      <div class="cards-container">
+        <div class="cards-grid" id="cards-grid">
+          <div class="empty-state" id="empty-state">
+            <div class="empty-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6"/>
+              </svg>
+            </div>
+            <div class="empty-title">No Projects Connected</div>
+            <div class="empty-text">Start the bridge to orchestrate multiple projects</div>
+            <code class="empty-code">agent-relay bridge ./proj1 ./proj2</code>
           </div>
         </div>
-      </aside>
+      </div>
     </main>
 
-    <!-- Footer Stats -->
-    <footer class="footer">
-      <div class="stats">
-        <div class="stat">
-          <span class="stat-value" id="stat-projects">0</span>
-          <span class="stat-label">projects</span>
+    <!-- Messages Panel -->
+    <aside class="messages-panel">
+      <header class="messages-header">
+        <span class="messages-title">Message Flow</span>
+        <div class="live-indicator">
+          <span class="dot"></span>
+          <span>Live</span>
         </div>
-        <div class="stat">
-          <span class="stat-value" id="stat-leads">0</span>
-          <span class="stat-label">leads</span>
-        </div>
-        <div class="stat">
-          <span class="stat-value" id="stat-workers">0</span>
-          <span class="stat-label">workers</span>
-        </div>
-        <div class="stat">
-          <span class="stat-value" id="stat-messages">0</span>
-          <span class="stat-label">messages</span>
+      </header>
+
+      <div class="messages-list" id="messages-list">
+        <div class="messages-empty">
+          <p>No messages yet</p>
         </div>
       </div>
-      <div id="uptime">Uptime: --</div>
-    </footer>
+
+      <footer class="messages-footer">
+        <span id="uptime">Uptime: --</span>
+      </footer>
+    </aside>
+  </div>
+
+  <!-- Command Palette -->
+  <div class="command-palette-overlay" id="command-palette-overlay">
+    <div class="command-palette">
+      <div class="palette-search">
+        <input
+          type="text"
+          class="palette-search-input"
+          id="palette-search"
+          placeholder="Search projects, agents, or type a command..."
+          autocomplete="off"
+        >
+      </div>
+      <div class="palette-results" id="palette-results">
+        <div class="palette-section">
+          <div class="palette-section-title">Commands</div>
+          <div class="palette-item" data-command="broadcast">
+            <div class="palette-item-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+              </svg>
+            </div>
+            <div class="palette-item-content">
+              <div class="palette-item-title">/broadcast</div>
+              <div class="palette-item-subtitle">Send message to all leads</div>
+            </div>
+          </div>
+          <div class="palette-item" data-command="refresh">
+            <div class="palette-item-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 4v6h-6"/>
+                <path d="M1 20v-6h6"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+            </div>
+            <div class="palette-item-content">
+              <div class="palette-item-title">/refresh</div>
+              <div class="palette-item-subtitle">Refresh all project data</div>
+            </div>
+          </div>
+        </div>
+        <div class="palette-section" id="palette-projects-section">
+          <div class="palette-section-title">Jump to Project</div>
+          <!-- Projects injected here -->
+        </div>
+        <div class="palette-section" id="palette-agents-section">
+          <div class="palette-section-title">Jump to Agent</div>
+          <!-- Agents injected here -->
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
-    const projectsGrid = document.getElementById('projects-grid');
-    const messagesList = document.getElementById('messages-list');
-    const statusDiv = document.getElementById('connection-status');
-
+    // State
     let connectionStart = null;
     let lastDataHash = '';
+    let currentData = { projects: [], messages: [] };
 
-    function updateConnectionStatus(state) {
-      statusDiv.className = '';
-      if (state === 'connected') {
-        statusDiv.innerHTML = '<span class="dot"></span><span>Live</span>';
-      } else {
-        statusDiv.classList.add('disconnected');
-        statusDiv.innerHTML = '<span class="dot"></span><span>Offline</span>';
-      }
+    // Elements
+    const statusDot = document.getElementById('status-dot');
+    const projectList = document.getElementById('project-list');
+    const cardsGrid = document.getElementById('cards-grid');
+    const emptyState = document.getElementById('empty-state');
+    const messagesList = document.getElementById('messages-list');
+    const searchBar = document.getElementById('search-bar');
+    const paletteOverlay = document.getElementById('command-palette-overlay');
+    const paletteSearch = document.getElementById('palette-search');
+    const paletteProjectsSection = document.getElementById('palette-projects-section');
+    const paletteAgentsSection = document.getElementById('palette-agents-section');
+
+    // Command Palette
+    function openPalette() {
+      paletteOverlay.classList.add('visible');
+      paletteSearch.value = '';
+      paletteSearch.focus();
+      updatePaletteResults();
     }
 
-    function connect() {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/bridge`);
-
-      ws.onopen = () => {
-        connectionStart = Date.now();
-        updateConnectionStatus('connected');
-      };
-
-      ws.onclose = () => {
-        updateConnectionStatus('disconnected');
-        setTimeout(connect, 3000);
-      };
-
-      ws.onmessage = (e) => {
-        const dataHash = e.data;
-        if (dataHash === lastDataHash) return;
-        lastDataHash = dataHash;
-
-        const data = JSON.parse(e.data);
-        render(data);
-      };
+    function closePalette() {
+      paletteOverlay.classList.remove('visible');
     }
 
-    function render(data) {
-      // Render projects
-      if (data.projects && data.projects.length > 0) {
-        document.getElementById('project-count').textContent = `${data.projects.length} projects`;
-        document.getElementById('stat-projects').textContent = data.projects.length;
+    function updatePaletteResults() {
+      const query = paletteSearch.value.toLowerCase();
 
-        let leadsCount = 0;
-        let workersCount = 0;
+      // Update projects section
+      const projects = currentData.projects || [];
+      const filteredProjects = query
+        ? projects.filter(p => (p.name || p.id).toLowerCase().includes(query))
+        : projects;
 
-        const projectsHTML = data.projects.map(project => {
-          if (project.lead) leadsCount++;
-          workersCount += (project.workers || []).length;
-
-          const statusClass = project.connected ? '' : 'disconnected';
-          const statusText = project.connected ? 'Online' : 'Offline';
-          const statusBadgeClass = project.connected ? '' : 'offline';
-
-          const workersHTML = project.workers && project.workers.length > 0
-            ? project.workers.map(w => `
-                <div class="worker-item">
-                  <span class="worker-dot ${w.status || 'active'}"></span>
-                  <span class="worker-name">${escapeHtml(w.name)}</span>
-                  <span class="worker-task">${escapeHtml(w.task || 'No task')}</span>
-                </div>
-              `).join('')
-            : '<div class="no-workers">No workers spawned</div>';
-
-          return `
-            <div class="project-card ${statusClass}">
-              <div class="project-header">
-                <div class="project-name">
-                  <span class="icon">📁</span>
-                  ${escapeHtml(project.name || project.id)}
-                </div>
-                <div class="project-status ${statusBadgeClass}">
-                  <span class="dot"></span>
-                  ${statusText}
-                </div>
+      if (filteredProjects.length > 0) {
+        paletteProjectsSection.innerHTML = `
+          <div class="palette-section-title">Jump to Project</div>
+          ${filteredProjects.map(p => `
+            <div class="palette-item" data-project="${escapeHtml(p.id)}">
+              <div class="palette-item-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
               </div>
-              <div class="lead-section">
-                <div class="lead-label">Lead</div>
-                <div class="lead-info">
-                  <div class="lead-avatar">${(project.lead?.name || 'N/A').substring(0, 2).toUpperCase()}</div>
-                  <div class="lead-details">
-                    <div class="lead-name">${escapeHtml(project.lead?.name || 'No lead assigned')}</div>
-                    <div class="lead-status">${project.lead?.connected ? 'Active' : 'Inactive'}</div>
-                  </div>
-                </div>
-              </div>
-              <div class="workers-section">
-                <div class="workers-header">
-                  <span class="workers-label">Workers</span>
-                  <span class="workers-count">${(project.workers || []).length} active</span>
-                </div>
-                <div class="workers-list">
-                  ${workersHTML}
-                </div>
+              <div class="palette-item-content">
+                <div class="palette-item-title">${escapeHtml(p.name || p.id)}</div>
+                <div class="palette-item-subtitle">${p.connected ? 'Online' : 'Offline'} · ${(p.agents || []).length} agents</div>
               </div>
             </div>
-          `;
-        }).join('');
-
-        projectsGrid.innerHTML = projectsHTML;
-        document.getElementById('stat-leads').textContent = leadsCount;
-        document.getElementById('stat-workers').textContent = workersCount;
-      } else {
-        projectsGrid.innerHTML = `
-          <div class="empty-state">
-            <div class="empty-icon">📡</div>
-            <div class="empty-title">No Projects Connected</div>
-            <div class="empty-text">
-              Start the bridge with project paths to connect multiple projects
-            </div>
-            <code class="empty-code">agent-relay bridge ~/proj1 ~/proj2</code>
-          </div>
+          `).join('')}
         `;
-        document.getElementById('stat-projects').textContent = '0';
-        document.getElementById('stat-leads').textContent = '0';
-        document.getElementById('stat-workers').textContent = '0';
-      }
-
-      // Render cross-project messages
-      if (data.messages && data.messages.length > 0) {
-        document.getElementById('stat-messages').textContent = data.messages.length;
-
-        const messagesHTML = data.messages.slice(-50).reverse().map(m => {
-          const isCrossProject = m.sourceProject !== m.targetProject;
-          const crossClass = isCrossProject ? 'cross-project' : '';
-
-          return `
-            <div class="message ${crossClass}">
-              <div class="msg-route">
-                <span class="msg-project">${escapeHtml(m.sourceProject || 'local')}</span>
-                <span class="msg-agent">${escapeHtml(m.from)}</span>
-                <span class="msg-arrow">→</span>
-                <span class="msg-project">${escapeHtml(m.targetProject || 'local')}</span>
-                <span class="msg-agent">${escapeHtml(m.to)}</span>
-                <span class="msg-time">${formatTime(m.timestamp)}</span>
-              </div>
-              <div class="msg-body">${escapeHtml(m.body || m.content)}</div>
-            </div>
-          `;
-        }).join('');
-
-        messagesList.innerHTML = messagesHTML;
       } else {
-        messagesList.innerHTML = `
-          <div class="empty-state">
-            <div class="empty-text">No cross-project messages yet</div>
-          </div>
-        `;
-        document.getElementById('stat-messages').textContent = '0';
+        paletteProjectsSection.innerHTML = '<div class="palette-section-title">Jump to Project</div>';
       }
 
-      // Update uptime
-      if (connectionStart) {
-        const uptime = Date.now() - connectionStart;
-        document.getElementById('uptime').textContent = `Uptime: ${formatUptime(uptime)}`;
+      // Update agents section
+      const allAgents = [];
+      projects.forEach(p => {
+        (p.agents || []).forEach(a => {
+          allAgents.push({ ...a, projectName: p.name || p.id, projectId: p.id });
+        });
+      });
+      const filteredAgents = query
+        ? allAgents.filter(a => a.name.toLowerCase().includes(query))
+        : allAgents;
+
+      if (filteredAgents.length > 0) {
+        paletteAgentsSection.innerHTML = `
+          <div class="palette-section-title">Jump to Agent</div>
+          ${filteredAgents.map(a => `
+            <div class="palette-item" data-agent="${escapeHtml(a.name)}" data-project="${escapeHtml(a.projectId)}">
+              <div class="palette-item-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+              </div>
+              <div class="palette-item-content">
+                <div class="palette-item-title">${escapeHtml(a.name)}</div>
+                <div class="palette-item-subtitle">${escapeHtml(a.projectName)} · ${escapeHtml(a.cli || 'unknown')}</div>
+              </div>
+            </div>
+          `).join('')}
+        `;
+      } else {
+        paletteAgentsSection.innerHTML = '<div class="palette-section-title">Jump to Agent</div>';
       }
     }
 
+    // Palette event listeners
+    searchBar.addEventListener('click', openPalette);
+
+    paletteOverlay.addEventListener('click', (e) => {
+      if (e.target === paletteOverlay) closePalette();
+    });
+
+    paletteSearch.addEventListener('input', updatePaletteResults);
+
+    document.addEventListener('keydown', (e) => {
+      // Cmd/Ctrl + K to open palette
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        if (paletteOverlay.classList.contains('visible')) {
+          closePalette();
+        } else {
+          openPalette();
+        }
+      }
+      // Escape to close
+      if (e.key === 'Escape' && paletteOverlay.classList.contains('visible')) {
+        closePalette();
+      }
+    });
+
+    // Handle palette item clicks
+    document.getElementById('palette-results').addEventListener('click', (e) => {
+      const item = e.target.closest('.palette-item');
+      if (!item) return;
+
+      const command = item.dataset.command;
+      const projectId = item.dataset.project;
+      const agentName = item.dataset.agent;
+
+      if (command === 'broadcast') {
+        closePalette();
+        alert('Broadcast: Use the bridge CLI to send messages to all leads');
+      } else if (command === 'refresh') {
+        closePalette();
+        location.reload();
+      } else if (projectId) {
+        closePalette();
+        // Scroll to project card
+        const card = document.querySelector(`.project-card[data-project-id="${projectId}"]`);
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+
+    // Helpers
     function escapeHtml(text) {
       if (!text) return '';
       const div = document.createElement('div');
@@ -838,7 +1138,7 @@
 
     function formatTime(ts) {
       if (!ts) return '';
-      return new Date(ts).toLocaleTimeString();
+      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
 
     function formatUptime(ms) {
@@ -850,14 +1150,166 @@
       return `${hours}h ${minutes % 60}m`;
     }
 
-    // Update uptime every second
+    // Update connection status
+    function updateConnectionStatus(connected) {
+      statusDot.classList.toggle('offline', !connected);
+    }
+
+    // Render sidebar projects
+    function renderSidebarProjects(projects) {
+      if (!projects || projects.length === 0) {
+        projectList.innerHTML = '<li class="project-item" style="cursor: default; color: var(--text-muted);">No projects</li>';
+        document.getElementById('project-count').textContent = '0';
+        return;
+      }
+
+      document.getElementById('project-count').textContent = projects.length;
+
+      projectList.innerHTML = projects.map(p => `
+        <li class="project-item ${p.connected ? 'connected' : ''}">
+          <span class="project-status-dot"></span>
+          <span class="project-name">${escapeHtml(p.name || p.id)}</span>
+        </li>
+      `).join('');
+    }
+
+    // Render project cards
+    function renderProjectCards(projects) {
+      if (!projects || projects.length === 0) {
+        cardsGrid.innerHTML = '';
+        cardsGrid.appendChild(emptyState);
+        emptyState.style.display = 'flex';
+        return;
+      }
+
+      emptyState.style.display = 'none';
+
+      cardsGrid.innerHTML = projects.map(p => {
+        const agents = p.agents || [];
+        const agentsHtml = agents.length > 0
+          ? agents.map(a => `
+              <div class="agent-item">
+                <span class="agent-status-dot"></span>
+                <span class="agent-name">${escapeHtml(a.name)}</span>
+                <span class="agent-cli">${escapeHtml(a.cli || '')}</span>
+              </div>
+            `).join('')
+          : '<div class="no-agents">No agents connected</div>';
+
+        return `
+          <div class="project-card ${p.connected ? '' : 'offline'}" data-project-id="${escapeHtml(p.id)}">
+            <div class="card-header">
+              <div class="card-title-group">
+                <div class="card-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                </div>
+                <div>
+                  <div class="card-title">${escapeHtml(p.name || p.id)}</div>
+                  <div class="card-path">${escapeHtml(p.path || '')}</div>
+                </div>
+              </div>
+              <div class="card-status ${p.connected ? 'online' : 'offline'}">
+                <span class="dot"></span>
+                <span>${p.connected ? 'Online' : 'Offline'}</span>
+              </div>
+            </div>
+
+            <div class="agents-section">
+              <div class="agents-header">
+                <span class="agents-label">Agents</span>
+                <span class="agents-count">${agents.length} active</span>
+              </div>
+              <div class="agents-list">
+                ${agentsHtml}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Render messages
+    function renderMessages(messages) {
+      if (!messages || messages.length === 0) {
+        messagesList.innerHTML = '<div class="messages-empty"><p>No messages yet</p></div>';
+        return;
+      }
+
+      messagesList.innerHTML = messages.slice(-50).reverse().map(m => `
+        <div class="message-item">
+          <div class="message-route">
+            <span class="route-tag">${escapeHtml(m.sourceProject || 'local')}</span>
+            <span class="route-agent">${escapeHtml(m.from)}</span>
+            <span class="route-arrow">→</span>
+            <span class="route-agent">${escapeHtml(m.to || '*')}</span>
+            <span class="route-time">${formatTime(m.timestamp)}</span>
+          </div>
+          <div class="message-body">${escapeHtml(m.body || '')}</div>
+        </div>
+      `).join('');
+    }
+
+    // Main render
+    function render(data) {
+      // Store data for command palette
+      currentData = data;
+
+      // Count agents across all projects
+      let agentsCount = 0;
+      (data.projects || []).forEach(p => {
+        agentsCount += (p.agents || []).length;
+      });
+
+      document.getElementById('stat-agents').textContent = agentsCount;
+      document.getElementById('stat-messages').textContent = data.messages?.length || 0;
+
+      renderSidebarProjects(data.projects);
+      renderProjectCards(data.projects);
+      renderMessages(data.messages);
+    }
+
+    // WebSocket connection
+    function connect() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/bridge`);
+
+      ws.onopen = () => {
+        connectionStart = Date.now();
+        updateConnectionStatus(true);
+      };
+
+      ws.onclose = () => {
+        updateConnectionStatus(false);
+        setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => {
+        updateConnectionStatus(false);
+      };
+
+      ws.onmessage = (e) => {
+        if (e.data === lastDataHash) return;
+        lastDataHash = e.data;
+
+        try {
+          const data = JSON.parse(e.data);
+          render(data);
+        } catch (err) {
+          console.error('Parse error:', err);
+        }
+      };
+    }
+
+    // Update uptime
     setInterval(() => {
       if (connectionStart) {
-        const uptime = Date.now() - connectionStart;
-        document.getElementById('uptime').textContent = `Uptime: ${formatUptime(uptime)}`;
+        document.getElementById('uptime').textContent = `Uptime: ${formatUptime(Date.now() - connectionStart)}`;
       }
     }, 1000);
 
+    // Start
     connect();
   </script>
 </body>

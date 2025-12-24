@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
 import type { StorageAdapter, StoredMessage } from '../storage/adapter.js';
 import { RelayClient } from '../wrapper/client.js';
+import { computeNeedsAttention } from './needs-attention.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,6 +20,7 @@ interface AgentStatus {
   status?: string;
   lastActive?: string;
   lastSeen?: string;
+  needsAttention?: boolean;
 }
 
 interface Message {
@@ -362,6 +364,7 @@ export async function startDashboard(port: number, dataDir: string, teamDir: str
         status: 'Idle',
         lastSeen: a.lastSeen,
         lastActive: a.lastActive,
+        needsAttention: false,
       });
     });
 
@@ -392,6 +395,21 @@ export async function startDashboard(port: number, dataDir: string, teamDir: str
         if (m.content.startsWith('STATUS:')) {
           agent.status = m.content.substring(7).trim(); // remove "STATUS:"
         }
+      }
+    });
+
+    // Detect agents with unanswered inbound messages (needs attention)
+    const needsAttentionAgents = computeNeedsAttention(allMessages.map((m) => ({
+      from: m.from,
+      to: m.to,
+      timestamp: m.timestamp,
+      thread: m.thread,
+    })));
+
+    needsAttentionAgents.forEach((agentName) => {
+      const agent = agentsMap.get(agentName);
+      if (agent) {
+        agent.needsAttention = true;
       }
     });
 
@@ -468,7 +486,55 @@ export async function startDashboard(port: number, dataDir: string, teamDir: str
     const bridgeStatePath = path.join(dataDir, 'bridge-state.json');
     if (fs.existsSync(bridgeStatePath)) {
       try {
-        return JSON.parse(fs.readFileSync(bridgeStatePath, 'utf-8'));
+        const bridgeState = JSON.parse(fs.readFileSync(bridgeStatePath, 'utf-8'));
+
+        // Enrich each project with actual agent data from their team directories
+        if (bridgeState.projects && Array.isArray(bridgeState.projects)) {
+          for (const project of bridgeState.projects) {
+            if (project.path) {
+              // Get project's data directory
+              const crypto = await import('crypto');
+              const projectHash = crypto.createHash('sha256').update(project.path).digest('hex').slice(0, 12);
+              const projectDataDir = path.join(path.dirname(dataDir), projectHash);
+              const projectTeamDir = path.join(projectDataDir, 'team');
+              const agentsPath = path.join(projectTeamDir, 'agents.json');
+
+              // Read actual connected agents
+              if (fs.existsSync(agentsPath)) {
+                try {
+                  const agentsData = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
+                  if (agentsData.agents && Array.isArray(agentsData.agents)) {
+                    // Filter to only show online agents (seen in last 5 minutes)
+                    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+                    project.agents = agentsData.agents
+                      .filter((a: { lastSeen?: string }) => {
+                        if (!a.lastSeen) return false;
+                        return new Date(a.lastSeen).getTime() > fiveMinutesAgo;
+                      })
+                      .map((a: { name: string; cli?: string; lastSeen?: string }) => ({
+                        name: a.name,
+                        status: 'active',
+                        cli: a.cli,
+                        lastSeen: a.lastSeen,
+                      }));
+
+                    // Update lead status based on actual agents
+                    if (project.lead) {
+                      const leadAgent = project.agents.find((a: { name: string }) =>
+                        a.name.toLowerCase() === project.lead.name.toLowerCase()
+                      );
+                      project.lead.connected = !!leadAgent;
+                    }
+                  }
+                } catch (e) {
+                  console.error(`Failed to read agents for ${project.path}:`, e);
+                }
+              }
+            }
+          }
+        }
+
+        return bridgeState;
       } catch {
         return { projects: [], messages: [], connected: false };
       }

@@ -24,11 +24,27 @@ interface ProjectConnection {
   parser: FrameParser;
   ready: boolean;
   lead?: LeadInfo;
+  reconnecting?: boolean;
+  reconnectAttempts?: number;
+  reconnectTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface MultiProjectClientOptions {
+  /** Enable automatic reconnection on disconnect (default: true) */
+  reconnect?: boolean;
+  /** Initial reconnection delay in ms (default: 1000) */
+  reconnectDelay?: number;
+  /** Maximum reconnection delay in ms (default: 30000) */
+  maxReconnectDelay?: number;
+  /** Maximum reconnection attempts before giving up (default: Infinity) */
+  maxReconnectAttempts?: number;
 }
 
 export class MultiProjectClient {
   private connections: Map<string, ProjectConnection> = new Map();
   private leads: Map<string, LeadInfo> = new Map();
+  private options: Required<MultiProjectClientOptions>;
+  private shuttingDown = false;
 
   /** Handler for incoming messages */
   onMessage?: (projectId: string, from: string, payload: SendPayload, messageId: string) => void;
@@ -36,7 +52,14 @@ export class MultiProjectClient {
   /** Handler for connection state changes */
   onProjectStateChange?: (projectId: string, connected: boolean) => void;
 
-  constructor(private projects: ProjectConfig[]) {}
+  constructor(private projects: ProjectConfig[], options: MultiProjectClientOptions = {}) {
+    this.options = {
+      reconnect: options.reconnect ?? true,
+      reconnectDelay: options.reconnectDelay ?? 1000,
+      maxReconnectDelay: options.maxReconnectDelay ?? 30000,
+      maxReconnectAttempts: options.maxReconnectAttempts ?? Infinity,
+    };
+  }
 
   /**
    * Connect to all project daemons
@@ -73,8 +96,14 @@ export class MultiProjectClient {
       socket.on('data', (data) => this.handleData(conn, data));
 
       socket.on('close', () => {
+        const wasReady = conn.ready;
         conn.ready = false;
         this.onProjectStateChange?.(project.id, false);
+
+        // Attempt reconnection if enabled and not shutting down
+        if (wasReady && this.options.reconnect && !this.shuttingDown) {
+          this.scheduleReconnect(conn);
+        }
       });
 
       socket.on('error', (err) => {
@@ -307,10 +336,115 @@ export class MultiProjectClient {
   }
 
   /**
+   * Schedule a reconnection attempt with exponential backoff
+   */
+  private scheduleReconnect(conn: ProjectConnection): void {
+    if (conn.reconnecting || this.shuttingDown) return;
+
+    const attempts = conn.reconnectAttempts ?? 0;
+    if (attempts >= this.options.maxReconnectAttempts) {
+      console.error(`[bridge] Max reconnection attempts reached for ${conn.config.id}`);
+      return;
+    }
+
+    conn.reconnecting = true;
+    conn.reconnectAttempts = attempts + 1;
+
+    // Calculate delay with exponential backoff
+    const delay = Math.min(
+      this.options.reconnectDelay * Math.pow(2, attempts),
+      this.options.maxReconnectDelay
+    );
+
+    console.log(`[bridge] Reconnecting to ${conn.config.id} in ${delay}ms (attempt ${conn.reconnectAttempts})`);
+
+    conn.reconnectTimer = setTimeout(() => {
+      this.attemptReconnect(conn);
+    }, delay);
+  }
+
+  /**
+   * Attempt to reconnect to a project daemon
+   */
+  private attemptReconnect(conn: ProjectConnection): void {
+    if (this.shuttingDown) {
+      conn.reconnecting = false;
+      return;
+    }
+
+    // Check socket exists
+    if (!fs.existsSync(conn.config.socketPath)) {
+      console.error(`[bridge] No daemon running for ${conn.config.id}, will retry`);
+      conn.reconnecting = false;
+      this.scheduleReconnect(conn);
+      return;
+    }
+
+    const socket = net.createConnection(conn.config.socketPath, () => {
+      this.sendHello(conn);
+    });
+
+    // Update connection with new socket
+    conn.socket = socket;
+    conn.parser = new FrameParser();
+
+    socket.on('data', (data) => this.handleData(conn, data));
+
+    socket.on('close', () => {
+      const wasReady = conn.ready;
+      conn.ready = false;
+      this.onProjectStateChange?.(conn.config.id, false);
+
+      if (wasReady && this.options.reconnect && !this.shuttingDown) {
+        this.scheduleReconnect(conn);
+      }
+    });
+
+    socket.on('error', (err) => {
+      console.error(`[bridge] Reconnection error for ${conn.config.id}:`, err.message);
+      conn.reconnecting = false;
+      if (!this.shuttingDown) {
+        this.scheduleReconnect(conn);
+      }
+    });
+
+    // Reset reconnection state on successful connect
+    const originalReady = conn.ready;
+    const checkReady = setInterval(() => {
+      if (conn.ready && !originalReady) {
+        clearInterval(checkReady);
+        clearTimeout(timeout);
+        conn.reconnecting = false;
+        conn.reconnectAttempts = 0;
+        console.log(`[bridge] Reconnected to ${conn.config.id}`);
+      }
+    }, 10);
+
+    const timeout = setTimeout(() => {
+      if (!conn.ready) {
+        clearInterval(checkReady);
+        socket.destroy();
+        conn.reconnecting = false;
+        console.error(`[bridge] Reconnection timeout for ${conn.config.id}`);
+        if (!this.shuttingDown) {
+          this.scheduleReconnect(conn);
+        }
+      }
+    }, 5000);
+  }
+
+  /**
    * Disconnect from all projects
    */
   disconnect(): void {
+    this.shuttingDown = true;
+
     for (const [_, conn] of this.connections) {
+      // Clear any pending reconnection timers
+      if (conn.reconnectTimer) {
+        clearTimeout(conn.reconnectTimer);
+      }
+
       try {
         this.send(conn, {
           v: PROTOCOL_VERSION,

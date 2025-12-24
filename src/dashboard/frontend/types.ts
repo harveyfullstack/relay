@@ -20,6 +20,7 @@ export interface Message {
   content: string;
   timestamp: string;
   thread?: string;
+  project?: string;  // For cross-project messages
 }
 
 export interface DashboardData {

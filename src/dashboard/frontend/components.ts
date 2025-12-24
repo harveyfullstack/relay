@@ -160,7 +160,12 @@ export function renderMessages(): void {
     const replyCount = getThreadReplyCount(msg.id);
 
     // Format: @From → @To: message (like Slack)
-    const recipientDisplay = isBroadcast ? '@everyone' : `@${escapeHtml(msg.to)}`;
+    // For cross-project messages, show project badge before agent name
+    const recipientDisplay = isBroadcast
+      ? '@everyone'
+      : msg.project
+        ? `<span class="project-badge">${escapeHtml(msg.project)}</span>@${escapeHtml(msg.to)}`
+        : `@${escapeHtml(msg.to)}`;
 
     html += `
       <div class="message ${isBroadcast ? 'broadcast' : ''}" data-id="${escapeHtml(msg.id)}">

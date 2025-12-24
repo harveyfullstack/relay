@@ -59,6 +59,7 @@ program
     }
 
     const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { findAgentConfig, isClaudeCli, buildClaudeArgs } = await import('../utils/agent-config.js');
     const paths = getProjectPaths();
 
     const [mainCommand, ...commandArgs] = commandParts;
@@ -67,12 +68,25 @@ program
     console.error(`Agent: ${agentName}`);
     console.error(`Project: ${paths.projectId}`);
 
+    // Auto-detect agent config and inject --model/--agent for Claude CLI
+    let finalArgs = commandArgs;
+    if (isClaudeCli(mainCommand)) {
+      const config = findAgentConfig(agentName, paths.projectRoot);
+      if (config) {
+        console.error(`Agent config: ${config.configPath}`);
+        if (config.model) {
+          console.error(`Model: ${config.model}`);
+        }
+        finalArgs = buildClaudeArgs(agentName, commandArgs, paths.projectRoot);
+      }
+    }
+
     const { TmuxWrapper } = await import('../wrapper/tmux-wrapper.js');
 
     const wrapper = new TmuxWrapper({
       name: agentName,
       command: mainCommand,
-      args: commandArgs,
+      args: finalArgs,
       socketPath: paths.socketPath,
       debug: false,  // Use -q to keep quiet (debug off by default)
       relayPrefix: options.prefix,
@@ -126,9 +140,11 @@ async function spawnTeamAgents(
   agents: TeamAgent[],
   socketPath: string,
   dataDir: string,
+  projectRoot: string,
   relayPrefix?: string
 ): Promise<void> {
   const { TmuxWrapper } = await import('../wrapper/tmux-wrapper.js');
+  const { findAgentConfig, isClaudeCli, buildClaudeArgs } = await import('../utils/agent-config.js');
 
   for (const agent of agents) {
     console.log(`Spawning agent: ${agent.name} (${agent.cli})`);
@@ -136,10 +152,23 @@ async function spawnTeamAgents(
     // Parse CLI - handle "claude:opus" format
     const [mainCommand, ...cliArgs] = agent.cli.split(/\s+/);
 
+    // Auto-detect agent config and inject --model/--agent for Claude CLI
+    let finalArgs = cliArgs;
+    if (isClaudeCli(mainCommand)) {
+      const config = findAgentConfig(agent.name, projectRoot);
+      if (config) {
+        console.log(`  Agent config: ${config.configPath}`);
+        if (config.model) {
+          console.log(`  Model: ${config.model}`);
+        }
+        finalArgs = buildClaudeArgs(agent.name, cliArgs, projectRoot);
+      }
+    }
+
     const wrapper = new TmuxWrapper({
       name: agent.name,
       command: mainCommand,
-      args: cliArgs,
+      args: finalArgs,
       socketPath,
       debug: false,
       relayPrefix,
@@ -166,7 +195,7 @@ program
   .option('--spawn', 'Auto-spawn agents from teams.json')
   .option('--no-spawn', 'Disable auto-spawn even if teams.json has autoSpawn: true')
   .action(async (options) => {
-    const { ensureProjectDir } = await import('../utils/project-namespace.js');
+    const { getProjectPaths, ensureProjectDir } = await import('../utils/project-namespace.js');
 
     const paths = ensureProjectDir();
     const socketPath = paths.socketPath;
@@ -459,6 +488,9 @@ program
   .action(async (projectPaths: string[], options) => {
     const { resolveProjects, validateDaemons } = await import('../bridge/config.js');
     const { MultiProjectClient } = await import('../bridge/multi-project-client.js');
+    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const fs = await import('node:fs');
+    const pathModule = await import('node:path');
 
     // Resolve projects from args or config
     const projects = resolveProjects(projectPaths, options.cli);
@@ -497,15 +529,96 @@ program
     }
     console.log('');
 
+    // Get data directories for ALL bridged projects (so each project's dashboard can show bridge state)
+    const bridgeStatePaths: string[] = valid.map(p => {
+      const projectPaths = getProjectPaths(p.path);
+      // Ensure directory exists
+      if (!fs.existsSync(projectPaths.dataDir)) {
+        fs.mkdirSync(projectPaths.dataDir, { recursive: true });
+      }
+      return pathModule.join(projectPaths.dataDir, 'bridge-state.json');
+    });
+
+    // Bridge state tracking
+    interface BridgeProject {
+      id: string;
+      name: string;
+      path: string;
+      connected: boolean;
+      lead?: { name: string; connected: boolean };
+      agents: Array<{ name: string; status: string; task?: string }>;
+    }
+    interface BridgeMessage {
+      id: string;
+      from: string;
+      to: string;
+      body: string;
+      sourceProject: string;
+      targetProject?: string;
+      timestamp: string;
+    }
+    interface BridgeState {
+      projects: BridgeProject[];
+      messages: BridgeMessage[];
+      connected: boolean;
+      startedAt: string;
+    }
+
+    const bridgeState: BridgeState = {
+      projects: valid.map(p => ({
+        id: p.id,
+        name: pathModule.basename(p.path),
+        path: p.path,
+        connected: false,
+        lead: { name: p.leadName, connected: false },
+        agents: [],
+      })),
+      messages: [],
+      connected: false,
+      startedAt: new Date().toISOString(),
+    };
+
+    // Write bridge state to ALL project data directories
+    const writeBridgeState = (): void => {
+      const stateJson = JSON.stringify(bridgeState, null, 2);
+      for (const statePath of bridgeStatePaths) {
+        try {
+          fs.writeFileSync(statePath, stateJson);
+        } catch (err) {
+          console.error(`[bridge] Failed to write state to ${statePath}:`, err);
+        }
+      }
+    };
+
+    // Initial state write
+    writeBridgeState();
+    console.log(`Bridge state written to ${bridgeStatePaths.length} project(s)`);
+
     // Connect to all project daemons
     const client = new MultiProjectClient(valid);
+
+    // Track connection state changes (daemon connection, not agent registration)
+    client.onProjectStateChange = (projectId, connected) => {
+      const project = bridgeState.projects.find(p => p.id === projectId);
+      if (project) {
+        project.connected = connected;
+        // Note: lead.connected should only be true when an actual lead agent registers
+        // The bridge connecting to daemon doesn't mean a lead agent is active
+      }
+      bridgeState.connected = bridgeState.projects.some(p => p.connected);
+      writeBridgeState();
+    };
 
     try {
       await client.connect();
     } catch (err) {
       console.error('Failed to connect to all projects');
+      writeBridgeState(); // Write final state before exit
       process.exit(1);
     }
+
+    bridgeState.connected = true;
+    writeBridgeState();
 
     console.log('Connected to all projects.');
     console.log('');
@@ -517,11 +630,39 @@ program
     // Handle messages from projects
     client.onMessage = (projectId, from, payload, messageId) => {
       console.log(`[${projectId}] ${from}: ${payload.body.substring(0, 80)}...`);
+
+      // Track message in bridge state
+      bridgeState.messages.push({
+        id: messageId,
+        from,
+        to: '*', // Incoming messages are from agents
+        body: payload.body,
+        sourceProject: projectId,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Keep last 100 messages
+      if (bridgeState.messages.length > 100) {
+        bridgeState.messages = bridgeState.messages.slice(-100);
+      }
+
+      writeBridgeState();
+    };
+
+    // Clean up on exit
+    const cleanup = (): void => {
+      bridgeState.connected = false;
+      bridgeState.projects.forEach(p => {
+        p.connected = false;
+        if (p.lead) p.lead.connected = false;
+      });
+      writeBridgeState();
     };
 
     // Keep running
     process.on('SIGINT', () => {
       console.log('\nDisconnecting...');
+      cleanup();
       client.disconnect();
       process.exit(0);
     });
@@ -582,6 +723,7 @@ program
     const { getProjectPaths } = await import('../utils/project-namespace.js');
     const { AgentSpawner } = await import('../bridge/spawner.js');
     const { TmuxWrapper } = await import('../wrapper/tmux-wrapper.js');
+    const { findAgentConfig, isClaudeCli, buildClaudeArgs } = await import('../utils/agent-config.js');
 
     const paths = getProjectPaths();
 
@@ -590,6 +732,26 @@ program
     console.log(`Agent: ${name}`);
     console.log(`Project: ${paths.projectId}`);
     console.log(`CLI: ${cli}`);
+
+    // Create spawner for this project
+    const spawner = new AgentSpawner(paths.projectRoot);
+
+    // Parse CLI - split on whitespace for args
+    const [mainCommand, ...cliArgs] = cli.split(/\s+/);
+
+    // Auto-detect agent config and inject --model/--agent for Claude CLI
+    let finalArgs = cliArgs;
+    if (isClaudeCli(mainCommand)) {
+      const config = findAgentConfig(name, paths.projectRoot);
+      if (config) {
+        console.log(`Agent config: ${config.configPath}`);
+        if (config.model) {
+          console.log(`Model: ${config.model}`);
+        }
+        finalArgs = buildClaudeArgs(name, cliArgs, paths.projectRoot);
+      }
+    }
+
     console.log('');
     console.log('Spawn workers with:');
     console.log('  ->relay:spawn WorkerName cli "task"');
@@ -597,16 +759,10 @@ program
     console.log('  ->relay:release WorkerName');
     console.log('');
 
-    // Create spawner for this project
-    const spawner = new AgentSpawner(paths.projectRoot);
-
-    // Parse CLI for model variant (e.g., claude:opus)
-    const [mainCommand, ...commandArgs] = cli.split(':');
-
     const wrapper = new TmuxWrapper({
       name,
       command: mainCommand,
-      args: commandArgs.length > 0 ? commandArgs : undefined,
+      args: finalArgs.length > 0 ? finalArgs : undefined,
       socketPath: paths.socketPath,
       debug: true,
       // Wire up spawn/release callbacks

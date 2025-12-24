@@ -22,6 +22,8 @@ export interface ParsedCommand {
   data?: Record<string, unknown>;
   /** Optional thread ID for grouping related messages */
   thread?: string;
+  /** Optional project for cross-project messaging (e.g., ->relay:project:agent) */
+  project?: string;
   raw: string;
   meta?: ParsedMessageMetadata;
 }
@@ -88,6 +90,29 @@ function buildEscapePattern(prefix: string, thinkingPrefix: string): RegExp {
 // ANSI escape sequence pattern for stripping
 // eslint-disable-next-line no-control-regex
 const ANSI_PATTERN = /\x1b\[[0-9;?]*[a-zA-Z]|\x1b\].*?(?:\x07|\x1b\\)|\r/g;
+
+/**
+ * Parse a target string that may contain cross-project syntax.
+ * Supports: "agent" (local) or "project:agent" (cross-project)
+ *
+ * @param target The raw target string from the relay command
+ * @returns Object with `to` (agent name) and optional `project`
+ */
+function parseTarget(target: string): { to: string; project?: string } {
+  // Check for cross-project syntax: project:agent
+  // Only split on FIRST colon to allow agent names with colons
+  const colonIndex = target.indexOf(':');
+
+  if (colonIndex > 0 && colonIndex < target.length - 1) {
+    // Has a colon with content on both sides
+    const project = target.substring(0, colonIndex);
+    const agent = target.substring(colonIndex + 1);
+    return { to: agent, project };
+  }
+
+  // Local target (no colon or malformed)
+  return { to: target };
+}
 
 /**
  * Strip ANSI escape codes from a string for pattern matching.
@@ -482,12 +507,14 @@ export class OutputParser {
       const relayMatch = stripped.match(this.inlineRelayPattern);
       if (relayMatch) {
         const [raw, target, threadId, body] = relayMatch;
+        const { to, project } = parseTarget(target);
         return {
           command: {
-            to: target,
+            to,
             kind: 'message',
             body,
             thread: threadId || undefined, // undefined if no thread specified
+            project, // undefined if local, set if cross-project
             raw,
           },
           output: null, // Don't output relay commands
@@ -497,12 +524,14 @@ export class OutputParser {
       const thinkingMatch = stripped.match(this.inlineThinkingPattern);
       if (thinkingMatch) {
         const [raw, target, threadId, body] = thinkingMatch;
+        const { to, project } = parseTarget(target);
         return {
           command: {
-            to: target,
+            to,
             kind: 'thinking',
             body,
             thread: threadId || undefined,
+            project,
             raw,
           },
           output: null,
@@ -549,12 +578,25 @@ export class OutputParser {
           return { command: null, remaining, metadata: null };
         }
 
+        // Handle cross-project syntax in block format
+        // Supports both explicit "project" field and "project:agent" in "to" field
+        let to = parsed.to;
+        let project = parsed.project;
+
+        if (!project && typeof to === 'string') {
+          // Check if "to" field uses project:agent syntax
+          const targetParsed = parseTarget(to);
+          to = targetParsed.to;
+          project = targetParsed.project;
+        }
+
         const command: ParsedCommand = {
-          to: parsed.to,
+          to,
           kind: parsed.type as PayloadKind,
           body: parsed.body ?? parsed.text ?? '',
           data: parsed.data,
           thread: parsed.thread || undefined,
+          project: project || undefined,
           raw: jsonStr,
           meta: this.lastParsedMetadata || undefined, // Attach last parsed metadata
         };
