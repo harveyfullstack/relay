@@ -31,3 +31,4 @@ pnpm-debug.log*
 coverage/
 .npm-cache
 .tmp-supervisor-tests
+.tmp-agent-relay-data
