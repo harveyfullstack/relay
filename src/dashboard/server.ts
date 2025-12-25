@@ -847,28 +847,28 @@ export async function startDashboard(
   });
 
   /**
-   * GET /api/workers - List active spawned workers
+   * GET /api/spawned - List active spawned agents
    */
-  app.get('/api/workers', (req, res) => {
+  app.get('/api/spawned', (req, res) => {
     if (!spawner) {
       return res.status(503).json({
         success: false,
         error: 'Spawner not enabled',
-        workers: [],
+        agents: [],
       });
     }
 
-    const workers = spawner.getActiveWorkers();
+    const agents = spawner.getActiveWorkers();
     res.json({
       success: true,
-      workers,
+      agents,
     });
   });
 
   /**
-   * DELETE /api/workers/:name - Release a worker
+   * DELETE /api/spawned/:name - Release a spawned agent
    */
-  app.delete('/api/workers/:name', async (req, res) => {
+  app.delete('/api/spawned/:name', async (req, res) => {
     if (!spawner) {
       return res.status(503).json({
         success: false,
@@ -888,7 +888,7 @@ export async function startDashboard(
       res.json({
         success: released,
         name,
-        error: released ? undefined : `Worker ${name} not found`,
+        error: released ? undefined : `Agent ${name} not found`,
       });
     } catch (err: any) {
       console.error('[api] Release error:', err);

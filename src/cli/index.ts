@@ -192,7 +192,6 @@ program
   .description('Start daemon + dashboard')
   .option('--no-dashboard', 'Disable web dashboard')
   .option('--port <port>', 'Dashboard port', DEFAULT_DASHBOARD_PORT)
-  .option('--spawn', 'Enable spawn API for creating agents via REST')
   .action(async (options) => {
     const { getProjectPaths, ensureProjectDir } = await import('../utils/project-namespace.js');
 
@@ -235,13 +234,10 @@ program
           dataDir: paths.dataDir,
           teamDir: paths.teamDir,
           dbPath,
-          enableSpawner: options.spawn,
+          enableSpawner: true,
           projectRoot: paths.projectRoot,
         });
         console.log(`Dashboard: http://localhost:${actualPort}`);
-        if (options.spawn) {
-          console.log('Spawn API: POST /api/spawn, GET /api/workers, DELETE /api/workers/:name');
-        }
       }
 
       console.log('Press Ctrl+C to stop.');

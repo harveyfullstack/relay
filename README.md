@@ -37,7 +37,6 @@ Agents communicate by outputting `->relay:` patterns:
 | `agent-relay <cmd>` | Wrap agent with messaging |
 | `agent-relay -n Name <cmd>` | Wrap with specific name |
 | `agent-relay up` | Start daemon + dashboard |
-| `agent-relay up --spawn` | Start with REST API for spawning agents |
 | `agent-relay down` | Stop daemon |
 | `agent-relay status` | Check if running |
 | `agent-relay read <id>` | Read truncated message |
@@ -145,7 +144,7 @@ agent-relay lead Alice
 ->relay:*:lead Broadcast to all project leads
 ```
 
-### Spawn Workers (Lead only)
+### Spawn Agents (Lead only)
 
 ```
 ->relay:spawn Dev1 claude "Implement login endpoint"
@@ -178,19 +177,15 @@ Copy [docs/AGENTS.md](docs/AGENTS.md) to your project's agent instructions file 
 
 ## REST API for Spawning Agents
 
-Start the daemon with the `--spawn` flag to enable the REST API:
-
-```bash
-agent-relay up --spawn
-```
+The dashboard includes a REST API for programmatically spawning and managing agents.
 
 ### Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/spawn` | Spawn a new agent |
-| `GET` | `/api/workers` | List active workers |
-| `DELETE` | `/api/workers/:name` | Release a worker |
+| `GET` | `/api/spawned` | List spawned agents |
+| `DELETE` | `/api/spawned/:name` | Release an agent |
 
 ### Examples
 
@@ -198,13 +193,13 @@ agent-relay up --spawn
 # Spawn an agent
 curl -X POST http://localhost:3888/api/spawn \
   -H "Content-Type: application/json" \
-  -d '{"name": "Worker1", "cli": "claude", "task": "Implement login"}'
+  -d '{"name": "Dev1", "cli": "claude", "task": "Implement login"}'
 
-# List workers
-curl http://localhost:3888/api/workers
+# List spawned agents
+curl http://localhost:3888/api/spawned
 
-# Release a worker
-curl -X DELETE http://localhost:3888/api/workers/Worker1
+# Release an agent
+curl -X DELETE http://localhost:3888/api/spawned/Dev1
 ```
 
 ### Response Format
@@ -212,8 +207,8 @@ curl -X DELETE http://localhost:3888/api/workers/Worker1
 ```json
 {
   "success": true,
-  "name": "Worker1",
-  "window": "relay-workers:Worker1"
+  "name": "Dev1",
+  "window": "relay-workers:Dev1"
 }
 ```
 
