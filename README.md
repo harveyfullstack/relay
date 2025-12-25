@@ -37,6 +37,7 @@ Agents communicate by outputting `->relay:` patterns:
 | `agent-relay <cmd>` | Wrap agent with messaging |
 | `agent-relay -n Name <cmd>` | Wrap with specific name |
 | `agent-relay up` | Start daemon + dashboard |
+| `agent-relay up --spawn` | Start with REST API for spawning agents |
 | `agent-relay down` | Stop daemon |
 | `agent-relay status` | Check if running |
 | `agent-relay read <id>` | Read truncated message |
@@ -174,6 +175,47 @@ Copy [docs/AGENTS.md](docs/AGENTS.md) to your project's agent instructions file 
 `agent-relay up` starts a web dashboard at http://localhost:3888
 
 ![Agent Relay Dashboard](dashboard.png)
+
+## REST API for Spawning Agents
+
+Start the daemon with the `--spawn` flag to enable the REST API:
+
+```bash
+agent-relay up --spawn
+```
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/spawn` | Spawn a new agent |
+| `GET` | `/api/workers` | List active workers |
+| `DELETE` | `/api/workers/:name` | Release a worker |
+
+### Examples
+
+```bash
+# Spawn an agent
+curl -X POST http://localhost:3888/api/spawn \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Worker1", "cli": "claude", "task": "Implement login"}'
+
+# List workers
+curl http://localhost:3888/api/workers
+
+# Release a worker
+curl -X DELETE http://localhost:3888/api/workers/Worker1
+```
+
+### Response Format
+
+```json
+{
+  "success": true,
+  "name": "Worker1",
+  "window": "relay-workers:Worker1"
+}
+```
 
 ## Troubleshooting
 

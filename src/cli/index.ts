@@ -192,8 +192,7 @@ program
   .description('Start daemon + dashboard')
   .option('--no-dashboard', 'Disable web dashboard')
   .option('--port <port>', 'Dashboard port', DEFAULT_DASHBOARD_PORT)
-  .option('--spawn', 'Auto-spawn agents from teams.json')
-  .option('--no-spawn', 'Disable auto-spawn even if teams.json has autoSpawn: true')
+  .option('--spawn', 'Enable spawn API for creating agents via REST')
   .action(async (options) => {
     const { getProjectPaths, ensureProjectDir } = await import('../utils/project-namespace.js');
 
@@ -231,8 +230,18 @@ program
       if (options.dashboard !== false) {
         const port = parseInt(options.port, 10);
         const { startDashboard } = await import('../dashboard/server.js');
-        const actualPort = await startDashboard(port, paths.dataDir, paths.teamDir, dbPath);
+        const actualPort = await startDashboard({
+          port,
+          dataDir: paths.dataDir,
+          teamDir: paths.teamDir,
+          dbPath,
+          enableSpawner: options.spawn,
+          projectRoot: paths.projectRoot,
+        });
         console.log(`Dashboard: http://localhost:${actualPort}`);
+        if (options.spawn) {
+          console.log('Spawn API: POST /api/spawn, GET /api/workers, DELETE /api/workers/:name');
+        }
       }
 
       console.log('Press Ctrl+C to stop.');

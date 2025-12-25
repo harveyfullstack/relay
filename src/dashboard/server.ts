@@ -10,7 +10,8 @@ import type { StorageAdapter, StoredMessage } from '../storage/adapter.js';
 import { RelayClient } from '../wrapper/client.js';
 import { computeNeedsAttention } from './needs-attention.js';
 import { MultiProjectClient } from '../bridge/multi-project-client.js';
-import type { ProjectConfig } from '../bridge/types.js';
+import { AgentSpawner } from '../bridge/spawner.js';
+import type { ProjectConfig, SpawnRequest, WorkerInfo } from '../bridge/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,13 +63,45 @@ interface AgentSummary {
   context?: string;
 }
 
-export async function startDashboard(port: number, dataDir: string, teamDir: string, dbPath?: string): Promise<number> {
+export interface DashboardOptions {
+  port: number;
+  dataDir: string;
+  teamDir: string;
+  dbPath?: string;
+  /** Enable agent spawning API */
+  enableSpawner?: boolean;
+  /** Project root for spawner (defaults to dataDir) */
+  projectRoot?: string;
+  /** Tmux session name for workers */
+  tmuxSession?: string;
+}
+
+export async function startDashboard(port: number, dataDir: string, teamDir: string, dbPath?: string): Promise<number>;
+export async function startDashboard(options: DashboardOptions): Promise<number>;
+export async function startDashboard(
+  portOrOptions: number | DashboardOptions,
+  dataDirArg?: string,
+  teamDirArg?: string,
+  dbPathArg?: string
+): Promise<number> {
+  // Handle overloaded signatures
+  const options: DashboardOptions = typeof portOrOptions === 'number'
+    ? { port: portOrOptions, dataDir: dataDirArg!, teamDir: teamDirArg!, dbPath: dbPathArg }
+    : portOrOptions;
+
+  const { port, dataDir, teamDir, dbPath, enableSpawner, projectRoot, tmuxSession } = options;
+
   console.log('Starting dashboard...');
   console.log('__dirname:', __dirname);
   const publicDir = path.join(__dirname, 'public');
   console.log('Public dir:', publicDir);
   const storage: StorageAdapter | undefined = dbPath
     ? new SqliteStorageAdapter({ dbPath })
+    : undefined;
+
+  // Initialize spawner if enabled
+  const spawner: AgentSpawner | undefined = enableSpawner
+    ? new AgentSpawner(projectRoot || dataDir, tmuxSession)
     : undefined;
 
   process.on('uncaughtException', (err) => {
@@ -762,6 +795,108 @@ export async function startDashboard(port: number, dataDir: string, teamDir: str
     } catch (err) {
       console.error('Failed to fetch bridge data', err);
       res.status(500).json({ error: 'Failed to load bridge data' });
+    }
+  });
+
+  // ===== Agent Spawn API =====
+
+  /**
+   * POST /api/spawn - Spawn a new agent
+   * Body: { name: string, cli?: string, task?: string }
+   */
+  app.post('/api/spawn', async (req, res) => {
+    if (!spawner) {
+      return res.status(503).json({
+        success: false,
+        error: 'Spawner not enabled. Start dashboard with enableSpawner: true',
+      });
+    }
+
+    const { name, cli = 'claude', task = '' } = req.body;
+
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: name',
+      });
+    }
+
+    try {
+      const request: SpawnRequest = {
+        name,
+        cli,
+        task,
+        requestedBy: 'api',
+      };
+      const result = await spawner.spawn(request);
+
+      if (result.success) {
+        // Broadcast update to WebSocket clients
+        broadcastData().catch(() => {});
+      }
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('[api] Spawn error:', err);
+      res.status(500).json({
+        success: false,
+        name,
+        error: err.message,
+      });
+    }
+  });
+
+  /**
+   * GET /api/workers - List active spawned workers
+   */
+  app.get('/api/workers', (req, res) => {
+    if (!spawner) {
+      return res.status(503).json({
+        success: false,
+        error: 'Spawner not enabled',
+        workers: [],
+      });
+    }
+
+    const workers = spawner.getActiveWorkers();
+    res.json({
+      success: true,
+      workers,
+    });
+  });
+
+  /**
+   * DELETE /api/workers/:name - Release a worker
+   */
+  app.delete('/api/workers/:name', async (req, res) => {
+    if (!spawner) {
+      return res.status(503).json({
+        success: false,
+        error: 'Spawner not enabled',
+      });
+    }
+
+    const { name } = req.params;
+
+    try {
+      const released = await spawner.release(name);
+
+      if (released) {
+        broadcastData().catch(() => {});
+      }
+
+      res.json({
+        success: released,
+        name,
+        error: released ? undefined : `Worker ${name} not found`,
+      });
+    } catch (err: any) {
+      console.error('[api] Release error:', err);
+      res.status(500).json({
+        success: false,
+        name,
+        error: err.message,
+      });
     }
   });
 
