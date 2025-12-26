@@ -35,6 +35,7 @@ interface Message {
   timestamp: string;
   id: string; // unique-ish id
   thread?: string;
+  isBroadcast?: boolean;
 }
 
 interface SessionInfo {

@@ -208,7 +208,7 @@ export class Router {
       if (target) {
         const deliver = this.createDeliverEnvelope(from, agentName, envelope, target);
         const sent = target.send(deliver);
-        this.persistDeliverEnvelope(deliver);
+        this.persistDeliverEnvelope(deliver, true); // Mark as broadcast
         if (sent) {
           this.trackDelivery(target, deliver);
           this.registry?.recordReceive(agentName);
@@ -246,7 +246,7 @@ export class Router {
   /**
    * Persist a delivered message if storage is configured.
    */
-  private persistDeliverEnvelope(envelope: DeliverEnvelope): void {
+  private persistDeliverEnvelope(envelope: DeliverEnvelope, isBroadcast: boolean = false): void {
     if (!this.storage) return;
 
     this.storage.saveMessage({
@@ -263,6 +263,7 @@ export class Router {
       sessionId: envelope.delivery.session_id,
       status: 'unread',
       is_urgent: false,
+      is_broadcast: isBroadcast,
     }).catch((err) => {
       console.error('[router] Failed to persist message', err);
     });

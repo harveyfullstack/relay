@@ -138,7 +138,8 @@ export class SqliteStorageAdapter implements StorageAdapter {
           delivery_session_id TEXT,
           session_id TEXT,
           status TEXT NOT NULL DEFAULT 'unread',
-          is_urgent INTEGER NOT NULL DEFAULT 0
+          is_urgent INTEGER NOT NULL DEFAULT 0,
+          is_broadcast INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX idx_messages_ts ON messages (ts);
         CREATE INDEX idx_messages_sender ON messages (sender);
@@ -164,6 +165,9 @@ export class SqliteStorageAdapter implements StorageAdapter {
       if (!columnNames.has('is_urgent')) {
         this.db.exec("ALTER TABLE messages ADD COLUMN is_urgent INTEGER NOT NULL DEFAULT 0");
         this.db.exec('CREATE INDEX IF NOT EXISTS idx_messages_is_urgent ON messages (is_urgent)');
+      }
+      if (!columnNames.has('is_broadcast')) {
+        this.db.exec("ALTER TABLE messages ADD COLUMN is_broadcast INTEGER NOT NULL DEFAULT 0");
       }
     }
 
@@ -227,8 +231,8 @@ export class SqliteStorageAdapter implements StorageAdapter {
 
     this.insertStmt = this.db.prepare(`
       INSERT OR REPLACE INTO messages
-      (id, ts, sender, recipient, topic, kind, body, data, thread, delivery_seq, delivery_session_id, session_id, status, is_urgent)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, ts, sender, recipient, topic, kind, body, data, thread, delivery_seq, delivery_session_id, session_id, status, is_urgent, is_broadcast)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     // Start automatic cleanup if enabled
@@ -314,7 +318,8 @@ export class SqliteStorageAdapter implements StorageAdapter {
       message.deliverySessionId ?? null,
       message.sessionId ?? null,
       message.status,
-      message.is_urgent ? 1 : 0
+      message.is_urgent ? 1 : 0,
+      message.is_broadcast ? 1 : 0
     );
   }
 
@@ -360,7 +365,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
     const limit = query.limit ?? 200;
 
     const stmt = this.db.prepare(`
-      SELECT id, ts, sender, recipient, topic, kind, body, data, thread, delivery_seq, delivery_session_id, session_id, status, is_urgent
+      SELECT id, ts, sender, recipient, topic, kind, body, data, thread, delivery_seq, delivery_session_id, session_id, status, is_urgent, is_broadcast
       FROM messages
       ${where}
       ORDER BY ts ${order}
@@ -383,6 +388,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
       sessionId: row.session_id ?? undefined,
       status: row.status,
       is_urgent: row.is_urgent === 1,
+      is_broadcast: row.is_broadcast === 1,
     }));
   }
 
@@ -401,7 +407,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
 
     // Support both exact match and prefix match (for short IDs like "06eb33da")
     const stmt = this.db.prepare(`
-      SELECT id, ts, sender, recipient, topic, kind, body, data, thread, delivery_seq, delivery_session_id, session_id, status, is_urgent
+      SELECT id, ts, sender, recipient, topic, kind, body, data, thread, delivery_seq, delivery_session_id, session_id, status, is_urgent, is_broadcast
       FROM messages
       WHERE id = ? OR id LIKE ?
       ORDER BY ts DESC
@@ -426,6 +432,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
       sessionId: row.session_id ?? undefined,
       status: row.status ?? 'unread',
       is_urgent: row.is_urgent === 1,
+      is_broadcast: row.is_broadcast === 1,
     };
   }
 

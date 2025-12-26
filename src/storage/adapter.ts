@@ -20,6 +20,8 @@ export interface StoredMessage {
   status: MessageStatus;
   /** Whether the message is marked as urgent */
   is_urgent: boolean;
+  /** Whether the message was sent as a broadcast (to: '*') */
+  is_broadcast?: boolean;
 }
 
 export interface MessageQuery {

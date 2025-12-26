@@ -14,6 +14,8 @@ export interface AttentionMessage {
   to: string;
   timestamp: string;
   thread?: string;
+  /** Whether the message was sent as a broadcast (to: '*') */
+  isBroadcast?: boolean;
 }
 
 type TimestampMap = Map<string, number>;
@@ -45,7 +47,9 @@ export function computeNeedsAttention(messages: AttentionMessage[]): Set<string>
     if (Number.isNaN(ts)) continue;
 
     // Inbound: messages directed to a specific agent (ignore broadcasts)
-    if (message.to && message.to !== '*') {
+    // Note: isBroadcast indicates the message was originally a broadcast, even though
+    // the 'to' field is set to the individual recipient for storage purposes
+    if (message.to && !message.isBroadcast) {
       const inboundKey = message.thread ? `thread:${message.thread}` : `sender:${message.from}`;
       updateLatest(latestInbound, message.to, inboundKey, ts);
     }
@@ -55,7 +59,7 @@ export function computeNeedsAttention(messages: AttentionMessage[]): Set<string>
     if (message.from) {
       const outboundKey = message.thread
         ? `thread:${message.thread}`
-        : (message.to && message.to !== '*')
+        : (message.to && !message.isBroadcast)
           ? `sender:${message.to}`
           : null;
 
@@ -65,7 +69,7 @@ export function computeNeedsAttention(messages: AttentionMessage[]): Set<string>
 
       // Broadcasts clear attention: agent is actively participating
       // Track as a "catch-all" outbound timestamp for this agent
-      if (message.to === '*') {
+      if (message.isBroadcast) {
         updateLatest(latestOutbound, message.from, '__broadcast__', ts);
       }
     }
