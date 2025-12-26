@@ -320,40 +320,27 @@ export class OutputParser {
       if (PROMPTISH_LINE.test(trimmed)) return true;
       if (RELAY_INJECTION_PREFIX.test(line)) return true; // Avoid swallowing injected inbound messages
 
-      // Handle blank lines - more lenient for multi-line messages
+      // Handle blank lines - allow them as part of message formatting
       if (trimmed === '') {
-        // For relay messages, blank lines don't stop continuation
-        // They're part of the message formatting. Only stop on:
-        // 1. Double blank lines
-        // 2. Followed by a new command/prompt/block marker
-        // 3. End of all content
-
-        let nextBlankCount = 0;
-        let foundNextCommand = false;
-
-        // Look ahead for what comes after blank lines
-        for (let j = currentIndex + 1; j < lines.length; j++) {
-          const nextLine = lines[j].trim();
-
-          if (nextLine === '') {
-            nextBlankCount++;
-            if (nextBlankCount >= 1) {
-              // Two consecutive blank lines = stop
-              return true;
-            }
-            continue;
-          }
-
-          // Found a non-blank line
-          if (isInlineStart(nextLine) || isBlockMarker(nextLine) || PROMPTISH_LINE.test(nextLine) || RELAY_INJECTION_PREFIX.test(nextLine)) {
-            foundNextCommand = true;
-          }
-          break;
+        // Check if the immediate next line is also blank (two consecutive blanks = stop)
+        if (currentIndex + 1 < lines.length && lines[currentIndex + 1].trim() === '') {
+          return true; // Stop on double blank lines
         }
 
-        // Stop if we hit another command or end of input
-        // Otherwise, allow the blank line as part of continuation
-        return foundNextCommand;
+        // Check if the next non-blank line is a stop condition (new command/prompt)
+        for (let j = currentIndex + 1; j < lines.length; j++) {
+          const nextLine = lines[j].trim();
+          if (nextLine === '') continue; // Skip blanks, keep looking
+
+          // Found a non-blank line - check if it's a stop condition
+          if (isInlineStart(nextLine) || isBlockMarker(nextLine) || PROMPTISH_LINE.test(nextLine) || RELAY_INJECTION_PREFIX.test(nextLine)) {
+            return true; // Stop if next command/prompt found
+          }
+          break; // Found content, don't stop (it's part of the message)
+        }
+
+        // Default: allow blank line as continuation
+        return false;
       }
       return false;
     };

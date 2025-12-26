@@ -612,8 +612,8 @@ export class TmuxWrapper {
 
           // Check if it looks like a continuation (indented text)
           if (continuationPattern.test(nextLine)) {
-            // Join with space, trimming the indentation
-            joined += ' ' + nextLine.trim();
+            // Join with newline to preserve multi-line message content
+            joined += '\n' + nextLine.trim();
             j++;
           } else {
             break;
