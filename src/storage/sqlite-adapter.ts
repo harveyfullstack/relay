@@ -175,7 +175,8 @@ export class SqliteStorageAdapter implements StorageAdapter {
       }
     }
 
-    // Create sessions table (IF NOT EXISTS is safe here - no new columns to migrate)
+    // Create sessions table (IF NOT EXISTS is safe here)
+    // Note: Don't create resume_token index here - it's created after migration check
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -193,7 +194,6 @@ export class SqliteStorageAdapter implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions (agent_name);
       CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions (started_at);
       CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions (project_id);
-      CREATE INDEX IF NOT EXISTS idx_sessions_resume_token ON sessions (resume_token);
     `);
 
     // Migrate existing sessions table to add resume_token if missing
@@ -201,8 +201,9 @@ export class SqliteStorageAdapter implements StorageAdapter {
     const sessionColumnNames = new Set(sessionColumns.map(c => c.name));
     if (!sessionColumnNames.has('resume_token')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN resume_token TEXT');
-      this.db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_resume_token ON sessions (resume_token)');
     }
+    // Create index after ensuring column exists (either from CREATE TABLE or migration)
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_resume_token ON sessions (resume_token)');
 
     // Create agent_summaries table (IF NOT EXISTS is safe here - no new columns to migrate)
     this.db.exec(`
