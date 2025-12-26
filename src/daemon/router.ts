@@ -258,12 +258,14 @@ export class Router {
       kind: envelope.payload.kind,
       body: envelope.payload.body,
       data: envelope.payload.data,
+      payloadMeta: envelope.payload_meta,
+      thread: envelope.payload.thread,
       deliverySeq: envelope.delivery.seq,
       deliverySessionId: envelope.delivery.session_id,
       sessionId: envelope.delivery.session_id,
       status: 'unread',
       is_urgent: false,
-      is_broadcast: isBroadcast,
+      is_broadcast: isBroadcast || envelope.to === '*',
     }).catch((err) => {
       console.error('[router] Failed to persist message', err);
     });
@@ -309,6 +311,12 @@ export class Router {
       clearTimeout(pending.timer);
     }
     this.pendingDeliveries.delete(ackId);
+    const statusUpdate = this.storage?.updateMessageStatus?.(ackId, 'acked');
+    if (statusUpdate instanceof Promise) {
+      statusUpdate.catch(err => {
+        console.error('[router] Failed to record ACK status', err);
+      });
+    }
     console.log(`[router] ACK received for ${ackId}`);
   }
 
@@ -375,5 +383,47 @@ export class Router {
 
       pending.timer = this.scheduleRetry(deliverId);
     }, this.deliveryOptions.ackTimeoutMs);
+  }
+
+  /**
+   * Replay any pending (unacked) messages for a resumed session.
+   */
+  async replayPending(connection: RoutableConnection): Promise<void> {
+    if (!this.storage?.getPendingMessagesForSession || !connection.agentName) {
+      return;
+    }
+
+    const pending = await this.storage.getPendingMessagesForSession(connection.agentName, connection.sessionId);
+    if (!pending.length) return;
+
+    console.log(`[router] Replaying ${pending.length} messages to ${connection.agentName}`);
+
+    for (const msg of pending) {
+      const deliver: DeliverEnvelope = {
+        v: PROTOCOL_VERSION,
+        type: 'DELIVER',
+        id: msg.id,
+        ts: msg.ts,
+        from: msg.from,
+        to: msg.to,
+        topic: msg.topic,
+        payload: {
+          kind: msg.kind,
+          body: msg.body,
+          data: msg.data,
+          thread: msg.thread,
+        },
+        payload_meta: msg.payloadMeta,
+        delivery: {
+          seq: msg.deliverySeq ?? connection.getNextSeq(msg.topic ?? 'default', msg.from),
+          session_id: msg.deliverySessionId ?? connection.sessionId,
+        },
+      };
+
+      const sent = connection.send(deliver);
+      if (sent) {
+        this.trackDelivery(connection, deliver);
+      }
+    }
   }
 }
