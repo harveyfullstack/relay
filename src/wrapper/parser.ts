@@ -66,6 +66,10 @@ const PROMPTISH_LINE = /^[\s]*[>$%#➜›»][\s]*$/;
 const RELAY_INJECTION_PREFIX = /^\s*Relay message from /;
 const MAX_INLINE_CONTINUATION_LINES = 30;
 
+// Claude extended thinking block markers - skip content inside these
+const THINKING_START = /<antml:thinking>/;
+const THINKING_END = /<\/thinking>/;
+
 /**
  * Escape special regex characters in a string
  */
@@ -148,6 +152,9 @@ export class OutputParser {
   private blockBuffer = '';
   private blockType: 'RELAY' | 'RELAY_METADATA' | null = null;
   private lastParsedMetadata: ParsedMessageMetadata | null = null;
+
+  // Claude extended thinking block state - skip content inside <thinking>...</thinking>
+  private inThinkingBlock = false;
 
   // Fenced inline state: ->relay:Target <<< ... >>>
   private inFencedInline = false;
@@ -432,6 +439,28 @@ export class OutputParser {
       // Pass it through unmodified and do not attempt to parse it.
       if (isLastLine && !hasTrailingNewline) {
         outputLines.push(line);
+        continue;
+      }
+
+      // Skip Claude extended thinking blocks - don't parse or output their content
+      // Check for thinking end first (to handle end tag on same line as start)
+      if (this.inThinkingBlock) {
+        if (THINKING_END.test(line)) {
+          this.inThinkingBlock = false;
+        }
+        // Skip this line - don't output thinking content
+        strippedCount++;
+        continue;
+      }
+      // Check for thinking start
+      if (THINKING_START.test(line)) {
+        this.inThinkingBlock = true;
+        // Also check if it ends on the same line (inline thinking block)
+        if (THINKING_END.test(line)) {
+          this.inThinkingBlock = false;
+        }
+        // Skip this line - don't output thinking content
+        strippedCount++;
         continue;
       }
 
@@ -900,6 +929,7 @@ export class OutputParser {
     this.blockType = null;
     this.lastParsedMetadata = null;
     this.inCodeFence = false;
+    this.inThinkingBlock = false;
     this.inFencedInline = false;
     this.fencedInlineBuffer = '';
     this.fencedInlineTarget = '';
@@ -919,6 +949,7 @@ export class OutputParser {
     this.blockType = null;
     this.lastParsedMetadata = null;
     this.inCodeFence = false;
+    this.inThinkingBlock = false;
     this.inFencedInline = false;
     this.fencedInlineBuffer = '';
     this.fencedInlineTarget = '';
