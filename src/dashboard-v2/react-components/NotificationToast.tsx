@@ -6,7 +6,7 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { getAgentColor, getAgentInitials } from '../lib/colors.js';
+import { getAgentColor, getAgentInitials } from '../lib/colors';
 
 export interface Toast {
   id: string;

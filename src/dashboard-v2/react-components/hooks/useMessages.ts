@@ -6,7 +6,7 @@
  */
 
 import { useState, useMemo, useCallback } from 'react';
-import type { Message, SendMessageRequest } from '../../types/index.js';
+import type { Message, SendMessageRequest } from '../../types';
 
 export interface UseMessagesOptions {
   messages: Message[];

@@ -6,8 +6,8 @@
  */
 
 import React, { useRef, useEffect } from 'react';
-import type { Message } from '../types/index.js';
-import { getAgentColor, getAgentInitials } from '../lib/colors.js';
+import type { Message } from '../types';
+import { getAgentColor, getAgentInitials } from '../lib/colors';
 
 export interface MessageListProps {
   messages: Message[];

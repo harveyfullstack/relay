@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { getAgentColor, getAgentInitials } from '../lib/colors.js';
+import { getAgentColor, getAgentInitials } from '../lib/colors';
 
 export interface Decision {
   id: string;

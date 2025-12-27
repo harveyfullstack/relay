@@ -6,8 +6,8 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import type { Agent } from '../types/index.js';
-import { getAgentColor, getAgentInitials } from '../lib/colors.js';
+import type { Agent } from '../types';
+import { getAgentColor, getAgentInitials } from '../lib/colors';
 
 export interface Command {
   id: string;

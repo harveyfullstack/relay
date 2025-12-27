@@ -6,14 +6,14 @@
  */
 
 import React from 'react';
-import type { Agent } from '../types/index.js';
+import type { Agent } from '../types';
 import {
   getAgentColor,
   getAgentInitials,
   STATUS_COLORS,
   type AgentStatus,
-} from '../lib/colors.js';
-import { getAgentDisplayName, getAgentBreadcrumb } from '../lib/hierarchy.js';
+} from '../lib/colors';
+import { getAgentDisplayName, getAgentBreadcrumb } from '../lib/hierarchy';
 
 export interface AgentCardProps {
   agent: Agent;

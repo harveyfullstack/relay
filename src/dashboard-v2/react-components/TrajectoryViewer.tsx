@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { getAgentColor } from '../lib/colors.js';
+import { getAgentColor } from '../lib/colors';
 
 export interface TrajectoryStep {
   id: string;

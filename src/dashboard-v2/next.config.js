@@ -14,11 +14,11 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:4280/api/:path*',
+        destination: 'http://localhost:3888/api/:path*',
       },
       {
         source: '/ws',
-        destination: 'http://localhost:4280/ws',
+        destination: 'http://localhost:3888/ws',
       },
     ];
   },

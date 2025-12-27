@@ -6,15 +6,15 @@
  */
 
 import { useState, useMemo, useCallback } from 'react';
-import type { Agent } from '../../types/index.js';
+import type { Agent } from '../../types';
 import {
   groupAgents,
   filterAgents,
   sortAgentsByHierarchy,
   getGroupStats,
   type AgentGroup,
-} from '../../lib/hierarchy.js';
-import { getAgentColor, type ColorScheme } from '../../lib/colors.js';
+} from '../../lib/hierarchy';
+import { getAgentColor, type ColorScheme } from '../../lib/colors';
 
 export interface UseAgentsOptions {
   agents: Agent[];

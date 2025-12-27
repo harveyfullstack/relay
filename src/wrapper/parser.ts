@@ -320,27 +320,25 @@ export class OutputParser {
       if (PROMPTISH_LINE.test(trimmed)) return true;
       if (RELAY_INJECTION_PREFIX.test(line)) return true; // Avoid swallowing injected inbound messages
 
-      // Handle blank lines - allow them as part of message formatting
+      // Allow blank lines only in structured content like tables or between numbered sections
       if (trimmed === '') {
-        // Check if the immediate next line is also blank (two consecutive blanks = stop)
-        if (currentIndex + 1 < lines.length && lines[currentIndex + 1].trim() === '') {
-          return true; // Stop on double blank lines
-        }
+        // If we haven't started continuation yet, stop on blank
+        if (continuationCount === 0) return true;
 
-        // Check if the next non-blank line is a stop condition (new command/prompt)
+        // Look ahead to see if there's more content that looks like structured markdown
         for (let j = currentIndex + 1; j < lines.length; j++) {
           const nextLine = lines[j].trim();
-          if (nextLine === '') continue; // Skip blanks, keep looking
-
-          // Found a non-blank line - check if it's a stop condition
-          if (isInlineStart(nextLine) || isBlockMarker(nextLine) || PROMPTISH_LINE.test(nextLine) || RELAY_INJECTION_PREFIX.test(nextLine)) {
-            return true; // Stop if next command/prompt found
+          if (nextLine === '') {
+            // Double blank line always stops
+            return true;
           }
-          break; // Found content, don't stop (it's part of the message)
+          // Only continue for table rows or numbered list items after blank
+          if (/^\|/.test(nextLine)) return false; // Table row
+          if (/^\d+[.)]\s/.test(nextLine)) return false; // Numbered list like "1." or "2)"
+          // Stop for anything else after a blank line
+          return true;
         }
-
-        // Default: allow blank line as continuation
-        return false;
+        return true; // No more content, stop
       }
       return false;
     };
@@ -354,18 +352,11 @@ export class OutputParser {
       // Note: shouldStopContinuation is already checked in the main loop before calling this
       if (/^[ \t]/.test(original)) return true; // Indented lines from TUI wrapping
       if (BULLET_OR_NUMBERED_LIST.test(stripped)) return true; // Bullet/numbered lists after ->relay:
-
-      // Blank lines are allowed as continuation (preserve formatting in multi-line messages)
-      if (stripped === '') return true;
-
       const prevTrimmed = prevStripped.trimEnd();
       const prevSuggestsContinuation = prevTrimmed !== '' && /[:;,\-–—…]$/.test(prevTrimmed);
       if (prevSuggestsContinuation) return true;
       // If we've already continued once, allow subsequent lines until a stop condition
       if (continuationCount > 0) return true;
-      // Allow plain non-empty lines as continuation so multi-line messages
-      // without indentation or trailing punctuation are captured fully.
-      if (stripped.trim() !== '') return true;
       return false;
     };
 

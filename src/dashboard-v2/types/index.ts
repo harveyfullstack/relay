@@ -2,7 +2,7 @@
  * Dashboard V2 Type Definitions
  */
 
-import type { AgentStatus } from '../lib/colors.js';
+import type { AgentStatus } from '../lib/colors';
 
 // Agent Types
 export interface Agent {

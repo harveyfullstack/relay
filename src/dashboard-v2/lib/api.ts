@@ -15,8 +15,7 @@ import type {
   SpawnAgentRequest,
   SpawnAgentResponse,
   ApiResponse,
-  DashboardState,
-} from '../types/index.js';
+} from '../types';
 
 // API base URL - relative in browser, can be configured for SSR
 const API_BASE = '';
@@ -187,7 +186,7 @@ export const api = {
       }
 
       return { success: false, error: result.error || 'Failed to send message' };
-    } catch (error) {
+    } catch (_error) {
       return { success: false, error: 'Network error' };
     }
   },
@@ -204,7 +203,7 @@ export const api = {
       });
 
       return await response.json() as SpawnAgentResponse;
-    } catch (error) {
+    } catch (_error) {
       return { success: false, name: request.name, error: 'Network error' };
     }
   },
@@ -222,7 +221,7 @@ export const api = {
       }
 
       return { success: false, error: result.error };
-    } catch (error) {
+    } catch (_error) {
       return { success: false, error: 'Network error' };
     }
   },
@@ -243,7 +242,7 @@ export const api = {
       }
 
       return { success: false, error: result.error };
-    } catch (error) {
+    } catch (_error) {
       return { success: false, error: 'Network error' };
     }
   },
@@ -261,7 +260,7 @@ export const api = {
       }
 
       return { success: false, error: 'Failed to fetch data' };
-    } catch (error) {
+    } catch (_error) {
       return { success: false, error: 'Network error' };
     }
   },
@@ -279,7 +278,7 @@ export const api = {
       }
 
       return { success: false, error: 'Failed to fetch bridge data' };
-    } catch (error) {
+    } catch (_error) {
       return { success: false, error: 'Network error' };
     }
   },
@@ -297,7 +296,7 @@ export const api = {
       }
 
       return { success: false, error: 'Failed to fetch metrics' };
-    } catch (error) {
+    } catch (_error) {
       return { success: false, error: 'Network error' };
     }
   },

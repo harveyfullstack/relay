@@ -6,9 +6,9 @@
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
-import type { Agent } from '../types/index.js';
-import type { ServerInfo } from './ServerCard.js';
-import { getAgentColor, getAgentInitials } from '../lib/colors.js';
+import type { Agent } from '../types';
+import type { ServerInfo } from './ServerCard';
+import { getAgentColor, getAgentInitials } from '../lib/colors';
 
 export interface BroadcastTarget {
   type: 'all' | 'server' | 'agents';

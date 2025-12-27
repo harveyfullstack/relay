@@ -5,17 +5,19 @@
  * Manages global state via hooks and provides context to child components.
  */
 
-import React, { useState, useCallback } from 'react';
-import type { Agent } from '../types/index.js';
-import { Sidebar } from './layout/Sidebar.js';
-import { Header } from './layout/Header.js';
-import { MessageList } from './MessageList.js';
-import { CommandPalette } from './CommandPalette.js';
-import { SpawnModal, type SpawnConfig } from './SpawnModal.js';
-import { useWebSocket } from './hooks/useWebSocket.js';
-import { useAgents } from './hooks/useAgents.js';
-import { useMessages } from './hooks/useMessages.js';
-import { api } from '../lib/api.js';
+import React, { useState, useCallback, useRef } from 'react';
+import type { Agent } from '../types';
+import { Sidebar } from './layout/Sidebar';
+import { Header } from './layout/Header';
+import { MessageList } from './MessageList';
+import { CommandPalette } from './CommandPalette';
+import { SpawnModal, type SpawnConfig } from './SpawnModal';
+import { SettingsPanel, defaultSettings, type Settings } from './SettingsPanel';
+import { MentionAutocomplete, getMentionQuery, completeMentionInValue } from './MentionAutocomplete';
+import { useWebSocket } from './hooks/useWebSocket';
+import { useAgents } from './hooks/useAgents';
+import { useMessages } from './hooks/useMessages';
+import { api } from '../lib/api';
 
 export interface AppProps {
   /** Initial WebSocket URL (optional, defaults to current host) */
@@ -36,6 +38,10 @@ export function App({ wsUrl }: AppProps) {
 
   // Command palette state
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+
+  // Settings panel state
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
 
   // Agent state management
   const {
@@ -81,12 +87,17 @@ export function App({ wsUrl }: AppProps) {
     setIsSpawnModalOpen(true);
   }, []);
 
+  // Handle settings click
+  const handleSettingsClick = useCallback(() => {
+    setIsSettingsOpen(true);
+  }, []);
+
   // Handle spawn agent
   const handleSpawn = useCallback(async (config: SpawnConfig): Promise<boolean> => {
     setIsSpawning(true);
     setSpawnError(null);
     try {
-      const result = await api.spawnAgent(config.name, config.command, config.cwd);
+      const result = await api.spawnAgent({ name: config.name, cli: config.command });
       if (!result.success) {
         setSpawnError(result.error || 'Failed to spawn agent');
         return false;
@@ -146,6 +157,7 @@ export function App({ wsUrl }: AppProps) {
           currentChannel={currentChannel}
           selectedAgent={selectedAgent}
           onCommandPaletteOpen={handleCommandPaletteOpen}
+          onSettingsClick={handleSettingsClick}
         />
 
         {/* Content Area */}
@@ -180,6 +192,7 @@ export function App({ wsUrl }: AppProps) {
         <div className="message-composer">
           <MessageComposer
             recipient={currentChannel === 'general' ? '*' : currentChannel}
+            agents={agents}
             onSend={sendMessage}
             isSending={isSending}
             error={sendError}
@@ -205,22 +218,61 @@ export function App({ wsUrl }: AppProps) {
         isSpawning={isSpawning}
         error={spawnError}
       />
+
+      {/* Settings Panel */}
+      <SettingsPanel
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        onSettingsChange={setSettings}
+        onResetSettings={() => setSettings(defaultSettings)}
+      />
     </div>
   );
 }
 
 /**
- * Simple Message Composer Component
+ * Message Composer Component with @-mention autocomplete
  */
 interface MessageComposerProps {
   recipient: string;
+  agents: Agent[];
   onSend: (to: string, content: string) => Promise<boolean>;
   isSending: boolean;
   error: string | null;
 }
 
-function MessageComposer({ recipient, onSend, isSending, error }: MessageComposerProps) {
+function MessageComposer({ recipient, agents, onSend, isSending, error }: MessageComposerProps) {
   const [message, setMessage] = useState('');
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [showMentions, setShowMentions] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Check for @mention on input change
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart || 0;
+    setMessage(value);
+    setCursorPosition(cursorPos);
+
+    // Show autocomplete if typing @mention at start
+    const query = getMentionQuery(value, cursorPos);
+    setShowMentions(query !== null);
+  };
+
+  // Handle mention selection
+  const handleMentionSelect = (mention: string, newValue: string) => {
+    setMessage(newValue);
+    setShowMentions(false);
+    // Focus input and set cursor after the mention
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+        const pos = newValue.indexOf(' ') + 1;
+        inputRef.current.setSelectionRange(pos, pos);
+      }
+    }, 0);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -229,19 +281,32 @@ function MessageComposer({ recipient, onSend, isSending, error }: MessageCompose
     const success = await onSend(recipient, message);
     if (success) {
       setMessage('');
+      setShowMentions(false);
     }
   };
 
   return (
     <form className="composer-form" onSubmit={handleSubmit}>
-      <input
-        type="text"
-        className="composer-input"
-        placeholder={`Message ${recipient === '*' ? 'everyone' : '@' + recipient}...`}
-        value={message}
-        onChange={(e) => setMessage(e.target.value)}
-        disabled={isSending}
-      />
+      <div className="composer-input-wrapper">
+        <MentionAutocomplete
+          agents={agents}
+          inputValue={message}
+          cursorPosition={cursorPosition}
+          onSelect={handleMentionSelect}
+          onClose={() => setShowMentions(false)}
+          isVisible={showMentions}
+        />
+        <input
+          ref={inputRef}
+          type="text"
+          className="composer-input"
+          placeholder={`Message ${recipient === '*' ? 'everyone' : '@' + recipient}... (type @ to mention)`}
+          value={message}
+          onChange={handleInputChange}
+          onSelect={(e) => setCursorPosition((e.target as HTMLInputElement).selectionStart || 0)}
+          disabled={isSending}
+        />
+      </div>
       <button
         type="submit"
         className="composer-send"
@@ -376,17 +441,82 @@ export const appStyles = `
   align-items: center;
 }
 
-.composer-input {
+.composer-input-wrapper {
   flex: 1;
+  position: relative;
+}
+
+.composer-input {
+  width: 100%;
   padding: 10px 14px;
   border: 1px solid #e8e8e8;
   border-radius: 6px;
   font-size: 14px;
   outline: none;
+  box-sizing: border-box;
 }
 
 .composer-input:focus {
   border-color: #1264a3;
+}
+
+/* Mention Autocomplete Styles */
+.mention-autocomplete {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  margin-bottom: 4px;
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mention-item:hover,
+.mention-item.selected {
+  background: #f3f4f6;
+}
+
+.mention-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mention-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mention-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.mention-description {
+  font-size: 12px;
+  color: #6b7280;
 }
 
 .composer-send {

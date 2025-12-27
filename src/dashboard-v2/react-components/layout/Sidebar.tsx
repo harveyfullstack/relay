@@ -6,8 +6,8 @@
  */
 
 import React, { useState } from 'react';
-import type { Agent } from '../../types/index.js';
-import { AgentList } from '../AgentList.js';
+import type { Agent } from '../../types';
+import { AgentList } from '../AgentList';
 
 export interface SidebarProps {
   agents: Agent[];

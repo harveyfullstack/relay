@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Agent, Message, Session, AgentSummary, FleetData } from '../../types/index.js';
+import type { Agent, Message, Session, AgentSummary, FleetData } from '../../types';
 
 export interface DashboardData {
   agents: Agent[];
@@ -42,13 +42,16 @@ const DEFAULT_OPTIONS: Required<UseWebSocketOptions> = {
 
 /**
  * Get the default WebSocket URL based on the current page location
+ * Note: Next.js rewrites don't work for WebSocket, so we connect directly to the dashboard server
  */
 function getDefaultUrl(): string {
   if (typeof window === 'undefined') {
-    return 'ws://localhost:4280/ws';
+    return 'ws://localhost:3888/ws';
   }
+  // Connect directly to the main dashboard server on port 3888
+  // Next.js rewrites don't handle WebSocket upgrades
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws`;
+  return `${protocol}//localhost:3888/ws`;
 }
 
 export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketReturn {

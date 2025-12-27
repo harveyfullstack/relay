@@ -6,10 +6,10 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import type { Agent } from '../types/index.js';
-import { AgentCard } from './AgentCard.js';
-import { groupAgents, getGroupStats, filterAgents, type AgentGroup } from '../lib/hierarchy.js';
-import { STATUS_COLORS } from '../lib/colors.js';
+import type { Agent } from '../types';
+import { AgentCard } from './AgentCard';
+import { groupAgents, getGroupStats, filterAgents, type AgentGroup } from '../lib/hierarchy';
+import { STATUS_COLORS } from '../lib/colors';
 
 export interface AgentListProps {
   agents: Agent[];

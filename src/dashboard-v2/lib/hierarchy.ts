@@ -5,8 +5,8 @@
  * based on their hierarchical naming convention.
  */
 
-import type { Agent } from '../types/index.js';
-import { getAgentPrefix, getAgentColor, type ColorScheme } from './colors.js';
+import type { Agent } from '../types';
+import { getAgentPrefix, getAgentColor, type ColorScheme } from './colors';
 
 export interface HierarchyNode {
   name: string;
@@ -195,6 +195,13 @@ export function matchesSearch(agentName: string, query: string): boolean {
 export function filterAgents(agents: Agent[], query: string): Agent[] {
   if (!query) return agents;
   return agents.filter((agent) => matchesSearch(agent.name, query));
+}
+
+/**
+ * Sort agents by their hierarchical name for consistent display
+ */
+export function sortAgentsByHierarchy(agents: Agent[]): Agent[] {
+  return [...agents].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**

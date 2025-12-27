@@ -6,9 +6,9 @@
  */
 
 import React from 'react';
-import type { Agent } from '../../types/index.js';
-import { getAgentColor, getAgentInitials } from '../../lib/colors.js';
-import { getAgentBreadcrumb } from '../../lib/hierarchy.js';
+import type { Agent } from '../../types';
+import { getAgentColor, getAgentInitials } from '../../lib/colors';
+import { getAgentBreadcrumb } from '../../lib/hierarchy';
 
 export interface HeaderProps {
   currentChannel: string;

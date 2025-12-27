@@ -6,9 +6,9 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { ServerCard, type ServerInfo } from './ServerCard.js';
-import type { Agent } from '../types/index.js';
-import { getAgentColor, getAgentInitials } from '../lib/colors.js';
+import { ServerCard, type ServerInfo } from './ServerCard';
+import type { Agent } from '../types';
+import { getAgentColor, getAgentInitials } from '../lib/colors';
 
 export interface FleetOverviewProps {
   servers: ServerInfo[];

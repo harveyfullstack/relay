@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { getAgentColor, getAgentInitials } from '../lib/colors.js';
+import { getAgentColor, getAgentInitials } from '../lib/colors';
 
 export interface SpawnConfig {
   name: string;
