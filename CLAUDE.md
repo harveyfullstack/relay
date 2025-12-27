@@ -97,7 +97,11 @@ The conclusion is clear.
 >>>
 ```
 
-The `<<<` opens the message block, `>>>` closes it. Everything between is captured exactly, including blank lines and code.
+**CRITICAL: Always end with `>>>` on its own line!** The `<<<` opens the message block, `>>>` closes it. You MUST include the closing `>>>` or your message may not be sent correctly.
+
+**Limits:** Fenced messages are limited to 200 lines. For longer content, send a brief summary with a reference ID and tell the recipient to run `agent-relay read <id>` to get the full content.
+
+**Fallback:** If you forget `>>>`, the message will auto-close on a double blank line, but this is a fallback - always include `>>>`.
 
 ### Broadcast to All
 

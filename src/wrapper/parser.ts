@@ -53,7 +53,12 @@ const BLOCK_METADATA_END = /\[\[\/RELAY_METADATA\]\]/;
 const CODE_FENCE = /^```/;
 
 // Fenced inline patterns: ->relay:Target <<< ... >>>
-const FENCE_END = /^(?:\s*)?>>>(?:\s*)$/;
+// FENCE_END is lenient - matches >>> at start of line regardless of trailing content
+// This prevents stuck fenced mode when >>> has trailing text like ">>> done"
+const FENCE_END = /^(?:\s*)?>>>/;
+
+// Maximum lines in a fenced block before assuming it's stuck
+const MAX_FENCED_LINES = 200;
 
 // Continuation helpers
 const BULLET_OR_NUMBERED_LIST = /^[ \t]*([\-*•◦‣⏺◆◇○□■]|[0-9]+[.)])\s+/;
@@ -734,11 +739,71 @@ export class OutputParser {
     const lines = data.split('\n');
     const hasTrailingNewline = data.endsWith('\n');
     let output = '';
+    let consecutiveBlankLines = 0;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const isLastLine = i === lines.length - 1;
       const stripped = stripAnsi(line);
+
+      // Track consecutive blank lines for auto-close
+      if (stripped === '') {
+        consecutiveBlankLines++;
+      } else {
+        consecutiveBlankLines = 0;
+      }
+
+      // Auto-close on double blank line (agent forgot >>>)
+      // Only if we have actual content to send
+      if (consecutiveBlankLines >= 2 && this.fencedInlineBuffer.trim().length > 0) {
+        const body = this.fencedInlineBuffer.trim();
+        const command: ParsedCommand = {
+          to: this.fencedInlineTarget,
+          kind: this.fencedInlineKind,
+          body,
+          thread: this.fencedInlineThread,
+          project: this.fencedInlineProject,
+          raw: this.fencedInlineRaw.join('\n'),
+        };
+        commands.push(command);
+
+        // Reset fenced inline state
+        this.inFencedInline = false;
+        this.fencedInlineBuffer = '';
+        this.fencedInlineTarget = '';
+        this.fencedInlineThread = undefined;
+        this.fencedInlineProject = undefined;
+        this.fencedInlineRaw = [];
+        this.fencedInlineKind = 'message';
+
+        // Process remaining lines in normal mode
+        const remainingLines = lines.slice(i);
+        const remaining = remainingLines.join('\n') + (hasTrailingNewline ? '\n' : '');
+        const result = this.parse(remaining);
+        commands.push(...result.commands);
+        return { commands, output: result.output };
+      }
+
+      // Check if a new relay command started (means previous fenced block was never closed)
+      // This prevents a stuck fenced block from swallowing all subsequent messages
+      // Note: This is an expected recovery path, not an error - don't log to avoid noise
+      if (this.inlineRelayPattern.test(stripped) || this.fencedRelayPattern.test(stripped)) {
+        // Discard the incomplete fenced block
+        this.inFencedInline = false;
+        this.fencedInlineBuffer = '';
+        this.fencedInlineTarget = '';
+        this.fencedInlineThread = undefined;
+        this.fencedInlineProject = undefined;
+        this.fencedInlineRaw = [];
+        this.fencedInlineKind = 'message';
+
+        // Process remaining lines (including this one) in normal mode
+        const remainingLines = lines.slice(i);
+        const remaining = remainingLines.join('\n') + (hasTrailingNewline ? '\n' : '');
+        const result = this.parse(remaining);
+        commands.push(...result.commands);
+        return { commands, output: result.output };
+      }
 
       // Check if this line closes the fenced block
       if (FENCE_END.test(stripped)) {
@@ -797,6 +862,19 @@ export class OutputParser {
       // Check size limit
       if (this.fencedInlineBuffer.length > this.options.maxBlockBytes) {
         console.error('[parser] Fenced inline block too large, discarding');
+        this.inFencedInline = false;
+        this.fencedInlineBuffer = '';
+        this.fencedInlineTarget = '';
+        this.fencedInlineThread = undefined;
+        this.fencedInlineProject = undefined;
+        this.fencedInlineRaw = [];
+        this.fencedInlineKind = 'message';
+        return { commands, output: '' };
+      }
+
+      // Check line count limit - prevents stuck fenced mode from blocking all messages
+      if (this.fencedInlineRaw.length > MAX_FENCED_LINES) {
+        console.error('[parser] Fenced inline block exceeded max lines, discarding');
         this.inFencedInline = false;
         this.fencedInlineBuffer = '';
         this.fencedInlineTarget = '';

@@ -396,13 +396,13 @@ export class TmuxWrapper {
   private async injectInstructions(): Promise<void> {
     if (!this.running) return;
 
+    // Use escaped prefix (\->relay:) in examples to prevent parser from treating them as real commands
+    const escapedPrefix = '\\' + this.relayPrefix;
     const instructions = [
       `[Agent Relay] You are "${this.config.name}" - connected for real-time messaging.`,
-      `SEND: ${this.relayPrefix}AgentName message (or ${this.relayPrefix}* to broadcast)`,
-      `MULTI-LINE: ${this.relayPrefix}AgentName <<< ... >>> for messages with blank lines`,
-      `RECEIVE: Messages appear as "Relay message from X [id]: content"`,
-      `SUMMARY: Periodically output [[SUMMARY]]{"currentTask":"...","context":"..."}[[/SUMMARY]] to track progress`,
-      `END: Output [[SESSION_END]]{"summary":"..."}[[/SESSION_END]] when your task is complete`,
+      `SEND: ${escapedPrefix}AgentName message`,
+      `MULTI-LINE: ${escapedPrefix}AgentName <<<(newline)content(newline)>>> - ALWAYS end with >>> on its own line!`,
+      `RECEIVE: Messages appear as "Relay message from X [id]: content" - use "agent-relay read <id>" for long messages`,
     ].join(' | ');
 
     try {
