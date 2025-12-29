@@ -10,18 +10,23 @@ Agent Relay Cloud provides a hosted version of agent-relay with:
 
 ## Provider Authentication Architecture
 
-### The Challenge
+### Design Principle: Login-Only Authentication
 
-Each agent provider has different authentication mechanisms:
+**No API keys** - All provider authentication happens via OAuth/login flows. This provides:
 
-| Provider | Auth Method | Credentials |
-|----------|-------------|-------------|
-| Claude (Anthropic) | API Key | `ANTHROPIC_API_KEY` |
-| Claude Code | OAuth | Browser-based login |
-| OpenAI Codex | API Key | `OPENAI_API_KEY` |
-| Gemini | API Key | `GOOGLE_API_KEY` |
-| GitHub Copilot | OAuth | GitHub account |
-| Local Ollama | None | Self-hosted |
+- **Better security**: No keys to leak, rotate, or manage
+- **Consistent UX**: Always "Login with X" buttons
+- **Account linking**: Users authenticate with their existing provider accounts
+- **Automatic token refresh**: OAuth handles expiration gracefully
+
+| Provider | Auth Flow | User Experience |
+|----------|-----------|-----------------|
+| Claude/Anthropic | OAuth 2.0 | "Login with Anthropic" |
+| OpenAI | OAuth 2.0 | "Login with OpenAI" |
+| Google/Gemini | OAuth 2.0 | "Login with Google" |
+| GitHub Copilot | OAuth 2.0 | Already authed via GitHub signup |
+| Azure OpenAI | OAuth 2.0 | "Login with Microsoft" |
+| Local/Self-hosted | None | Configure endpoint URL only |
 
 ### Proposed Solution: Provider Credentials Vault
 
@@ -112,26 +117,43 @@ Each agent provider has different authentication mechanisms:
 │  ones you want to use:                                          │
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │  ANTHROPIC                                    ┌───────────┐ ││
-│  │  Claude Code, Claude API                      │  Connect  │ ││
-│  │  ⚡ Recommended for code tasks                └───────────┘ ││
+│  │  ANTHROPIC                                                  ││
+│  │  Claude Code                                                ││
+│  │  ⚡ Recommended for code tasks                              ││
+│  │                                                             ││
+│  │  ┌─────────────────────────────────────────────────────┐   ││
+│  │  │  🔐  Login with Anthropic                           │   ││
+│  │  └─────────────────────────────────────────────────────┘   ││
 │  └─────────────────────────────────────────────────────────────┘│
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │  OPENAI                                       ┌───────────┐ ││
-│  │  Codex, GPT-4                                 │  Connect  │ ││
-│  │  Good for diverse tasks                       └───────────┘ ││
+│  │  OPENAI                                                     ││
+│  │  Codex, ChatGPT                                             ││
+│  │  Good for diverse tasks                                     ││
+│  │                                                             ││
+│  │  ┌─────────────────────────────────────────────────────┐   ││
+│  │  │  🔐  Login with OpenAI                              │   ││
+│  │  └─────────────────────────────────────────────────────┘   ││
 │  └─────────────────────────────────────────────────────────────┘│
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │  GOOGLE                                       ┌───────────┐ ││
-│  │  Gemini                                       │  Connect  │ ││
-│  │  Multi-modal capabilities                     └───────────┘ ││
+│  │  GOOGLE                                                     ││
+│  │  Gemini                                                     ││
+│  │  Multi-modal capabilities                                   ││
+│  │                                                             ││
+│  │  ┌─────────────────────────────────────────────────────┐   ││
+│  │  │  🔐  Login with Google                              │   ││
+│  │  └─────────────────────────────────────────────────────┘   ││
 │  └─────────────────────────────────────────────────────────────┘│
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │  + Add Custom Provider                                      ││
-│  │  Ollama, LM Studio, or other CLI tools                      ││
+│  │  GITHUB COPILOT                              ✓ Connected    ││
+│  │  Already connected via your GitHub account                  ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  + Add Self-Hosted Provider                                 ││
+│  │  Ollama, LM Studio, or other local tools                    ││
 │  └─────────────────────────────────────────────────────────────┘│
 │                                                                  │
 │  You can always add more providers later in Settings            │
@@ -142,58 +164,78 @@ Each agent provider has different authentication mechanisms:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-#### Provider Connection Flows
+#### OAuth Login Flow
 
-**Option A: API Key Entry (Simple)**
+When user clicks "Login with [Provider]":
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Connect Anthropic                                           │
 │                                                              │
-│  Enter your Anthropic API key:                              │
+│       ┌─────────────────────────────────────────┐           │
+│       │          provider-name.com              │           │
+│       ├─────────────────────────────────────────┤           │
+│       │                                         │           │
+│       │     Sign in to Anthropic                │           │
+│       │                                         │           │
+│       │  ┌───────────────────────────────────┐ │           │
+│       │  │ email@example.com                 │ │           │
+│       │  └───────────────────────────────────┘ │           │
+│       │  ┌───────────────────────────────────┐ │           │
+│       │  │ ••••••••••••                      │ │           │
+│       │  └───────────────────────────────────┘ │           │
+│       │                                         │           │
+│       │  ┌───────────────────────────────────┐ │           │
+│       │  │         Sign In                   │ │           │
+│       │  └───────────────────────────────────┘ │           │
+│       │                                         │           │
+│       │  Or continue with:                      │           │
+│       │  [Google] [GitHub] [SSO]               │           │
+│       │                                         │           │
+│       └─────────────────────────────────────────┘           │
 │                                                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │ sk-ant-api03-••••••••••••••••••••••••••••••••••••••••  │ │
-│  └────────────────────────────────────────────────────────┘ │
-│                                                              │
-│  🔒 Your key is encrypted and stored securely               │
-│                                                              │
-│  Don't have a key? Get one at console.anthropic.com →       │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │  ☐ Also connect Claude Code (requires OAuth)           │ │
-│  └────────────────────────────────────────────────────────┘ │
-│                                                              │
-│  ┌──────────────┐  ┌──────────────────────────────────────┐ │
-│  │   Cancel     │  │  Connect Anthropic  →               │ │
-│  └──────────────┘  └──────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Option B: OAuth Flow (for Claude Code, Copilot, etc.)**
+After login, authorization consent:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Connect Claude Code                                         │
-│                                                              │
-│  Claude Code uses OAuth for authentication.                 │
-│  You'll be redirected to Anthropic to authorize.            │
 │                                                              │
 │       ┌─────────────────────────────────────────┐           │
 │       │                                         │           │
-│       │     🔐 Authorize with Anthropic         │           │
+│       │     Authorize Agent Relay Cloud         │           │
 │       │                                         │           │
 │       │  Agent Relay Cloud wants to:            │           │
-│       │  • Run Claude Code on your behalf       │           │
-│       │  • Access your Claude usage quota       │           │
+│       │                                         │           │
+│       │  ✓ Run AI agents on your behalf         │           │
+│       │  ✓ Access your usage quota              │           │
+│       │  ✓ View your account info               │           │
+│       │                                         │           │
+│       │  Signed in as: user@example.com         │           │
 │       │                                         │           │
 │       │  ┌─────────────┐  ┌─────────────────┐  │           │
-│       │  │   Deny      │  │   Authorize     │  │           │
+│       │  │   Cancel    │  │   Authorize     │  │           │
 │       │  └─────────────┘  └─────────────────┘  │           │
 │       │                                         │           │
 │       └─────────────────────────────────────────┘           │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
+```
+
+After authorization, redirect back with success:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Connect Your AI Providers                                       │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  ANTHROPIC                                   ✓ Connected    ││
+│  │  Claude Code                                                ││
+│  │  Logged in as claude-user@example.com                       ││
+│  │                                             [Disconnect]    ││
+│  └─────────────────────────────────────────────────────────────┘│
+│  ...                                                            │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Step 4: Configure Your First Team (Optional)
@@ -273,31 +315,32 @@ interface ProviderCredential {
   id: string;
   userId: string;
   provider: ProviderType;
-  authType: 'api_key' | 'oauth' | 'none';
 
-  // For API key auth
-  encryptedApiKey?: string;
+  // OAuth tokens (encrypted at rest)
+  accessToken: string;
+  refreshToken: string;
+  tokenExpiresAt: Date;
+  scopes: string[];
 
-  // For OAuth
-  accessToken?: string;
-  refreshToken?: string;
-  tokenExpiresAt?: Date;
-  scopes?: string[];
+  // Account info from provider
+  providerAccountId: string;    // Provider's user ID
+  providerAccountEmail: string; // For display: "user@example.com"
+  providerAccountName?: string; // Display name if available
 
   // Metadata
-  displayName?: string;  // "Claude (Work Account)"
-  createdAt: Date;
+  connectedAt: Date;
   lastUsedAt?: Date;
+  lastRefreshedAt?: Date;
   isValid: boolean;
 }
 
 type ProviderType =
-  | 'anthropic'      // Claude API
-  | 'claude-code'    // Claude Code CLI (OAuth)
-  | 'openai'         // Codex, GPT
-  | 'google'         // Gemini
-  | 'github'         // Copilot
-  | 'custom';        // Ollama, local, etc.
+  | 'anthropic'    // Claude Code
+  | 'openai'       // Codex, ChatGPT
+  | 'google'       // Gemini
+  | 'github'       // Copilot (auto-connected via signup)
+  | 'microsoft'    // Azure OpenAI
+  | 'self-hosted'; // Ollama, LM Studio (no auth needed)
 ```
 
 ### Provider Registry
@@ -305,75 +348,123 @@ type ProviderType =
 ```typescript
 // src/cloud/providers/registry.ts
 
+interface OAuthConfig {
+  authorizationUrl: string;
+  tokenUrl: string;
+  scopes: string[];
+  userInfoUrl?: string;  // To fetch account email/name after auth
+}
+
 interface ProviderConfig {
   id: ProviderType;
   name: string;
+  displayName: string;  // "Login with {displayName}"
   description: string;
-  authMethods: AuthMethod[];
   cliCommand: string;
   cliArgs?: string[];
-  envVars: Record<string, string>;  // Maps to credential fields
-  oauthConfig?: OAuthConfig;
-  setupUrl?: string;
+  oauthConfig: OAuthConfig;
   icon: string;
+  color: string;  // Brand color for button
 }
 
 const PROVIDER_REGISTRY: ProviderConfig[] = [
   {
     id: 'anthropic',
     name: 'Anthropic',
-    description: 'Claude API for programmatic access',
-    authMethods: ['api_key'],
-    cliCommand: 'claude',
-    cliArgs: ['--dangerously-skip-permissions'],
-    envVars: { 'ANTHROPIC_API_KEY': 'apiKey' },
-    setupUrl: 'https://console.anthropic.com/settings/keys',
-    icon: '🟠'
-  },
-  {
-    id: 'claude-code',
-    name: 'Claude Code',
-    description: 'Claude Code CLI with full capabilities',
-    authMethods: ['oauth'],
+    displayName: 'Anthropic',
+    description: 'Claude Code - recommended for code tasks',
     cliCommand: 'claude',
     cliArgs: ['--dangerously-skip-permissions'],
     oauthConfig: {
       authorizationUrl: 'https://console.anthropic.com/oauth/authorize',
       tokenUrl: 'https://api.anthropic.com/oauth/token',
-      scopes: ['claude-code:execute']
+      scopes: ['claude-code:execute', 'user:read'],
+      userInfoUrl: 'https://api.anthropic.com/v1/user'
     },
-    icon: '🟠'
+    icon: 'anthropic-logo.svg',
+    color: '#D97757'
   },
   {
     id: 'openai',
     name: 'OpenAI',
-    description: 'Codex and GPT models',
-    authMethods: ['api_key'],
+    displayName: 'OpenAI',
+    description: 'Codex and ChatGPT models',
     cliCommand: 'codex',
     cliArgs: ['--dangerously-bypass-approvals-and-sandbox'],
-    envVars: { 'OPENAI_API_KEY': 'apiKey' },
-    setupUrl: 'https://platform.openai.com/api-keys',
-    icon: '🟢'
+    oauthConfig: {
+      authorizationUrl: 'https://auth.openai.com/authorize',
+      tokenUrl: 'https://auth.openai.com/oauth/token',
+      scopes: ['openid', 'profile', 'email', 'model.read', 'model.request'],
+      userInfoUrl: 'https://api.openai.com/v1/user'
+    },
+    icon: 'openai-logo.svg',
+    color: '#10A37F'
   },
   {
     id: 'google',
-    name: 'Google AI',
-    description: 'Gemini models',
-    authMethods: ['api_key', 'oauth'],
+    name: 'Google',
+    displayName: 'Google',
+    description: 'Gemini - multi-modal capabilities',
     cliCommand: 'gemini',
-    envVars: { 'GOOGLE_API_KEY': 'apiKey' },
-    setupUrl: 'https://aistudio.google.com/app/apikey',
-    icon: '🔵'
+    oauthConfig: {
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+      tokenUrl: 'https://oauth2.googleapis.com/token',
+      scopes: [
+        'openid',
+        'email',
+        'profile',
+        'https://www.googleapis.com/auth/generative-language'
+      ],
+      userInfoUrl: 'https://www.googleapis.com/oauth2/v2/userinfo'
+    },
+    icon: 'google-logo.svg',
+    color: '#4285F4'
   },
   {
-    id: 'custom',
-    name: 'Custom Provider',
-    description: 'Ollama, LM Studio, or other tools',
-    authMethods: ['none', 'api_key'],
-    cliCommand: '', // User specifies
-    icon: '⚙️'
+    id: 'github',
+    name: 'GitHub',
+    displayName: 'GitHub',
+    description: 'Copilot - auto-connected via signup',
+    cliCommand: 'gh-copilot',
+    oauthConfig: {
+      // Uses same OAuth from signup - just needs Copilot scope
+      authorizationUrl: 'https://github.com/login/oauth/authorize',
+      tokenUrl: 'https://github.com/login/oauth/access_token',
+      scopes: ['copilot', 'read:user', 'user:email'],
+      userInfoUrl: 'https://api.github.com/user'
+    },
+    icon: 'github-logo.svg',
+    color: '#24292F'
+  },
+  {
+    id: 'microsoft',
+    name: 'Microsoft',
+    displayName: 'Microsoft',
+    description: 'Azure OpenAI - enterprise deployments',
+    cliCommand: 'azure-openai',
+    oauthConfig: {
+      authorizationUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+      tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+      scopes: [
+        'openid',
+        'profile',
+        'email',
+        'https://cognitiveservices.azure.com/.default'
+      ],
+      userInfoUrl: 'https://graph.microsoft.com/v1.0/me'
+    },
+    icon: 'microsoft-logo.svg',
+    color: '#00A4EF'
   }
 ];
+
+// Self-hosted providers don't need OAuth
+interface SelfHostedProvider {
+  id: 'self-hosted';
+  name: string;
+  endpoint: string;  // e.g., "http://localhost:11434" for Ollama
+  cliCommand: string;
+}
 ```
 
 ### Spawner Integration
@@ -383,6 +474,7 @@ const PROVIDER_REGISTRY: ProviderConfig[] = [
 
 class CloudAgentSpawner extends AgentSpawner {
   private credentialVault: CredentialVault;
+  private tokenRefresher: TokenRefresher;
 
   async spawn(request: CloudSpawnRequest): Promise<SpawnedAgent> {
     const { userId, provider, agentName, task } = request;
@@ -390,16 +482,14 @@ class CloudAgentSpawner extends AgentSpawner {
     // Get credentials for this provider
     const credential = await this.credentialVault.get(userId, provider);
     if (!credential) {
-      throw new Error(`No ${provider} credentials configured`);
+      throw new ProviderNotConnectedError(provider);
     }
 
-    // Validate credentials are still valid
-    if (credential.authType === 'oauth') {
-      await this.refreshTokenIfNeeded(credential);
-    }
+    // Refresh token if expired or expiring soon (within 5 min)
+    const validCredential = await this.ensureValidToken(credential);
 
-    // Build environment with credentials
-    const env = this.buildProviderEnv(credential);
+    // Build environment with OAuth token
+    const env = this.buildProviderEnv(validCredential);
 
     // Get provider config
     const providerConfig = PROVIDER_REGISTRY.find(p => p.id === provider);
@@ -414,21 +504,58 @@ class CloudAgentSpawner extends AgentSpawner {
     });
   }
 
-  private buildProviderEnv(credential: ProviderCredential): Record<string, string> {
-    const config = PROVIDER_REGISTRY.find(p => p.id === credential.provider);
-    const env: Record<string, string> = {};
+  private async ensureValidToken(credential: ProviderCredential): Promise<ProviderCredential> {
+    const expiresIn = credential.tokenExpiresAt.getTime() - Date.now();
+    const FIVE_MINUTES = 5 * 60 * 1000;
 
-    if (credential.authType === 'api_key' && credential.encryptedApiKey) {
-      const apiKey = this.credentialVault.decrypt(credential.encryptedApiKey);
-      for (const [envVar, _] of Object.entries(config.envVars)) {
-        env[envVar] = apiKey;
-      }
-    } else if (credential.authType === 'oauth' && credential.accessToken) {
-      // OAuth tokens might need different handling per provider
-      env['PROVIDER_ACCESS_TOKEN'] = credential.accessToken;
+    if (expiresIn < FIVE_MINUTES) {
+      // Refresh the token
+      const provider = PROVIDER_REGISTRY.find(p => p.id === credential.provider);
+      const newTokens = await this.tokenRefresher.refresh(
+        provider.oauthConfig,
+        credential.refreshToken
+      );
+
+      // Update stored credential
+      const updated = await this.credentialVault.update(credential.id, {
+        accessToken: newTokens.accessToken,
+        refreshToken: newTokens.refreshToken ?? credential.refreshToken,
+        tokenExpiresAt: newTokens.expiresAt,
+        lastRefreshedAt: new Date()
+      });
+
+      return updated;
     }
 
-    return env;
+    return credential;
+  }
+
+  private buildProviderEnv(credential: ProviderCredential): Record<string, string> {
+    // Each provider expects OAuth token in different env vars
+    const envMapping: Record<ProviderType, string> = {
+      'anthropic': 'ANTHROPIC_AUTH_TOKEN',
+      'openai': 'OPENAI_AUTH_TOKEN',
+      'google': 'GOOGLE_AUTH_TOKEN',
+      'github': 'GITHUB_TOKEN',
+      'microsoft': 'AZURE_AUTH_TOKEN',
+      'self-hosted': '' // No auth needed
+    };
+
+    const envVar = envMapping[credential.provider];
+    if (!envVar) return {};
+
+    return {
+      [envVar]: credential.accessToken,
+      // Some CLIs also want the account info
+      'PROVIDER_ACCOUNT_EMAIL': credential.providerAccountEmail
+    };
+  }
+}
+
+class ProviderNotConnectedError extends Error {
+  constructor(provider: ProviderType) {
+    super(`Provider "${provider}" is not connected. Please connect it in Settings.`);
+    this.name = 'ProviderNotConnectedError';
   }
 }
 ```
@@ -440,11 +567,26 @@ class CloudAgentSpawner extends AgentSpawner {
 
 const onboardingRouter = Router();
 
-// Step 1: GitHub OAuth callback
+// Step 1: GitHub OAuth callback (primary signup/login)
 onboardingRouter.get('/auth/github/callback', async (req, res) => {
   const { code } = req.query;
   const tokens = await exchangeGitHubCode(code);
   const user = await createOrUpdateUser(tokens);
+
+  // Store GitHub credential (also gives us Copilot access)
+  await credentialVault.store({
+    userId: user.id,
+    provider: 'github',
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    tokenExpiresAt: tokens.expiresAt,
+    scopes: tokens.scopes,
+    providerAccountId: tokens.user.id,
+    providerAccountEmail: tokens.user.email,
+    providerAccountName: tokens.user.name,
+    connectedAt: new Date(),
+    isValid: true
+  });
 
   // Set session and redirect to repo selection
   req.session.userId = user.id;
@@ -466,82 +608,130 @@ onboardingRouter.post('/repositories', async (req, res) => {
   res.json({ success: true });
 });
 
-// Step 3: List available providers
+// Step 3: List available providers with connection status
 onboardingRouter.get('/providers', async (req, res) => {
   const connected = await getConnectedProviders(req.session.userId);
-  res.json({
-    available: PROVIDER_REGISTRY,
-    connected
-  });
+
+  // Map registry with connection status
+  const providers = PROVIDER_REGISTRY.map(p => ({
+    ...p,
+    isConnected: connected.some(c => c.provider === p.id),
+    connectedAs: connected.find(c => c.provider === p.id)?.providerAccountEmail
+  }));
+
+  res.json({ providers });
 });
 
-// Step 3: Connect provider (API Key)
-onboardingRouter.post('/providers/:provider/api-key', async (req, res) => {
+// Step 3: Initiate OAuth login for a provider
+onboardingRouter.get('/providers/:provider/login', async (req, res) => {
   const { provider } = req.params;
-  const { apiKey, displayName } = req.body;
+  const config = PROVIDER_REGISTRY.find(p => p.id === provider);
 
-  // Validate API key works
-  const isValid = await validateProviderKey(provider, apiKey);
-  if (!isValid) {
-    return res.status(400).json({ error: 'Invalid API key' });
+  if (!config) {
+    return res.status(404).json({ error: 'Unknown provider' });
   }
 
-  // Encrypt and store
-  await credentialVault.store({
+  // Generate state token for CSRF protection
+  const state = await generateOAuthState({
     userId: req.session.userId,
     provider,
-    authType: 'api_key',
-    encryptedApiKey: encrypt(apiKey),
-    displayName,
+    returnTo: req.query.returnTo || '/onboarding/providers'
+  });
+
+  // Build OAuth authorization URL
+  const authUrl = new URL(config.oauthConfig.authorizationUrl);
+  authUrl.searchParams.set('client_id', getClientId(provider));
+  authUrl.searchParams.set('redirect_uri', `${BASE_URL}/providers/${provider}/callback`);
+  authUrl.searchParams.set('scope', config.oauthConfig.scopes.join(' '));
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('response_type', 'code');
+
+  res.redirect(authUrl.toString());
+});
+
+// Step 3: OAuth callback after user authorizes
+onboardingRouter.get('/providers/:provider/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    return res.redirect(`/onboarding/providers?error=${error}`);
+  }
+
+  // Verify state token
+  const stateData = await verifyOAuthState(state);
+  if (!stateData) {
+    return res.status(400).json({ error: 'Invalid state' });
+  }
+
+  const { userId, provider, returnTo } = stateData;
+  const config = PROVIDER_REGISTRY.find(p => p.id === provider);
+
+  // Exchange code for tokens
+  const tokens = await exchangeOAuthCode({
+    tokenUrl: config.oauthConfig.tokenUrl,
+    code,
+    clientId: getClientId(provider),
+    clientSecret: getClientSecret(provider),
+    redirectUri: `${BASE_URL}/providers/${provider}/callback`
+  });
+
+  // Fetch user info from provider
+  const userInfo = await fetchProviderUserInfo(
+    config.oauthConfig.userInfoUrl,
+    tokens.accessToken
+  );
+
+  // Store credential
+  await credentialVault.store({
+    userId,
+    provider,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    tokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000),
+    scopes: tokens.scope.split(' '),
+    providerAccountId: userInfo.id,
+    providerAccountEmail: userInfo.email,
+    providerAccountName: userInfo.name,
+    connectedAt: new Date(),
     isValid: true
   });
+
+  res.redirect(`${returnTo}?connected=${provider}`);
+});
+
+// Step 3: Disconnect a provider
+onboardingRouter.delete('/providers/:provider', async (req, res) => {
+  const { provider } = req.params;
+
+  await credentialVault.delete(req.session.userId, provider);
 
   res.json({ success: true });
 });
 
-// Step 3: Connect provider (OAuth - initiate)
-onboardingRouter.get('/providers/:provider/oauth', async (req, res) => {
-  const { provider } = req.params;
-  const config = PROVIDER_REGISTRY.find(p => p.id === provider);
-
-  const state = generateOAuthState(req.session.userId, provider);
-  const authUrl = buildOAuthUrl(config.oauthConfig, state);
-
-  res.redirect(authUrl);
-});
-
-// Step 3: OAuth callback
-onboardingRouter.get('/providers/:provider/oauth/callback', async (req, res) => {
-  const { code, state } = req.query;
-  const { userId, provider } = verifyOAuthState(state);
-
-  const tokens = await exchangeOAuthCode(provider, code);
-
-  await credentialVault.store({
-    userId,
-    provider,
-    authType: 'oauth',
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken,
-    tokenExpiresAt: tokens.expiresAt,
-    scopes: tokens.scopes,
-    isValid: true
-  });
-
-  res.redirect('/onboarding/providers?connected=' + provider);
-});
-
 // Step 4: Create team from template
 onboardingRouter.post('/teams/from-template', async (req, res) => {
-  const { templateId, repoIds } = req.body;
+  const { templateId, repoIds, defaultProvider } = req.body;
   const template = TEAM_TEMPLATES[templateId];
+
+  // Verify user has the default provider connected
+  const hasProvider = await credentialVault.exists(
+    req.session.userId,
+    defaultProvider || 'anthropic'
+  );
+
+  if (!hasProvider) {
+    return res.status(400).json({
+      error: 'Provider not connected',
+      message: `Please connect ${defaultProvider || 'Anthropic'} first`
+    });
+  }
 
   const team = await createTeam({
     userId: req.session.userId,
     name: template.name,
     agents: template.agents.map(a => ({
       ...a,
-      provider: req.body.defaultProvider || 'anthropic'
+      provider: defaultProvider || 'anthropic'
     })),
     repoIds
   });
@@ -567,26 +757,32 @@ onboardingRouter.post('/complete', async (req, res) => {
 
 ## Security Considerations
 
-### API Key Storage
+### OAuth Token Security
 
-1. **Encryption at rest**: All API keys encrypted with AES-256-GCM
+1. **Encryption at rest**: All tokens encrypted with AES-256-GCM
 2. **Key derivation**: Per-user encryption keys derived from master key + user ID
-3. **No plaintext logging**: API keys never logged, even in debug mode
-4. **Rotation support**: Users can rotate keys without losing config
+3. **No plaintext logging**: Tokens never logged, even in debug mode
+4. **Short-lived access tokens**: Rely on refresh tokens for long sessions
 
-### OAuth Token Management
+### Token Lifecycle Management
 
-1. **Automatic refresh**: Tokens refreshed before expiry
-2. **Secure storage**: Tokens stored encrypted, same as API keys
-3. **Scope limiting**: Request minimum required scopes
-4. **Revocation handling**: Detect revoked tokens, prompt re-auth
+1. **Automatic refresh**: Tokens refreshed 5 minutes before expiry
+2. **Refresh token rotation**: Use rotating refresh tokens where supported
+3. **Revocation detection**: Check token validity on spawn, prompt re-auth if revoked
+4. **Graceful degradation**: Queue tasks if token refresh fails temporarily
+
+### Scope Management
+
+1. **Minimum scopes**: Request only scopes needed for agent execution
+2. **Scope display**: Show users exactly what permissions we request
+3. **No scope creep**: Never silently request additional scopes
 
 ### Access Control
 
-1. **User isolation**: Credentials tied to user ID, not shared
-2. **Team permissions**: Team admins can share provider access with team
-3. **Audit logging**: All credential access logged
-4. **Rate limiting**: Provider usage rate-limited per user
+1. **User isolation**: Credentials tied to user ID, never shared
+2. **Team permissions**: Team admins can enable provider access for team members
+3. **Audit logging**: All credential access and agent spawns logged
+4. **Rate limiting**: Provider usage rate-limited per user/team
 
 ---
 
@@ -649,9 +845,10 @@ Let users connect their own cloud accounts for compute:
 The onboarding flow prioritizes:
 
 1. **Low friction**: GitHub OAuth gets users started immediately
-2. **Flexibility**: Support multiple auth methods per provider
-3. **Security**: Encrypted credential storage with proper isolation
-4. **Discoverability**: Show available providers with easy setup links
+2. **Consistent UX**: All providers use "Login with X" - no API keys to manage
+3. **Security**: OAuth tokens with automatic refresh, encrypted at rest
+4. **Account linking**: Users log in with their existing provider accounts
 5. **Progressive disclosure**: Optional team setup, can skip and add later
+6. **Graceful recovery**: Re-auth prompts when tokens expire or get revoked
 
-Users can authenticate with all their providers upfront during onboarding, or add them incrementally as needed from settings.
+Users can connect all their AI providers during onboarding with simple login buttons, or add them later from Settings. GitHub Copilot is auto-connected via the initial signup flow.
