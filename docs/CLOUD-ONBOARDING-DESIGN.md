@@ -12,21 +12,58 @@ Agent Relay Cloud provides a hosted version of agent-relay with:
 
 ### Design Principle: Login-Only Authentication
 
-**No API keys** - All provider authentication happens via OAuth/login flows. This provides:
+**No API keys in the UI** - Users authenticate via login flows, not by pasting keys. This provides:
 
 - **Better security**: No keys to leak, rotate, or manage
 - **Consistent UX**: Always "Login with X" buttons
 - **Account linking**: Users authenticate with their existing provider accounts
-- **Automatic token refresh**: OAuth handles expiration gracefully
+- **Automatic token refresh**: Where supported
 
-| Provider | Auth Flow | User Experience |
-|----------|-----------|-----------------|
-| Claude/Anthropic | OAuth 2.0 | "Login with Anthropic" |
-| OpenAI | OAuth 2.0 | "Login with OpenAI" |
-| Google/Gemini | OAuth 2.0 | "Login with Google" |
-| GitHub Copilot | OAuth 2.0 | Already authed via GitHub signup |
-| Azure OpenAI | OAuth 2.0 | "Login with Microsoft" |
-| Local/Self-hosted | None | Configure endpoint URL only |
+### Provider Authentication Reality Check
+
+Different providers have different OAuth maturity levels:
+
+| Provider | Auth Flow | Status | Notes |
+|----------|-----------|--------|-------|
+| Claude/Anthropic | Browser OAuth | ⚠️ Partial | Uses browser-based login, headless support limited |
+| OpenAI | OAuth 2.0 | ✅ Supported | ChatGPT OAuth available |
+| Google/Gemini | OAuth 2.0 | ✅ Supported | Standard Google OAuth |
+| GitHub Copilot | OAuth 2.0 | ✅ Supported | Via GitHub OAuth |
+| Azure OpenAI | OAuth 2.0 | ✅ Supported | Via Microsoft Entra ID |
+| Local/Self-hosted | None | ✅ N/A | Just endpoint URL |
+
+### Claude Code Authentication Strategy
+
+Claude Code currently uses browser-based OAuth (`/login`) that stores tokens locally. For a cloud environment, we need a **credential delegation flow**:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Agent Relay Cloud - Claude Code Auth Flow                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Step 1: User clicks "Login with Anthropic" in our dashboard    │
+│          ↓                                                       │
+│  Step 2: Opens popup/redirect to Anthropic's OAuth              │
+│          (same flow as `claude /login`)                          │
+│          ↓                                                       │
+│  Step 3: User authenticates with Anthropic                      │
+│          ↓                                                       │
+│  Step 4: Anthropic redirects back with auth token               │
+│          ↓                                                       │
+│  Step 5: We store encrypted token in credential vault           │
+│          ↓                                                       │
+│  Step 6: When spawning agents, inject token via:                │
+│          - ANTHROPIC_AUTH_TOKEN env var, or                     │
+│          - Mount equivalent of ~/.claude/.credentials.json      │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Note**: This requires Anthropic to support redirect-based OAuth (vs device-only flow). If not available, fallback options:
+
+1. **Device Authorization Flow**: Display code, user enters at anthropic.com
+2. **Credential File Upload**: User runs `/login` locally, uploads credential file
+3. **API Key (hidden)**: Accept API key but label it as "Access Token" for consistent UX
 
 ### Proposed Solution: Provider Credentials Vault
 
@@ -235,6 +272,98 @@ After authorization, redirect back with success:
 │  │                                             [Disconnect]    ││
 │  └─────────────────────────────────────────────────────────────┘│
 │  ...                                                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Device Authorization Flow (Fallback for Claude)
+
+If Claude Code doesn't support redirect-based OAuth, use device flow:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Connect Claude Code                                             │
+│                                                                  │
+│  To connect your Claude account:                                │
+│                                                                  │
+│  1. Go to: console.anthropic.com/device                        │
+│                                                                  │
+│  2. Enter this code:                                            │
+│                                                                  │
+│     ┌─────────────────────────────────────────┐                 │
+│     │           ABCD-1234-EFGH                │                 │
+│     └─────────────────────────────────────────┘                 │
+│                                                                  │
+│     [Copy Code]                                                 │
+│                                                                  │
+│  3. Approve the connection in your browser                      │
+│                                                                  │
+│  ⏳ Waiting for authorization...                                │
+│                                                                  │
+│  ┌──────────────┐                                               │
+│  │    Cancel    │                                               │
+│  └──────────────┘                                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+After approval detected:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ✅ Claude Code Connected!                                       │
+│                                                                  │
+│  Successfully linked to: user@example.com                       │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Continue  →                                             │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Credential Import (Alternative for Claude)
+
+For users who prefer to authenticate locally first:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Connect Claude Code                                             │
+│                                                                  │
+│  Choose how to connect:                                         │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  🔐 Login with Anthropic                                    ││
+│  │  Authenticate in browser (recommended)                      ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  📁 Import from Local Claude                                ││
+│  │  Already have Claude Code installed? Import credentials     ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Import flow:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Import Claude Credentials                                       │
+│                                                                  │
+│  Run this command on your local machine:                        │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ npx agent-relay-cloud export-credentials                    ││
+│  └─────────────────────────────────────────────────────────────┘│
+│  [Copy]                                                         │
+│                                                                  │
+│  This will:                                                     │
+│  • Read your Claude credentials from ~/.claude/                 │
+│  • Encrypt them with a one-time code                           │
+│  • Upload securely to Agent Relay Cloud                        │
+│                                                                  │
+│  Your credentials never leave your machine unencrypted.        │
+│                                                                  │
+│  ⏳ Waiting for import...                                       │
+│                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
