@@ -185,11 +185,21 @@ export async function checkForUpdates(currentVersion: string): Promise<UpdateInf
 export function printUpdateNotification(info: UpdateInfo): void {
   if (!info.updateAvailable || !info.latestVersion) return;
 
+  const line1 = `Update available: ${info.currentVersion} → ${info.latestVersion}`;
+  const line2 = 'Run: npm install -g agent-relay';
+  const contentWidth = Math.max(line1.length, line2.length);
+  const boxWidth = contentWidth + 4; // 2 chars padding each side
+
+  const top = '╭' + '─'.repeat(boxWidth) + '╮';
+  const bottom = '╰' + '─'.repeat(boxWidth) + '╯';
+  const row1 = '│  ' + line1.padEnd(contentWidth) + '  │';
+  const row2 = '│  ' + line2.padEnd(contentWidth) + '  │';
+
   console.error('');
-  console.error(`╭─────────────────────────────────────────────────────╮`);
-  console.error(`│  Update available: ${info.currentVersion} → ${info.latestVersion.padEnd(10)}              │`);
-  console.error(`│  Run: npm install -g agent-relay                    │`);
-  console.error(`╰─────────────────────────────────────────────────────╯`);
+  console.error(top);
+  console.error(row1);
+  console.error(row2);
+  console.error(bottom);
   console.error('');
 }
 
