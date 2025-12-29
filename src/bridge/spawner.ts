@@ -82,6 +82,7 @@ export class AgentSpawner {
 
       // Resolve full path to avoid posix_spawnp failures
       const command = resolveCommand(commandName);
+      console.log(`[spawner] Resolved '${commandName}' -> '${command}'`);
       if (command === commandName && !commandName.startsWith('/')) {
         // Command wasn't resolved - it might not exist
         console.warn(`[spawner] Warning: Could not resolve path for '${commandName}', spawn may fail`);

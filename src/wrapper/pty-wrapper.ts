@@ -106,20 +106,32 @@ export class PtyWrapper extends EventEmitter {
 
     // Build command args
     const args = this.config.args ?? [];
+    const cwd = this.config.cwd ?? process.cwd();
 
-    // Spawn the process
-    this.ptyProcess = pty.spawn(this.config.command, args, {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 40,
-      cwd: this.config.cwd ?? process.cwd(),
-      env: {
-        ...process.env,
-        ...this.config.env,
-        AGENT_RELAY_NAME: this.config.name,
-        TERM: 'xterm-256color',
-      },
-    });
+    // Log spawn details for debugging
+    console.log(`[pty:${this.config.name}] Spawning: ${this.config.command} ${args.join(' ')}`);
+    console.log(`[pty:${this.config.name}] CWD: ${cwd}`);
+
+    // Spawn the process with error handling
+    try {
+      this.ptyProcess = pty.spawn(this.config.command, args, {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 40,
+        cwd,
+        env: {
+          ...process.env,
+          ...this.config.env,
+          AGENT_RELAY_NAME: this.config.name,
+          TERM: 'xterm-256color',
+        },
+      });
+    } catch (spawnError: any) {
+      console.error(`[pty:${this.config.name}] Failed to spawn process:`, spawnError.message);
+      console.error(`[pty:${this.config.name}] Command: ${this.config.command}`);
+      console.error(`[pty:${this.config.name}] Args: ${args.join(' ')}`);
+      throw spawnError;
+    }
 
     this.running = true;
 

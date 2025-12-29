@@ -13,17 +13,28 @@ import { execSync } from 'node:child_process';
  * (letting the spawn fail with a clearer error)
  */
 export function resolveCommand(command: string): string {
+  // If already an absolute path, return as-is
+  if (command.startsWith('/')) {
+    return command;
+  }
+
   try {
     const output = execSync(`which ${command}`, {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      // Ensure we have a reasonable PATH
+      env: {
+        ...process.env,
+        PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin',
+      },
     });
     const resolvedPath = output.trim();
     if (resolvedPath) {
       return resolvedPath;
     }
-  } catch {
-    // Command not found in PATH
+  } catch (err: any) {
+    // Command not found in PATH - log for debugging
+    console.warn(`[command-resolver] 'which ${command}' failed:`, err.message?.split('\n')[0] || 'unknown error');
   }
 
   // Return original command - spawn will fail with a clearer error

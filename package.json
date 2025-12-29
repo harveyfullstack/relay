@@ -1,6 +1,6 @@
 {
   "name": "agent-relay",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "Real-time agent-to-agent communication system",
   "type": "module",
   "main": "dist/index.js",
