@@ -21,20 +21,31 @@ Agent Relay Cloud provides a hosted version of agent-relay with:
 
 ### Provider Authentication Reality Check
 
-Different providers have different OAuth maturity levels:
+Different providers have different OAuth maturity levels. Notably, **both Claude Code and
+OpenAI Codex** use browser-based OAuth that doesn't support headless/cloud environments well:
 
 | Provider | Auth Flow | Status | Notes |
 |----------|-----------|--------|-------|
-| Claude/Anthropic | Browser OAuth | ⚠️ Partial | Uses browser-based login, headless support limited |
-| OpenAI | OAuth 2.0 | ✅ Supported | ChatGPT OAuth available |
-| Google/Gemini | OAuth 2.0 | ✅ Supported | Standard Google OAuth |
-| GitHub Copilot | OAuth 2.0 | ✅ Supported | Via GitHub OAuth |
-| Azure OpenAI | OAuth 2.0 | ✅ Supported | Via Microsoft Entra ID |
+| Claude/Anthropic | Browser OAuth | ⚠️ Device Flow | Opens browser, no redirect URI support |
+| OpenAI/Codex | Browser OAuth | ⚠️ Device Flow | Opens browser for ChatGPT login |
+| Google/Gemini | OAuth 2.0 | ✅ Redirect | Standard Google OAuth with redirect |
+| GitHub Copilot | OAuth 2.0 | ✅ Redirect | Via GitHub OAuth (auto from signup) |
+| Azure OpenAI | OAuth 2.0 | ✅ Redirect | Via Microsoft Entra ID |
 | Local/Self-hosted | None | ✅ N/A | Just endpoint URL |
 
-### Claude Code Authentication Strategy
+**Key insight**: The two most popular coding agents (Claude Code and Codex) both require
+device flow or similar workarounds for cloud/headless environments. Both have open GitHub
+issues requesting proper headless auth support:
+- [anthropics/claude-code#7100](https://github.com/anthropics/claude-code/issues/7100)
+- [openai/codex#2798](https://github.com/openai/codex/issues/2798)
 
-Claude Code currently uses browser-based OAuth (`/login`) that stores tokens locally. For a cloud environment, we need a **credential delegation flow**:
+### Device Flow Authentication Strategy (Claude + Codex)
+
+Both Claude Code and OpenAI Codex use browser-based OAuth that stores tokens locally:
+- **Claude Code**: `claude /login` → opens browser → stores in `~/.claude/.credentials.json`
+- **Codex**: `codex` → opens browser for ChatGPT → stores in `~/.codex/`
+
+For a cloud environment, we need a **device authorization flow** (RFC 8628):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -275,29 +286,116 @@ After authorization, redirect back with success:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-#### Device Authorization Flow (Fallback for Claude)
+---
 
-If Claude Code doesn't support redirect-based OAuth, use device flow:
+## Device Authorization Flow (RFC 8628)
+
+This is the **primary authentication method** for Claude Code and OpenAI Codex, since neither
+supports standard OAuth redirect flows for third-party cloud applications.
+
+### How Device Flow Works
+
+```
+┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
+│  Agent Relay     │      │   Provider       │      │   User's         │
+│  Cloud           │      │   Auth Server    │      │   Browser        │
+└────────┬─────────┘      └────────┬─────────┘      └────────┬─────────┘
+         │                         │                         │
+         │  1. POST /device/code   │                         │
+         │  {client_id, scope}     │                         │
+         │ ───────────────────────>│                         │
+         │                         │                         │
+         │  {device_code,          │                         │
+         │   user_code: "ABCD-1234"│                         │
+         │   verification_uri,     │                         │
+         │   expires_in: 900}      │                         │
+         │ <───────────────────────│                         │
+         │                         │                         │
+         │  Display code to user   │                         │
+         │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─>│
+         │                         │                         │
+         │                         │  2. User visits URL     │
+         │                         │  & enters user_code     │
+         │                         │<────────────────────────│
+         │                         │                         │
+         │                         │  3. User authenticates  │
+         │                         │  & authorizes app       │
+         │                         │<────────────────────────│
+         │                         │                         │
+         │  4. POST /token         │                         │
+         │  {device_code}          │                         │
+         │  (polling every 5s)     │                         │
+         │ ───────────────────────>│                         │
+         │                         │                         │
+         │  "authorization_pending"│                         │
+         │ <───────────────────────│  (keep polling...)      │
+         │                         │                         │
+         │  5. POST /token         │                         │
+         │ ───────────────────────>│                         │
+         │                         │                         │
+         │  {access_token,         │                         │
+         │   refresh_token}        │                         │
+         │ <───────────────────────│                         │
+         │                         │                         │
+```
+
+### Provider-Specific Device Flow URLs
+
+| Provider | Device Code URL | Token URL | Verification URL |
+|----------|-----------------|-----------|------------------|
+| Anthropic | `api.anthropic.com/oauth/device/code` | `api.anthropic.com/oauth/token` | `console.anthropic.com/device` |
+| OpenAI | `auth.openai.com/device/code` | `auth.openai.com/oauth/token` | `auth.openai.com/device` |
+| Google | `oauth2.googleapis.com/device/code` | `oauth2.googleapis.com/token` | `google.com/device` |
+| GitHub | `github.com/login/device/code` | `github.com/login/oauth/access_token` | `github.com/login/device` |
+
+*Note: Anthropic and OpenAI URLs are hypothetical - these providers would need to implement
+RFC 8628 device authorization. Currently, they only support browser-based OAuth.*
+
+### UI Flow
+
+**Step 1: User clicks "Login with [Provider]"**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Connect Claude Code                                             │
 │                                                                  │
-│  To connect your Claude account:                                │
+│  To connect your Anthropic account:                             │
 │                                                                  │
-│  1. Go to: console.anthropic.com/device                        │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  1. Click below to open Anthropic in a new tab             ││
+│  │  2. Sign in with your Anthropic account                    ││
+│  │  3. Enter the code shown here when prompted                ││
+│  └─────────────────────────────────────────────────────────────┘│
 │                                                                  │
-│  2. Enter this code:                                            │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  🔐  Open Anthropic →                                       ││
+│  └─────────────────────────────────────────────────────────────┘│
 │                                                                  │
-│     ┌─────────────────────────────────────────┐                 │
-│     │           ABCD-1234-EFGH                │                 │
-│     └─────────────────────────────────────────┘                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Step 2: Show code, user enters at provider**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Connect Claude Code                                             │
 │                                                                  │
-│     [Copy Code]                                                 │
+│  Enter this code at Anthropic:                                  │
 │                                                                  │
-│  3. Approve the connection in your browser                      │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                                                             ││
+│  │                    WDJB-MJPV                                ││
+│  │                                                             ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                         [Copy]                   │
 │                                                                  │
-│  ⏳ Waiting for authorization...                                │
+│  A browser tab should have opened to console.anthropic.com     │
+│  Didn't open? Click here →                                      │
+│                                                                  │
+│  ───────────────────────────────────────────────────────────────│
+│                                                                  │
+│  ⏳ Waiting for you to authorize...                             │
+│     Code expires in 14:32                                       │
 │                                                                  │
 │  ┌──────────────┐                                               │
 │  │    Cancel    │                                               │
@@ -305,19 +403,661 @@ If Claude Code doesn't support redirect-based OAuth, use device flow:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-After approval detected:
+**Same flow for Codex:**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  ✅ Claude Code Connected!                                       │
+│  Connect OpenAI Codex                                            │
 │                                                                  │
-│  Successfully linked to: user@example.com                       │
+│  Enter this code at OpenAI:                                     │
 │                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Continue  →                                             │   │
-│  └──────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                                                             ││
+│  │                    XKCD-4815                                ││
+│  │                                                             ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                         [Copy]                   │
+│                                                                  │
+│  A browser tab should have opened to auth.openai.com           │
+│  Didn't open? Click here →                                      │
+│                                                                  │
+│  ───────────────────────────────────────────────────────────────│
+│                                                                  │
+│  ⏳ Waiting for you to authorize...                             │
+│     Code expires in 14:47                                       │
+│                                                                  │
+│  ┌──────────────┐                                               │
+│  │    Cancel    │                                               │
+│  └──────────────┘                                               │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Step 3: Success**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                  │
+│                    ✅ Connected!                                 │
+│                                                                  │
+│  Your Anthropic account is now linked.                         │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  Account: user@example.com                                  ││
+│  │  Plan: Claude Pro                                           ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                     Continue  →                             ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Error States:**
+
+```
+Code Expired:
+┌─────────────────────────────────────────────────────────────────┐
+│  ⚠️ Code Expired                                                 │
+│                                                                  │
+│  The authorization code has expired. This happens if you        │
+│  don't complete the sign-in within 15 minutes.                  │
+│                                                                  │
+│  ┌───────────────────┐  ┌───────────────────────────────────┐   │
+│  │  Cancel           │  │  Get New Code                    │   │
+│  └───────────────────┘  └───────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+
+Access Denied:
+┌─────────────────────────────────────────────────────────────────┐
+│  ❌ Access Denied                                                │
+│                                                                  │
+│  You denied the authorization request at Anthropic.            │
+│                                                                  │
+│  ┌───────────────────┐  ┌───────────────────────────────────┐   │
+│  │  Cancel           │  │  Try Again                       │   │
+│  └───────────────────┘  └───────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Device Flow Implementation
+
+```typescript
+// src/cloud/auth/device-flow.ts
+
+interface DeviceCodeResponse {
+  device_code: string;        // Secret - we use this for polling
+  user_code: string;          // Display to user: "WDJB-MJPV"
+  verification_uri: string;   // Where user goes: console.anthropic.com/device
+  verification_uri_complete?: string; // URL with code pre-filled (optional)
+  expires_in: number;         // Seconds until codes expire (typically 900)
+  interval: number;           // Min seconds between poll requests (typically 5)
+}
+
+interface DeviceFlowConfig {
+  provider: string;
+  deviceCodeUrl: string;
+  tokenUrl: string;
+  clientId: string;
+  scopes: string[];
+}
+
+const DEVICE_FLOW_CONFIGS: Record<string, DeviceFlowConfig> = {
+  anthropic: {
+    provider: 'anthropic',
+    deviceCodeUrl: 'https://api.anthropic.com/oauth/device/code',
+    tokenUrl: 'https://api.anthropic.com/oauth/token',
+    clientId: process.env.ANTHROPIC_CLIENT_ID!,
+    scopes: ['claude-code:execute', 'user:read']
+  },
+  openai: {
+    provider: 'openai',
+    deviceCodeUrl: 'https://auth.openai.com/device/code',
+    tokenUrl: 'https://auth.openai.com/oauth/token',
+    clientId: process.env.OPENAI_CLIENT_ID!,
+    scopes: ['openid', 'profile', 'email', 'codex:execute']
+  }
+};
+
+class DeviceFlowAuth {
+  private config: DeviceFlowConfig;
+
+  constructor(provider: string) {
+    this.config = DEVICE_FLOW_CONFIGS[provider];
+    if (!this.config) {
+      throw new Error(`No device flow config for provider: ${provider}`);
+    }
+  }
+
+  /**
+   * Step 1: Request device and user codes from provider
+   */
+  async requestCodes(): Promise<DeviceCodeResponse> {
+    const response = await fetch(this.config.deviceCodeUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        client_id: this.config.clientId,
+        scope: this.config.scopes.join(' ')
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to get device code: ${error}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Step 2: Poll for tokens (called repeatedly until success/failure)
+   */
+  async pollForToken(deviceCode: string): Promise<PollResult> {
+    const response = await fetch(this.config.tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        client_id: this.config.clientId,
+        device_code: deviceCode,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
+      })
+    });
+
+    const data = await response.json();
+
+    // RFC 8628 error codes
+    if (data.error) {
+      switch (data.error) {
+        case 'authorization_pending':
+          // User hasn't completed authorization yet
+          return { status: 'pending' };
+
+        case 'slow_down':
+          // Polling too fast - increase interval
+          return {
+            status: 'slow_down',
+            retryAfter: data.interval || 10
+          };
+
+        case 'expired_token':
+          // Device code expired
+          return { status: 'expired' };
+
+        case 'access_denied':
+          // User denied authorization
+          return { status: 'denied' };
+
+        default:
+          return {
+            status: 'error',
+            error: data.error_description || data.error
+          };
+      }
+    }
+
+    // Success!
+    return {
+      status: 'success',
+      tokens: {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        expiresIn: data.expires_in,
+        scope: data.scope
+      }
+    };
+  }
+}
+
+type PollResult =
+  | { status: 'pending' }
+  | { status: 'slow_down'; retryAfter: number }
+  | { status: 'expired' }
+  | { status: 'denied' }
+  | { status: 'error'; error: string }
+  | { status: 'success'; tokens: TokenSet };
+
+interface TokenSet {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  scope: string;
+}
+```
+
+### Device Flow API Routes
+
+```typescript
+// src/cloud/api/device-flow.ts
+
+const router = Router();
+
+// Store for active device flows (use Redis in production)
+const activeFlows = new Map<string, ActiveFlow>();
+
+interface ActiveFlow {
+  userId: string;
+  provider: string;
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  expiresAt: Date;
+  pollInterval: number;
+  status: 'pending' | 'success' | 'expired' | 'denied' | 'error';
+  tokens?: TokenSet;
+  error?: string;
+}
+
+/**
+ * POST /api/device-flow/:provider/start
+ * Initiates device flow, returns user code to display
+ */
+router.post('/:provider/start', async (req, res) => {
+  const { provider } = req.params;
+  const userId = req.session.userId;
+
+  try {
+    const auth = new DeviceFlowAuth(provider);
+    const codes = await auth.requestCodes();
+
+    const flowId = crypto.randomUUID();
+
+    activeFlows.set(flowId, {
+      userId,
+      provider,
+      deviceCode: codes.device_code,
+      userCode: codes.user_code,
+      verificationUri: codes.verification_uri,
+      verificationUriComplete: codes.verification_uri_complete,
+      expiresAt: new Date(Date.now() + codes.expires_in * 1000),
+      pollInterval: codes.interval,
+      status: 'pending'
+    });
+
+    // Start background polling
+    pollInBackground(flowId, auth);
+
+    res.json({
+      flowId,
+      userCode: codes.user_code,
+      verificationUri: codes.verification_uri,
+      verificationUriComplete: codes.verification_uri_complete,
+      expiresIn: codes.expires_in
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/device-flow/:provider/status/:flowId
+ * Check status of device flow (client polls this)
+ */
+router.get('/:provider/status/:flowId', async (req, res) => {
+  const { flowId } = req.params;
+  const flow = activeFlows.get(flowId);
+
+  if (!flow) {
+    return res.status(404).json({ error: 'Flow not found' });
+  }
+
+  if (flow.userId !== req.session.userId) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+
+  const timeLeft = Math.max(0, Math.floor(
+    (flow.expiresAt.getTime() - Date.now()) / 1000
+  ));
+
+  res.json({
+    status: flow.status,
+    expiresIn: timeLeft,
+    error: flow.error
+  });
+});
+
+/**
+ * DELETE /api/device-flow/:provider/:flowId
+ * Cancel device flow
+ */
+router.delete('/:provider/:flowId', async (req, res) => {
+  const { flowId } = req.params;
+  const flow = activeFlows.get(flowId);
+
+  if (flow?.userId === req.session.userId) {
+    activeFlows.delete(flowId);
+  }
+
+  res.json({ success: true });
+});
+
+/**
+ * Background polling for device authorization
+ */
+async function pollInBackground(flowId: string, auth: DeviceFlowAuth) {
+  const flow = activeFlows.get(flowId);
+  if (!flow) return;
+
+  let interval = flow.pollInterval * 1000;
+
+  const poll = async () => {
+    const current = activeFlows.get(flowId);
+    if (!current || current.status !== 'pending') return;
+
+    // Check expiry
+    if (Date.now() > current.expiresAt.getTime()) {
+      current.status = 'expired';
+      return;
+    }
+
+    try {
+      const result = await auth.pollForToken(current.deviceCode);
+
+      switch (result.status) {
+        case 'pending':
+          setTimeout(poll, interval);
+          break;
+
+        case 'slow_down':
+          interval = result.retryAfter * 1000;
+          setTimeout(poll, interval);
+          break;
+
+        case 'success':
+          // Store tokens
+          await storeProviderTokens(current.userId, current.provider, result.tokens);
+          current.status = 'success';
+          current.tokens = result.tokens;
+          // Clean up after 60s
+          setTimeout(() => activeFlows.delete(flowId), 60000);
+          break;
+
+        case 'expired':
+        case 'denied':
+          current.status = result.status;
+          break;
+
+        case 'error':
+          current.status = 'error';
+          current.error = result.error;
+          break;
+      }
+    } catch (error) {
+      console.error('Poll error:', error);
+      // Retry with backoff
+      setTimeout(poll, interval * 2);
+    }
+  };
+
+  // Start after initial interval
+  setTimeout(poll, interval);
+}
+
+/**
+ * Store tokens after successful device flow
+ */
+async function storeProviderTokens(
+  userId: string,
+  provider: string,
+  tokens: TokenSet
+) {
+  // Get user info from provider
+  const userInfo = await fetchProviderUserInfo(provider, tokens.accessToken);
+
+  await credentialVault.store({
+    userId,
+    provider,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    tokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000),
+    scopes: tokens.scope.split(' '),
+    providerAccountId: userInfo.id,
+    providerAccountEmail: userInfo.email,
+    providerAccountName: userInfo.name,
+    connectedAt: new Date(),
+    isValid: true
+  });
+}
+```
+
+### Frontend Component
+
+```tsx
+// src/cloud/components/DeviceFlowAuth.tsx
+
+import { useState, useEffect, useCallback } from 'react';
+
+interface Props {
+  provider: 'anthropic' | 'openai';
+  providerName: string;  // "Anthropic" or "OpenAI"
+  onSuccess: () => void;
+  onCancel: () => void;
+}
+
+type State =
+  | { step: 'ready' }
+  | { step: 'loading' }
+  | { step: 'showing_code'; flowId: string; userCode: string;
+      verificationUri: string; expiresAt: Date }
+  | { step: 'success' }
+  | { step: 'error'; message: string; canRetry: boolean };
+
+export function DeviceFlowAuth({ provider, providerName, onSuccess, onCancel }: Props) {
+  const [state, setState] = useState<State>({ step: 'ready' });
+  const [timeLeft, setTimeLeft] = useState(0);
+
+  // Start the device flow
+  const startFlow = useCallback(async () => {
+    setState({ step: 'loading' });
+
+    try {
+      const res = await fetch(`/api/device-flow/${provider}/start`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error);
+
+      setState({
+        step: 'showing_code',
+        flowId: data.flowId,
+        userCode: data.userCode,
+        verificationUri: data.verificationUri,
+        expiresAt: new Date(Date.now() + data.expiresIn * 1000)
+      });
+
+      // Open provider auth page
+      window.open(
+        data.verificationUriComplete || data.verificationUri,
+        '_blank',
+        'noopener'
+      );
+    } catch (error) {
+      setState({
+        step: 'error',
+        message: error.message,
+        canRetry: true
+      });
+    }
+  }, [provider]);
+
+  // Poll for status
+  useEffect(() => {
+    if (state.step !== 'showing_code') return;
+
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(
+          `/api/device-flow/${provider}/status/${state.flowId}`,
+          { credentials: 'include' }
+        );
+        const data = await res.json();
+
+        switch (data.status) {
+          case 'success':
+            setState({ step: 'success' });
+            setTimeout(onSuccess, 1500);
+            break;
+          case 'expired':
+            setState({
+              step: 'error',
+              message: 'Code expired. Please try again.',
+              canRetry: true
+            });
+            break;
+          case 'denied':
+            setState({
+              step: 'error',
+              message: 'Authorization was denied.',
+              canRetry: true
+            });
+            break;
+          case 'error':
+            setState({
+              step: 'error',
+              message: data.error || 'An error occurred.',
+              canRetry: true
+            });
+            break;
+          // 'pending' - keep polling
+        }
+      } catch (error) {
+        console.error('Status check failed:', error);
+      }
+    };
+
+    const interval = setInterval(checkStatus, 2000);
+    return () => clearInterval(interval);
+  }, [state, provider, onSuccess]);
+
+  // Countdown timer
+  useEffect(() => {
+    if (state.step !== 'showing_code') return;
+
+    const tick = () => {
+      const remaining = Math.floor(
+        (state.expiresAt.getTime() - Date.now()) / 1000
+      );
+      setTimeLeft(Math.max(0, remaining));
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [state]);
+
+  const formatTime = (s: number) =>
+    `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+
+  const copyCode = () => {
+    if (state.step === 'showing_code') {
+      navigator.clipboard.writeText(state.userCode);
+    }
+  };
+
+  // Render
+  switch (state.step) {
+    case 'ready':
+      return (
+        <div className="device-flow">
+          <h2>Connect {providerName}</h2>
+          <p>
+            Click below to sign in with your {providerName} account.
+            You'll enter a code to link your account.
+          </p>
+          <div className="actions">
+            <button onClick={startFlow} className="primary">
+              Open {providerName} →
+            </button>
+            <button onClick={onCancel} className="secondary">
+              Cancel
+            </button>
+          </div>
+        </div>
+      );
+
+    case 'loading':
+      return (
+        <div className="device-flow loading">
+          <div className="spinner" />
+          <p>Preparing authorization...</p>
+        </div>
+      );
+
+    case 'showing_code':
+      return (
+        <div className="device-flow">
+          <h2>Enter this code at {providerName}</h2>
+
+          <div className="code-box">
+            <code className="user-code">{state.userCode}</code>
+            <button onClick={copyCode} className="copy-btn">
+              Copy
+            </button>
+          </div>
+
+          <p className="hint">
+            A browser tab opened to{' '}
+            <a href={state.verificationUri} target="_blank" rel="noopener">
+              {new URL(state.verificationUri).hostname}
+            </a>
+          </p>
+
+          <div className="status">
+            <span className="spinner small" />
+            <span>Waiting for authorization...</span>
+          </div>
+
+          <div className="timer">
+            Code expires in {formatTime(timeLeft)}
+          </div>
+
+          <button onClick={onCancel} className="secondary">
+            Cancel
+          </button>
+        </div>
+      );
+
+    case 'success':
+      return (
+        <div className="device-flow success">
+          <div className="icon">✅</div>
+          <h2>Connected!</h2>
+          <p>Your {providerName} account is now linked.</p>
+        </div>
+      );
+
+    case 'error':
+      return (
+        <div className="device-flow error">
+          <div className="icon">❌</div>
+          <h2>Connection Failed</h2>
+          <p>{state.message}</p>
+          <div className="actions">
+            {state.canRetry && (
+              <button onClick={startFlow} className="primary">
+                Try Again
+              </button>
+            )}
+            <button onClick={onCancel} className="secondary">
+              Cancel
+            </button>
+          </div>
+        </div>
+      );
+  }
+}
+```
+
+---
 
 #### Credential Import (Alternative for Claude)
 
