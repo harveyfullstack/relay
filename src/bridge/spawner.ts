@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sleep } from './utils.js';
 import { getProjectPaths } from '../utils/project-namespace.js';
+import { resolveCommand } from '../utils/command-resolver.js';
 import { PtyWrapper, type PtyWrapperConfig } from '../wrapper/pty-wrapper.js';
 import type { SpawnRequest, SpawnResult, WorkerInfo } from './types.js';
 
@@ -76,17 +77,24 @@ export class AgentSpawner {
     try {
       // Parse CLI command
       const cliParts = cli.split(' ');
-      const command = cliParts[0];
+      const commandName = cliParts[0];
       const args = cliParts.slice(1);
 
+      // Resolve full path to avoid posix_spawnp failures
+      const command = resolveCommand(commandName);
+      if (command === commandName && !commandName.startsWith('/')) {
+        // Command wasn't resolved - it might not exist
+        console.warn(`[spawner] Warning: Could not resolve path for '${commandName}', spawn may fail`);
+      }
+
       // Add --dangerously-skip-permissions for Claude agents
-      const isClaudeCli = command.startsWith('claude');
+      const isClaudeCli = commandName.startsWith('claude');
       if (isClaudeCli && !args.includes('--dangerously-skip-permissions')) {
         args.push('--dangerously-skip-permissions');
       }
 
       // Add --dangerously-bypass-approvals-and-sandbox for Codex agents
-      const isCodexCli = command.startsWith('codex');
+      const isCodexCli = commandName.startsWith('codex');
       if (isCodexCli && !args.includes('--dangerously-bypass-approvals-and-sandbox')) {
         args.push('--dangerously-bypass-approvals-and-sandbox');
       }

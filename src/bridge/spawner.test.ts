@@ -46,6 +46,14 @@ vi.mock('../utils/project-namespace.js', () => {
   };
 });
 
+// Mock command resolver to return original command (skip path resolution in tests)
+vi.mock('../utils/command-resolver.js', () => {
+  return {
+    resolveCommand: vi.fn((cmd: string) => cmd),
+    commandExists: vi.fn(() => true),
+  };
+});
+
 const existsSyncMock = vi.spyOn(fs, 'existsSync');
 const readFileSyncMock = vi.spyOn(fs, 'readFileSync');
 const writeFileSyncMock = vi.spyOn(fs, 'writeFileSync');
