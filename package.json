@@ -24,7 +24,7 @@
     "postinstall": "npm rebuild better-sqlite3 && node scripts/postinstall.js",
     "build": "npm run clean && tsc && npm run build:dashboard",
     "build:dashboard": "cd src/dashboard && npm run build",
-    "postbuild": "chmod +x dist/cli/index.js",
+    "postbuild": "chmod +x dist/cli/index.js && mkdir -p dist/dashboard && cp -r src/dashboard/out dist/dashboard/",
     "dev": "tsc -w",
     "dev:local": "npm run build && npm link && echo '✓ agent-relay linked globally'",
     "dev:unlink": "npm unlink -g agent-relay && echo '✓ agent-relay unlinked'",
