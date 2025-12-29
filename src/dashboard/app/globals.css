@@ -838,6 +838,15 @@ a.metrics-link:visited {
   display: block;
 }
 
+/* Anchor buttons in header */
+a.header-btn {
+  text-decoration: none;
+}
+
+a.header-btn:visited {
+  color: var(--color-text-secondary);
+}
+
 /* =====================
    Agent List Styles
    ===================== */
