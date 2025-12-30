@@ -4,7 +4,7 @@
  * Plan definitions for subscription tiers.
  */
 
-import type { BillingPlan, SubscriptionTier } from './types';
+import type { BillingPlan, SubscriptionTier } from './types.js';
 
 /**
  * All available billing plans

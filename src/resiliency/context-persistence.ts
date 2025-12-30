@@ -12,7 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { createLogger } from './logger';
+import { createLogger } from './logger.js';
 
 const logger = createLogger('context-persistence');
 

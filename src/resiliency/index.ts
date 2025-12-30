@@ -61,7 +61,7 @@ export {
   type AgentHealth,
   type AgentProcess,
   type HealthMonitorConfig,
-} from './health-monitor';
+} from './health-monitor.js';
 
 export {
   Logger,
@@ -71,16 +71,16 @@ export {
   type LogLevel,
   type LogEntry,
   type LoggerConfig,
-} from './logger';
+} from './logger.js';
 
-export { metrics, type AgentMetrics, type SystemMetrics, type MetricPoint } from './metrics';
+export { metrics, type AgentMetrics, type SystemMetrics, type MetricPoint } from './metrics.js';
 
 export {
   AgentSupervisor,
   getSupervisor,
   type SupervisedAgent,
   type SupervisorConfig,
-} from './supervisor';
+} from './supervisor.js';
 
 export {
   ContextPersistence,
@@ -90,7 +90,7 @@ export {
   type Artifact,
   type Handoff,
   type LedgerEntry,
-} from './context-persistence';
+} from './context-persistence.js';
 
 export {
   createContextHandler,
@@ -102,4 +102,4 @@ export {
   type ProviderContextConfig,
   type ClaudeHooksConfig,
   type CodexContextConfig,
-} from './provider-context';
+} from './provider-context.js';

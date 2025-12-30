@@ -5,8 +5,8 @@
  */
 
 import crypto from 'crypto';
-import { getConfig } from '../config';
-import { db } from '../db';
+import { getConfig } from '../config.js';
+import { db } from '../db/index.js';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
@@ -245,7 +245,11 @@ export class CredentialVault {
         return false;
       }
 
-      const data = await response.json();
+      const data = await response.json() as {
+        access_token: string;
+        refresh_token?: string;
+        expires_in?: number;
+      };
 
       await this.updateTokens(
         userId,

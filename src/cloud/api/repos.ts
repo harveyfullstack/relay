@@ -5,8 +5,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { requireAuth } from './auth';
-import { db } from '../db';
+import { requireAuth } from './auth.js';
+import { db } from '../db/index.js';
 
 export const reposRouter = Router();
 
@@ -70,14 +70,25 @@ reposRouter.get('/github', async (req: Request, res: Response) => {
       throw new Error(`GitHub API error: ${error}`);
     }
 
-    const repos = await response.json();
+    const repos = await response.json() as Array<{
+      id: number;
+      full_name: string;
+      name: string;
+      owner: { login: string };
+      description: string | null;
+      default_branch: string;
+      private: boolean;
+      language: string | null;
+      updated_at: string;
+      html_url: string;
+    }>;
 
     // Get link header for pagination
     const linkHeader = response.headers.get('link');
     const hasMore = linkHeader?.includes('rel="next"') || false;
 
     res.json({
-      repositories: repos.map((r: any) => ({
+      repositories: repos.map((r) => ({
         githubId: r.id,
         fullName: r.full_name,
         name: r.name,
@@ -134,7 +145,12 @@ reposRouter.post('/', async (req: Request, res: Response) => {
       throw new Error('Failed to verify repository');
     }
 
-    const repoData = await repoResponse.json();
+    const repoData = await repoResponse.json() as {
+      id: number;
+      full_name: string;
+      default_branch: string;
+      private: boolean;
+    };
 
     // Import repo
     const repository = await db.repositories.upsert({
@@ -196,7 +212,12 @@ reposRouter.post('/bulk', async (req: Request, res: Response) => {
         continue;
       }
 
-      const repoData = await repoResponse.json();
+      const repoData = await repoResponse.json() as {
+        id: number;
+        full_name: string;
+        default_branch: string;
+        private: boolean;
+      };
 
       await db.repositories.upsert({
         userId,
@@ -345,10 +366,22 @@ reposRouter.get('/search', async (req: Request, res: Response) => {
       throw new Error('GitHub search failed');
     }
 
-    const data = await response.json();
+    const data = await response.json() as {
+      items: Array<{
+        id: number;
+        full_name: string;
+        name: string;
+        owner: { login: string };
+        description: string | null;
+        default_branch: string;
+        private: boolean;
+        language: string | null;
+      }>;
+      total_count: number;
+    };
 
     res.json({
-      repositories: data.items.map((r: any) => ({
+      repositories: data.items.map((r) => ({
         githubId: r.id,
         fullName: r.full_name,
         name: r.name,

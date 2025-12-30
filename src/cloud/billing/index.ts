@@ -4,6 +4,6 @@
  * Stripe-based subscription management and billing.
  */
 
-export * from './types';
-export * from './plans';
-export { BillingService, getBillingService } from './service';
+export * from './types.js';
+export * from './plans.js';
+export { BillingService, getBillingService } from './service.js';

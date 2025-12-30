@@ -8,9 +8,9 @@
 import { Router, Request, Response } from 'express';
 import { spawn, ChildProcess } from 'child_process';
 import crypto from 'crypto';
-import { requireAuth } from './auth';
-import { db } from '../db';
-import { vault } from '../vault';
+import { requireAuth } from './auth.js';
+import { db } from '../db/index.js';
+import { vault } from '../vault/index.js';
 
 export const onboardingRouter = Router();
 

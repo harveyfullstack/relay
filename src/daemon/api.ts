@@ -4,14 +4,14 @@
  */
 
 import * as http from 'http';
-import * as WebSocket from 'ws';
+import WebSocket, { WebSocketServer, WebSocket as WS } from 'ws';
 import { EventEmitter } from 'events';
 import { createLogger } from '../resiliency/logger.js';
 import { metrics } from '../resiliency/metrics.js';
 import { getWorkspaceManager, WorkspaceManager } from './workspace-manager.js';
 import { getAgentManager, AgentManager } from './agent-manager.js';
 import type {
-  DaemonConfig,
+  ApiDaemonConfig,
   DaemonEvent,
   UserSession,
   WorkspacesResponse,
@@ -40,14 +40,14 @@ type RouteHandler = (req: ApiRequest) => Promise<ApiResponse>;
 
 export class DaemonApi extends EventEmitter {
   private server?: http.Server;
-  private wss?: WebSocket.WebSocketServer;
+  private wss?: WebSocketServer;
   private workspaceManager: WorkspaceManager;
   private agentManager: AgentManager;
-  private sessions = new Map<WebSocket.WebSocket, UserSession>();
+  private sessions = new Map<WS, UserSession>();
   private routes = new Map<string, RouteHandler>();
-  private config: DaemonConfig;
+  private config: ApiDaemonConfig;
 
-  constructor(config: DaemonConfig) {
+  constructor(config: ApiDaemonConfig) {
     super();
     this.config = config;
     this.workspaceManager = getWorkspaceManager(config.dataDir);
@@ -69,7 +69,7 @@ export class DaemonApi extends EventEmitter {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
 
       // Setup WebSocket server
-      this.wss = new WebSocket.WebSocketServer({ server: this.server });
+      this.wss = new WebSocketServer({ server: this.server });
       this.wss.on('connection', (ws, req) => this.handleWebSocketConnection(ws, req));
 
       this.server.listen(this.config.port, this.config.host, () => {
@@ -403,7 +403,7 @@ export class DaemonApi extends EventEmitter {
   /**
    * Handle WebSocket connection
    */
-  private handleWebSocketConnection(ws: WebSocket.WebSocket, req: http.IncomingMessage): void {
+  private handleWebSocketConnection(ws: WS, req: http.IncomingMessage): void {
     logger.info('WebSocket client connected', { url: req.url });
 
     // Create session
@@ -440,7 +440,7 @@ export class DaemonApi extends EventEmitter {
   /**
    * Send initial state to WebSocket client
    */
-  private sendInitialState(ws: WebSocket.WebSocket): void {
+  private sendInitialState(ws: WS): void {
     const workspaces = this.workspaceManager.getAll();
     const active = this.workspaceManager.getActive();
     const agents = this.agentManager.getAll();
@@ -459,7 +459,7 @@ export class DaemonApi extends EventEmitter {
    * Handle WebSocket message from client
    */
   private handleWebSocketMessage(
-    ws: WebSocket.WebSocket,
+    ws: WS,
     session: UserSession,
     message: { type: string; data?: unknown }
   ): void {
@@ -489,7 +489,7 @@ export class DaemonApi extends EventEmitter {
   /**
    * Send message to WebSocket client
    */
-  private sendToClient(ws: WebSocket.WebSocket, message: unknown): void {
+  private sendToClient(ws: WS, message: unknown): void {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(message));
     }

@@ -270,7 +270,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     try {
       // Use orchestrator if workspaces are available
       if (workspaces.length > 0 && activeWorkspaceId) {
-        await orchestratorSpawnAgent(config.name, config.task, config.command);
+        await orchestratorSpawnAgent(config.name, undefined, config.command);
         return true;
       }
 

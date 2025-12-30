@@ -203,12 +203,8 @@ export class Logger extends EventEmitter {
 
       let line = `${entry.timestamp} ${color}${levelStr}${RESET} ${componentStr} ${entry.message}`;
 
-      // Add context fields
-      const contextFields = { ...entry };
-      delete contextFields.timestamp;
-      delete contextFields.level;
-      delete contextFields.component;
-      delete contextFields.message;
+      // Add context fields (exclude standard log entry fields)
+      const { timestamp: _t, level: _l, component: _c, message: _m, ...contextFields } = entry;
 
       if (Object.keys(contextFields).length > 0) {
         line += ` ${JSON.stringify(contextFields)}`;

@@ -6,8 +6,8 @@
 
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import { getConfig } from '../config';
-import { db } from '../db';
+import { getConfig } from '../config.js';
+import { db } from '../db/index.js';
 
 export const authRouter = Router();
 
@@ -69,12 +69,16 @@ authRouter.get('/github/callback', async (req: Request, res: Response) => {
       }),
     });
 
-    const tokenData = await tokenResponse.json();
+    const tokenData = await tokenResponse.json() as {
+      access_token?: string;
+      error?: string;
+      error_description?: string;
+    };
     if (tokenData.error) {
       throw new Error(tokenData.error_description || tokenData.error);
     }
 
-    const accessToken = tokenData.access_token;
+    const accessToken = tokenData.access_token!;
 
     // Get user info
     const userResponse = await fetch('https://api.github.com/user', {
@@ -84,7 +88,12 @@ authRouter.get('/github/callback', async (req: Request, res: Response) => {
       },
     });
 
-    const userData = await userResponse.json();
+    const userData = await userResponse.json() as {
+      id: number;
+      login: string;
+      email?: string;
+      avatar_url: string;
+    };
 
     // Get user email if not public
     let email = userData.email;
@@ -95,8 +104,8 @@ authRouter.get('/github/callback', async (req: Request, res: Response) => {
           Accept: 'application/vnd.github.v3+json',
         },
       });
-      const emails = await emailsResponse.json();
-      const primaryEmail = emails.find((e: any) => e.primary);
+      const emails = await emailsResponse.json() as Array<{ email: string; primary: boolean }>;
+      const primaryEmail = emails.find((e) => e.primary);
       email = primaryEmail?.email;
     }
 

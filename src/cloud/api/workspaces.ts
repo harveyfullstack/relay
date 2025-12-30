@@ -5,9 +5,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { requireAuth } from './auth';
-import { db, Workspace } from '../db';
-import { getProvisioner } from '../provisioner';
+import { requireAuth } from './auth.js';
+import { db, Workspace } from '../db/index.js';
+import { getProvisioner } from '../provisioner/index.js';
 
 export const workspacesRouter = Router();
 
@@ -473,7 +473,7 @@ workspacesRouter.delete('/:id/domain', async (req: Request, res: Response) => {
  * Helper: Provision SSL for custom domain on compute provider
  */
 async function provisionDomainSSL(workspace: Workspace): Promise<void> {
-  const config = (await import('../config')).getConfig();
+  const config = (await import('../config.js')).getConfig();
 
   if (workspace.computeProvider === 'fly' && config.compute.fly) {
     // Fly.io: Add certificate
@@ -515,7 +515,7 @@ async function provisionDomainSSL(workspace: Workspace): Promise<void> {
  * Helper: Remove custom domain from compute provider
  */
 async function removeDomainFromCompute(workspace: Workspace): Promise<void> {
-  const config = (await import('../config')).getConfig();
+  const config = (await import('../config.js')).getConfig();
 
   if (workspace.computeProvider === 'fly' && config.compute.fly) {
     await fetch(

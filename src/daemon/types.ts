@@ -92,9 +92,9 @@ export interface UserSession {
 }
 
 /**
- * Daemon configuration
+ * API daemon configuration (for HTTP/WebSocket API)
  */
-export interface DaemonConfig {
+export interface ApiDaemonConfig {
   /** Port for HTTP/WebSocket API */
   port: number;
   /** Host to bind to */

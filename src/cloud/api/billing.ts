@@ -5,9 +5,9 @@
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
-import { getBillingService, getAllPlans, getPlan, comparePlans } from '../billing';
-import type { SubscriptionTier } from '../billing/types';
-import { getConfig } from '../config';
+import { getBillingService, getAllPlans, getPlan, comparePlans } from '../billing/index.js';
+import type { SubscriptionTier } from '../billing/types.js';
+import { getConfig } from '../config.js';
 
 // Extend express session with user info
 declare module 'express-session' {

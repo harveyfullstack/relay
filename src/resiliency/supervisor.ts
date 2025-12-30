@@ -6,11 +6,11 @@
  */
 
 import { EventEmitter } from 'events';
-import { AgentHealthMonitor, getHealthMonitor, HealthMonitorConfig, AgentProcess } from './health-monitor';
-import { Logger, createLogger, LogLevel } from './logger';
-import { metrics } from './metrics';
-import { ContextPersistence, getContextPersistence } from './context-persistence';
-import { createContextHandler, detectProvider, ProviderType } from './provider-context';
+import { AgentHealthMonitor, getHealthMonitor, HealthMonitorConfig, AgentProcess, AgentHealth } from './health-monitor.js';
+import { Logger, createLogger, LogLevel } from './logger.js';
+import { metrics } from './metrics.js';
+import { ContextPersistence, getContextPersistence } from './context-persistence.js';
+import { createContextHandler, detectProvider, ProviderType } from './provider-context.js';
 
 export interface SupervisedAgent {
   name: string;
@@ -110,7 +110,7 @@ export class AgentSupervisor extends EventEmitter {
 
     // Cleanup context handlers
     Array.from(this.contextHandlers.entries()).forEach(([name, handler]) => {
-      handler.cleanup().catch((err) => {
+      handler.cleanup().catch((err: unknown) => {
         this.logger.error('Error cleaning up context handler', { name, error: String(err) });
       });
     });
@@ -295,11 +295,11 @@ export class AgentSupervisor extends EventEmitter {
    * Setup event handlers for health monitor
    */
   private setupHealthMonitorEvents(): void {
-    this.healthMonitor.on('healthy', ({ name, health }) => {
+    this.healthMonitor.on('healthy', ({ name, health }: { name: string; health: AgentHealth }) => {
       this.emit('healthy', { name, health });
     });
 
-    this.healthMonitor.on('unhealthy', ({ name, health }) => {
+    this.healthMonitor.on('unhealthy', ({ name, health }: { name: string; health: AgentHealth }) => {
       this.logger.warn('Agent unhealthy', {
         name,
         consecutiveFailures: health.consecutiveFailures,
@@ -307,7 +307,7 @@ export class AgentSupervisor extends EventEmitter {
       this.emit('unhealthy', { name, health });
     });
 
-    this.healthMonitor.on('died', ({ name, reason, restartCount }) => {
+    this.healthMonitor.on('died', ({ name, reason, restartCount }: { name: string; reason: string; restartCount: number }) => {
       this.logger.error('Agent died', { name, reason, restartCount });
       metrics.recordCrash(name, reason);
       this.emit('died', { name, reason, restartCount });
@@ -322,7 +322,7 @@ export class AgentSupervisor extends EventEmitter {
       }
     });
 
-    this.healthMonitor.on('restarting', ({ name, attempt }) => {
+    this.healthMonitor.on('restarting', ({ name, attempt }: { name: string; attempt: number }) => {
       this.logger.info('Restarting agent', { name, attempt });
       metrics.recordRestartAttempt(name);
 
@@ -334,7 +334,7 @@ export class AgentSupervisor extends EventEmitter {
       this.emit('restarting', { name, attempt });
     });
 
-    this.healthMonitor.on('restarted', ({ name, pid, attempt }) => {
+    this.healthMonitor.on('restarted', ({ name, pid, attempt }: { name: string; pid: number; attempt: number }) => {
       this.logger.info('Agent restarted', { name, pid, attempt });
       metrics.recordRestartSuccess(name);
 
@@ -350,7 +350,7 @@ export class AgentSupervisor extends EventEmitter {
         const handoff = this.contextPersistence?.loadHandoff(name);
         const contextHandler = this.contextHandlers.get(name);
         if (handoff && contextHandler) {
-          contextHandler.injectContext(handoff).catch((err) => {
+          contextHandler.injectContext(handoff).catch((err: unknown) => {
             this.logger.error('Failed to inject context after restart', {
               name,
               error: String(err),
@@ -362,13 +362,13 @@ export class AgentSupervisor extends EventEmitter {
       this.emit('restarted', { name, pid, attempt });
     });
 
-    this.healthMonitor.on('restartFailed', ({ name, error }) => {
+    this.healthMonitor.on('restartFailed', ({ name, error }: { name: string; error: string }) => {
       this.logger.error('Restart failed', { name, error });
       metrics.recordRestartFailure(name, error);
       this.emit('restartFailed', { name, error });
     });
 
-    this.healthMonitor.on('permanentlyDead', ({ name, health }) => {
+    this.healthMonitor.on('permanentlyDead', ({ name, health }: { name: string; health: AgentHealth }) => {
       this.logger.fatal('Agent permanently dead', {
         name,
         restartCount: health.restartCount,

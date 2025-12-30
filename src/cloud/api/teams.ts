@@ -5,8 +5,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { requireAuth } from './auth';
-import { db, WorkspaceMemberRole } from '../db';
+import { requireAuth } from './auth.js';
+import { db, WorkspaceMemberRole } from '../db/index.js';
 
 export const teamsRouter = Router();
 

@@ -4,9 +4,9 @@
  * One-click provisioning for compute resources (Fly.io, Railway, Docker).
  */
 
-import { getConfig } from '../config';
-import { db, Workspace } from '../db';
-import { vault } from '../vault';
+import { getConfig } from '../config.js';
+import { db, Workspace } from '../db/index.js';
+import { vault } from '../vault/index.js';
 
 export interface ProvisionConfig {
   userId: string;
@@ -139,7 +139,7 @@ class FlyProvisioner implements ComputeProvisioner {
       throw new Error(`Failed to create Fly machine: ${error}`);
     }
 
-    const machine = await machineResponse.json();
+    const machine = await machineResponse.json() as { id: string };
 
     return {
       computeId: machine.id,
@@ -174,7 +174,7 @@ class FlyProvisioner implements ComputeProvisioner {
 
     if (!response.ok) return 'error';
 
-    const machine = await response.json();
+    const machine = await response.json() as { state: string };
 
     switch (machine.state) {
       case 'started':
@@ -248,7 +248,7 @@ class RailwayProvisioner implements ComputeProvisioner {
       }),
     });
 
-    const projectData = await projectResponse.json();
+    const projectData = await projectResponse.json() as { data: { projectCreate: { id: string } } };
     const projectId = projectData.data.projectCreate.id;
 
     // Deploy service
@@ -278,7 +278,7 @@ class RailwayProvisioner implements ComputeProvisioner {
       }),
     });
 
-    const serviceData = await serviceResponse.json();
+    const serviceData = await serviceResponse.json() as { data: { serviceCreate: { id: string } } };
     const serviceId = serviceData.data.serviceCreate.id;
 
     // Set environment variables
@@ -339,7 +339,7 @@ class RailwayProvisioner implements ComputeProvisioner {
       }),
     });
 
-    const domainData = await domainResponse.json();
+    const domainData = await domainResponse.json() as { data: { serviceDomainCreate: { domain: string } } };
     const domain = domainData.data.serviceDomainCreate.domain;
 
     return {
@@ -399,7 +399,9 @@ class RailwayProvisioner implements ComputeProvisioner {
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as {
+      data?: { project?: { deployments?: { edges: Array<{ node: { status: string } }> } } }
+    };
     const deployments = data.data?.project?.deployments?.edges;
 
     if (!deployments || deployments.length === 0) return 'provisioning';

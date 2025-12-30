@@ -9,8 +9,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { createLogger } from './logger';
-import { ContextPersistence, getContextPersistence, Handoff } from './context-persistence';
+import { createLogger } from './logger.js';
+import { ContextPersistence, getContextPersistence, Handoff } from './context-persistence.js';
 
 const logger = createLogger('provider-context');
 
@@ -114,7 +114,10 @@ export class ClaudeContextHandler extends ProviderContextHandler {
         hooks: [{ type: 'command', command: stopHookPath }],
       };
       // Only add if not already present
-      if (!hooks.Stop.some((h: unknown) => (h as Record<string, unknown>).hooks?.[0]?.command === stopHookPath)) {
+      if (!hooks.Stop.some((h: unknown) => {
+        const entry = h as { hooks?: Array<{ command?: string }> };
+        return entry.hooks?.[0]?.command === stopHookPath;
+      })) {
         hooks.Stop.push(stopHookEntry);
       }
     }

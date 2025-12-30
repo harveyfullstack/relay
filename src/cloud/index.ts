@@ -4,21 +4,21 @@
  * One-click server provisioning for AI agent orchestration.
  */
 
-export { createServer } from './server';
-export { getConfig, loadConfig, CloudConfig } from './config';
+export { createServer } from './server.js';
+export { getConfig, loadConfig, CloudConfig } from './config.js';
 
 // Services
-export { CredentialVault } from './vault';
-export { WorkspaceProvisioner, ProvisionConfig, Workspace, WorkspaceStatus } from './provisioner';
+export { CredentialVault } from './vault/index.js';
+export { WorkspaceProvisioner, ProvisionConfig, Workspace, WorkspaceStatus } from './provisioner/index.js';
 
 // Billing
-export * from './billing';
+export * from './billing/index.js';
 
 // Run if executed directly
 if (require.main === module) {
   (async () => {
     try {
-      const { createServer } = await import('./server');
+      const { createServer } = await import('./server.js');
       const server = await createServer();
       await server.start();
 

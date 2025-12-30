@@ -5,8 +5,8 @@
  */
 
 import Stripe from 'stripe';
-import { getConfig } from '../config';
-import { getPlan } from './plans';
+import { getConfig } from '../config.js';
+import { getPlan } from './plans.js';
 import type {
   SubscriptionTier,
   BillingCustomer,
@@ -17,7 +17,7 @@ import type {
   PortalSession,
   BillingEvent,
   SubscriptionStatus,
-} from './types';
+} from './types.js';
 
 let stripeClient: Stripe | null = null;
 
@@ -27,10 +27,7 @@ let stripeClient: Stripe | null = null;
 function getStripe(): Stripe {
   if (!stripeClient) {
     const config = getConfig();
-    stripeClient = new Stripe(config.stripe.secretKey, {
-      apiVersion: '2024-11-20.acacia',
-      typescript: true,
-    });
+    stripeClient = new Stripe(config.stripe.secretKey);
   }
   return stripeClient;
 }
@@ -108,8 +105,8 @@ export class BillingService {
         email: (customer as Stripe.Customer).email || '',
         name: (customer as Stripe.Customer).name || undefined,
         subscription: subscription ? this.mapSubscription(subscription) : undefined,
-        paymentMethods: paymentMethods.data.map((pm) => this.mapPaymentMethod(pm)),
-        invoices: invoices.data.map((inv) => this.mapInvoice(inv)),
+        paymentMethods: paymentMethods.data.map((pm: Stripe.PaymentMethod) => this.mapPaymentMethod(pm)),
+        invoices: invoices.data.map((inv: Stripe.Invoice) => this.mapInvoice(inv)),
         createdAt: new Date((customer as Stripe.Customer).created * 1000),
         updatedAt: new Date(),
       };
@@ -306,7 +303,7 @@ export class BillingService {
    */
   async getUpcomingInvoice(customerId: string): Promise<Invoice | null> {
     try {
-      const invoice = await this.stripe.invoices.retrieveUpcoming({
+      const invoice = await (this.stripe.invoices as any).retrieveUpcoming({
         customer: customerId,
       });
 
@@ -327,7 +324,7 @@ export class BillingService {
     quantity: number,
     timestamp?: Date
   ): Promise<void> {
-    await this.stripe.subscriptionItems.createUsageRecord(subscriptionItemId, {
+    await (this.stripe.subscriptionItems as any).createUsageRecord(subscriptionItemId, {
       quantity,
       timestamp: timestamp ? Math.floor(timestamp.getTime() / 1000) : undefined,
       action: 'increment',
@@ -354,7 +351,7 @@ export class BillingService {
       id: event.id,
       type: this.mapEventType(event.type),
       stripeEventId: event.id,
-      data: event.data.object as Record<string, unknown>,
+      data: event.data.object as unknown as Record<string, unknown>,
       createdAt: new Date(event.created * 1000),
     };
 
@@ -374,7 +371,7 @@ export class BillingService {
     }
 
     billingEvent.processedAt = new Date();
-    return billingEvent;
+    return billingEvent as BillingEvent;
   }
 
   /**
@@ -402,13 +399,14 @@ export class BillingService {
 
   // Helper: Map Stripe subscription to our type
   private mapSubscription(subscription: Stripe.Subscription): CustomerSubscription {
+    const sub = subscription as any;
     return {
       id: subscription.id,
       stripeSubscriptionId: subscription.id,
       tier: this.getTierFromSubscription(subscription),
       status: subscription.status as SubscriptionStatus,
-      currentPeriodStart: new Date(subscription.current_period_start * 1000),
-      currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+      currentPeriodStart: new Date((sub.current_period_start || sub.billing_cycle_anchor) * 1000),
+      currentPeriodEnd: new Date((sub.current_period_end || sub.current_period_start + 30 * 24 * 60 * 60) * 1000),
       cancelAtPeriodEnd: subscription.cancel_at_period_end,
       billingInterval: subscription.items.data[0]?.price.recurring?.interval === 'year'
         ? 'year'

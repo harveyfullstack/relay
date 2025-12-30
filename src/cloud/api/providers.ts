@@ -6,10 +6,10 @@
 
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import { requireAuth } from './auth';
-import { getConfig } from '../config';
-import { db } from '../db';
-import { vault } from '../vault';
+import { requireAuth } from './auth.js';
+import { getConfig } from '../config.js';
+import { db } from '../db/index.js';
+import { vault } from '../vault/index.js';
 
 export const providersRouter = Router();
 
@@ -123,6 +123,8 @@ providersRouter.get('/', async (req: Request, res: Response) => {
       displayName: 'Copilot',
       description: 'GitHub Copilot - connected via signup',
       color: '#24292F',
+      authStrategy: 'device_flow' as const,
+      cliCommand: undefined,
       isConnected: true,
       connectedAs: githubCred?.providerAccountEmail,
       connectedAt: githubCred?.createdAt,
@@ -193,7 +195,14 @@ providersRouter.post('/:provider/connect', async (req: Request, res: Response) =
       throw new Error(`Failed to get device code: ${error}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as {
+      device_code: string;
+      user_code: string;
+      verification_uri: string;
+      verification_uri_complete?: string;
+      expires_in: number;
+      interval?: number;
+    };
 
     // Generate flow ID
     const flowId = crypto.randomUUID();
@@ -364,7 +373,15 @@ async function pollForToken(flowId: string, provider: ProviderType, clientId: st
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json() as {
+        error?: string;
+        error_description?: string;
+        interval?: number;
+        access_token?: string;
+        refresh_token?: string;
+        expires_in?: number;
+        scope?: string;
+      };
 
       if (data.error) {
         switch (data.error) {
@@ -390,7 +407,7 @@ async function pollForToken(flowId: string, provider: ProviderType, clientId: st
 
       // Success! Store tokens
       await storeProviderTokens(current.userId, provider, {
-        accessToken: data.access_token,
+        accessToken: data.access_token!,
         refreshToken: data.refresh_token,
         expiresIn: data.expires_in,
         scope: data.scope,
@@ -434,7 +451,7 @@ async function storeProviderTokens(
       },
     });
     if (response.ok) {
-      userInfo = await response.json();
+      userInfo = await response.json() as { id?: string; email?: string };
     }
   } catch (error) {
     console.error('Error fetching user info:', error);

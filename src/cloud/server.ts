@@ -8,16 +8,16 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { createClient } from 'redis';
 import RedisStore from 'connect-redis';
-import { getConfig } from './config';
+import { getConfig } from './config.js';
 
 // API routers
-import { authRouter } from './api/auth';
-import { providersRouter } from './api/providers';
-import { workspacesRouter } from './api/workspaces';
-import { reposRouter } from './api/repos';
-import { onboardingRouter } from './api/onboarding';
-import { teamsRouter } from './api/teams';
-import { billingRouter } from './api/billing';
+import { authRouter } from './api/auth.js';
+import { providersRouter } from './api/providers.js';
+import { workspacesRouter } from './api/workspaces.js';
+import { reposRouter } from './api/repos.js';
+import { onboardingRouter } from './api/onboarding.js';
+import { teamsRouter } from './api/teams.js';
+import { billingRouter } from './api/billing.js';
 
 export interface CloudServer {
   app: Express;
@@ -31,7 +31,7 @@ export async function createServer(): Promise<CloudServer> {
 
   // Redis client for sessions
   const redisClient = createClient({ url: config.redisUrl });
-  await redisClient.connect();
+  await (redisClient as any).connect();
 
   // Middleware
   app.use(helmet());
@@ -46,7 +46,7 @@ export async function createServer(): Promise<CloudServer> {
   // Session middleware
   app.use(
     session({
-      store: new RedisStore({ client: redisClient }),
+      store: new (RedisStore as any)({ client: redisClient }),
       secret: config.sessionSecret,
       resave: false,
       saveUninitialized: false,

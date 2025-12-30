@@ -5,7 +5,7 @@
  */
 
 import { Pool } from 'pg';
-import { getConfig } from '../config';
+import { getConfig } from '../config.js';
 
 // Initialize pool lazily
 let pool: Pool | null = null;
