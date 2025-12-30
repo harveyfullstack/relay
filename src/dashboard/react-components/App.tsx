@@ -123,6 +123,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     setCurrentChannel,
     currentThread,
     setCurrentThread,
+    activeThreads,
+    totalUnreadThreadCount,
     sendMessage,
     isSending,
     sendError,
@@ -473,12 +475,16 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           isFleetAvailable={isFleetAvailable}
           isConnected={isConnected || isOrchestratorConnected}
           isOpen={isSidebarOpen}
+          activeThreads={activeThreads}
+          currentThread={currentThread}
+          totalUnreadThreadCount={totalUnreadThreadCount}
           onAgentSelect={handleAgentSelect}
           onProjectSelect={handleProjectSelect}
           onViewModeChange={setViewMode}
           onSpawnClick={handleSpawnClick}
           onReleaseClick={handleReleaseAgent}
           onLogsClick={handleLogsClick}
+          onThreadSelect={setCurrentThread}
           onClose={() => setIsSidebarOpen(false)}
         />
       </div>

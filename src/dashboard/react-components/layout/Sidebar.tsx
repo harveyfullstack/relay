@@ -7,8 +7,10 @@
 
 import React, { useState } from 'react';
 import type { Agent, Project } from '../../types';
+import type { ThreadInfo } from '../hooks/useMessages';
 import { AgentList } from '../AgentList';
 import { ProjectList } from '../ProjectList';
+import { ThreadList } from '../ThreadList';
 
 export interface SidebarProps {
   agents: Agent[];
@@ -20,12 +22,19 @@ export interface SidebarProps {
   isConnected: boolean;
   /** Mobile: whether sidebar is open */
   isOpen?: boolean;
+  /** Active threads for the threads section */
+  activeThreads?: ThreadInfo[];
+  /** Currently selected thread */
+  currentThread?: string | null;
+  /** Total unread thread count for notification badge */
+  totalUnreadThreadCount?: number;
   onAgentSelect?: (agent: Agent, project?: Project) => void;
   onProjectSelect?: (project: Project) => void;
   onViewModeChange?: (mode: 'local' | 'fleet') => void;
   onSpawnClick?: () => void;
   onReleaseClick?: (agent: Agent) => void;
   onLogsClick?: (agent: Agent) => void;
+  onThreadSelect?: (threadId: string) => void;
   /** Mobile: close sidebar handler */
   onClose?: () => void;
 }
@@ -39,12 +48,16 @@ export function Sidebar({
   isFleetAvailable,
   isConnected,
   isOpen = false,
+  activeThreads = [],
+  currentThread,
+  totalUnreadThreadCount = 0,
   onAgentSelect,
   onProjectSelect,
   onViewModeChange,
   onSpawnClick,
   onReleaseClick,
   onLogsClick,
+  onThreadSelect,
   onClose,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -120,6 +133,18 @@ export function Sidebar({
           </button>
         )}
       </div>
+
+      {/* Threads Section */}
+      {activeThreads.length > 0 && (
+        <div className="border-b border-border-subtle">
+          <ThreadList
+            threads={activeThreads}
+            currentThread={currentThread}
+            onThreadSelect={(threadId) => onThreadSelect?.(threadId)}
+            totalUnreadCount={totalUnreadThreadCount}
+          />
+        </div>
+      )}
 
       {/* Agent/Project List */}
       <div className="flex-1 overflow-y-auto px-2">

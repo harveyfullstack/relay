@@ -89,11 +89,17 @@ export function useAgentLogs(options: UseAgentLogsOptions): UseAgentLogsReturn {
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const agentNameRef = useRef(agentName);
+  const manualCloseRef = useRef(false);
+  const shouldReconnectRef = useRef(true);
 
   // Keep agent name ref updated
   agentNameRef.current = agentName;
 
   const connect = useCallback(() => {
+    // Ensure reconnects are allowed for this session
+    shouldReconnectRef.current = true;
+    manualCloseRef.current = false;
+
     // Prevent multiple connections
     if (wsRef.current?.readyState === WebSocket.OPEN || isConnecting) {
       return;
@@ -128,18 +134,41 @@ export function useAgentLogs(options: UseAgentLogsOptions): UseAgentLogsReturn {
       };
 
       ws.onclose = (event) => {
+        const wasManualClose = manualCloseRef.current;
+
         setIsConnected(false);
         setIsConnecting(false);
         wsRef.current = null;
 
+        // Clear any pending reconnect when a close happens
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
+        }
+
+        // Reset manual close flag after handling this close
+        manualCloseRef.current = false;
+
+        // Skip logging/reconnecting for intentional disconnects (cleanup, user toggle)
+        if (wasManualClose) {
+          return;
+        }
+
         // Add system message for disconnection
         if (!event.wasClean) {
+          const willReconnect =
+            shouldReconnectRef.current &&
+            reconnect &&
+            reconnectAttemptsRef.current < maxReconnectAttempts;
+
           setLogs((prev) => [
             ...prev,
             {
               id: generateLogId(),
               timestamp: Date.now(),
-              content: `Disconnected from log stream (code: ${event.code})`,
+              content: willReconnect
+                ? `Lost connection to log stream (code: ${event.code}). Reconnecting...`
+                : `Disconnected from log stream (code: ${event.code})`,
               type: 'system',
               agentName: agentNameRef.current,
             },
@@ -153,7 +182,11 @@ export function useAgentLogs(options: UseAgentLogsOptions): UseAgentLogsReturn {
         }
 
         // Schedule reconnect if enabled
-        if (reconnect && reconnectAttemptsRef.current < maxReconnectAttempts) {
+        if (
+          shouldReconnectRef.current &&
+          reconnect &&
+          reconnectAttemptsRef.current < maxReconnectAttempts
+        ) {
           const delay = Math.min(
             1000 * Math.pow(2, reconnectAttemptsRef.current),
             30000
@@ -286,6 +319,10 @@ export function useAgentLogs(options: UseAgentLogsOptions): UseAgentLogsReturn {
   }, [isConnecting, maxLines, reconnect, maxReconnectAttempts]);
 
   const disconnect = useCallback(() => {
+    // Prevent reconnection attempts after an intentional disconnect
+    shouldReconnectRef.current = false;
+    manualCloseRef.current = true;
+
     // Clear any pending reconnect
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
