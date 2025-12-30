@@ -50,7 +50,9 @@ export interface Workspace {
   status: 'provisioning' | 'running' | 'stopped' | 'error';
   computeProvider: 'fly' | 'railway' | 'docker';
   computeId?: string; // External ID from compute provider
-  publicUrl?: string;
+  publicUrl?: string; // Default URL (e.g., workspace-abc.agentrelay.dev)
+  customDomain?: string; // User's custom domain (e.g., agents.acme.com)
+  customDomainStatus?: 'pending' | 'verifying' | 'active' | 'error';
   config: WorkspaceConfig;
   errorMessage?: string;
   createdAt: Date;
@@ -255,6 +257,46 @@ export const workspaces = {
   async delete(id: string): Promise<void> {
     await getPool().query('DELETE FROM workspaces WHERE id = $1', [id]);
   },
+
+  async setCustomDomain(
+    id: string,
+    customDomain: string,
+    status: Workspace['customDomainStatus'] = 'pending'
+  ): Promise<void> {
+    await getPool().query(
+      `UPDATE workspaces SET
+         custom_domain = $2,
+         custom_domain_status = $3,
+         updated_at = NOW()
+       WHERE id = $1`,
+      [id, customDomain, status]
+    );
+  },
+
+  async updateCustomDomainStatus(
+    id: string,
+    status: Workspace['customDomainStatus']
+  ): Promise<void> {
+    await getPool().query(
+      `UPDATE workspaces SET custom_domain_status = $2, updated_at = NOW() WHERE id = $1`,
+      [id, status]
+    );
+  },
+
+  async removeCustomDomain(id: string): Promise<void> {
+    await getPool().query(
+      `UPDATE workspaces SET custom_domain = NULL, custom_domain_status = NULL, updated_at = NOW() WHERE id = $1`,
+      [id]
+    );
+  },
+
+  async findByCustomDomain(domain: string): Promise<Workspace | null> {
+    const { rows } = await getPool().query(
+      'SELECT * FROM workspaces WHERE custom_domain = $1',
+      [domain]
+    );
+    return rows[0] ? mapWorkspace(rows[0]) : null;
+  },
 };
 
 // Repository queries
@@ -361,6 +403,8 @@ function mapWorkspace(row: any): Workspace {
     computeProvider: row.compute_provider,
     computeId: row.compute_id,
     publicUrl: row.public_url,
+    customDomain: row.custom_domain,
+    customDomainStatus: row.custom_domain_status,
     config: row.config,
     errorMessage: row.error_message,
     createdAt: row.created_at,
@@ -422,6 +466,8 @@ export async function initializeDatabase(): Promise<void> {
         compute_provider VARCHAR(50) NOT NULL,
         compute_id VARCHAR(255),
         public_url VARCHAR(255),
+        custom_domain VARCHAR(255),
+        custom_domain_status VARCHAR(50),
         config JSONB NOT NULL DEFAULT '{}',
         error_message TEXT,
         created_at TIMESTAMP DEFAULT NOW(),
@@ -445,6 +491,7 @@ export async function initializeDatabase(): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS idx_credentials_user_id ON credentials(user_id);
       CREATE INDEX IF NOT EXISTS idx_workspaces_user_id ON workspaces(user_id);
+      CREATE INDEX IF NOT EXISTS idx_workspaces_custom_domain ON workspaces(custom_domain) WHERE custom_domain IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_repositories_user_id ON repositories(user_id);
       CREATE INDEX IF NOT EXISTS idx_repositories_workspace_id ON repositories(workspace_id);
     `);

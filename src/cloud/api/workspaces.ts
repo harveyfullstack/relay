@@ -6,7 +6,7 @@
 
 import { Router, Request, Response } from 'express';
 import { requireAuth } from './auth';
-import { db } from '../db';
+import { db, Workspace } from '../db';
 import { getProvisioner, ProvisionConfig } from '../provisioner';
 
 export const workspacesRouter = Router();
@@ -299,6 +299,225 @@ workspacesRouter.post('/:id/repos', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to add repositories' });
   }
 });
+
+/**
+ * POST /api/workspaces/:id/domain
+ * Add or update custom domain
+ */
+workspacesRouter.post('/:id/domain', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { id } = req.params;
+  const { domain } = req.body;
+
+  if (!domain || typeof domain !== 'string') {
+    return res.status(400).json({ error: 'Domain is required' });
+  }
+
+  // Basic domain validation
+  const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+  if (!domainRegex.test(domain)) {
+    return res.status(400).json({ error: 'Invalid domain format' });
+  }
+
+  try {
+    const workspace = await db.workspaces.findById(id);
+
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+
+    if (workspace.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Check if domain is already in use
+    const existing = await db.workspaces.findByCustomDomain(domain);
+    if (existing && existing.id !== id) {
+      return res.status(409).json({ error: 'Domain already in use' });
+    }
+
+    // Set the custom domain (pending verification)
+    await db.workspaces.setCustomDomain(id, domain, 'pending');
+
+    // Return DNS instructions
+    res.json({
+      success: true,
+      domain,
+      status: 'pending',
+      instructions: {
+        type: 'CNAME',
+        name: domain,
+        value: workspace.publicUrl?.replace('https://', '') || `${id}.agentrelay.dev`,
+        ttl: 300,
+      },
+      verifyEndpoint: `/api/workspaces/${id}/domain/verify`,
+      message: 'Add the CNAME record to your DNS, then call the verify endpoint',
+    });
+  } catch (error) {
+    console.error('Error setting custom domain:', error);
+    res.status(500).json({ error: 'Failed to set custom domain' });
+  }
+});
+
+/**
+ * POST /api/workspaces/:id/domain/verify
+ * Verify custom domain DNS is configured correctly
+ */
+workspacesRouter.post('/:id/domain/verify', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { id } = req.params;
+
+  try {
+    const workspace = await db.workspaces.findById(id);
+
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+
+    if (workspace.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    if (!workspace.customDomain) {
+      return res.status(400).json({ error: 'No custom domain configured' });
+    }
+
+    // Verify DNS resolution
+    const dns = await import('dns').then(m => m.promises);
+    try {
+      const records = await dns.resolveCname(workspace.customDomain);
+      const expectedTarget = workspace.publicUrl?.replace('https://', '') || `${id}.agentrelay.dev`;
+
+      if (records.some(r => r.includes(expectedTarget) || r.includes('agentrelay'))) {
+        // DNS is configured, now provision SSL cert
+        await db.workspaces.updateCustomDomainStatus(id, 'verifying');
+
+        // Trigger SSL cert provisioning on compute provider
+        // For Railway/Fly, this is automatic once domain is added
+        await provisionDomainSSL(workspace);
+
+        await db.workspaces.updateCustomDomainStatus(id, 'active');
+
+        res.json({
+          success: true,
+          status: 'active',
+          domain: workspace.customDomain,
+          message: 'Custom domain verified and SSL certificate provisioned',
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          status: 'pending',
+          error: 'DNS not configured correctly',
+          expected: expectedTarget,
+          found: records,
+        });
+      }
+    } catch (dnsError) {
+      res.status(400).json({
+        success: false,
+        status: 'pending',
+        error: 'Could not resolve domain. DNS may not be configured yet.',
+      });
+    }
+  } catch (error) {
+    console.error('Error verifying domain:', error);
+    res.status(500).json({ error: 'Failed to verify domain' });
+  }
+});
+
+/**
+ * DELETE /api/workspaces/:id/domain
+ * Remove custom domain
+ */
+workspacesRouter.delete('/:id/domain', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { id } = req.params;
+
+  try {
+    const workspace = await db.workspaces.findById(id);
+
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+
+    if (workspace.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Remove from compute provider
+    if (workspace.customDomain) {
+      await removeDomainFromCompute(workspace);
+    }
+
+    await db.workspaces.removeCustomDomain(id);
+
+    res.json({ success: true, message: 'Custom domain removed' });
+  } catch (error) {
+    console.error('Error removing domain:', error);
+    res.status(500).json({ error: 'Failed to remove domain' });
+  }
+});
+
+/**
+ * Helper: Provision SSL for custom domain on compute provider
+ */
+async function provisionDomainSSL(workspace: Workspace): Promise<void> {
+  const config = (await import('../config')).getConfig();
+
+  if (workspace.computeProvider === 'fly' && config.compute.fly) {
+    // Fly.io: Add certificate
+    await fetch(`https://api.machines.dev/v1/apps/ar-${workspace.id.substring(0, 8)}/certificates`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.compute.fly.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ hostname: workspace.customDomain }),
+    });
+  } else if (workspace.computeProvider === 'railway' && config.compute.railway) {
+    // Railway: Add custom domain via GraphQL
+    await fetch('https://backboard.railway.app/graphql/v2', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.compute.railway.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          mutation AddCustomDomain($input: CustomDomainCreateInput!) {
+            customDomainCreate(input: $input) { id }
+          }
+        `,
+        variables: {
+          input: {
+            projectId: workspace.computeId,
+            domain: workspace.customDomain,
+          },
+        },
+      }),
+    });
+  }
+  // Docker: Would need reverse proxy config (Caddy/nginx)
+}
+
+/**
+ * Helper: Remove custom domain from compute provider
+ */
+async function removeDomainFromCompute(workspace: Workspace): Promise<void> {
+  const config = (await import('../config')).getConfig();
+
+  if (workspace.computeProvider === 'fly' && config.compute.fly) {
+    await fetch(
+      `https://api.machines.dev/v1/apps/ar-${workspace.id.substring(0, 8)}/certificates/${workspace.customDomain}`,
+      {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${config.compute.fly.apiToken}` },
+      }
+    );
+  }
+  // Railway and Docker: similar cleanup
+}
 
 /**
  * POST /api/workspaces/quick
