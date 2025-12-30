@@ -14,24 +14,44 @@ import { CommandPalette } from './CommandPalette';
 import { SpawnModal, type SpawnConfig } from './SpawnModal';
 import { SettingsPanel, defaultSettings, type Settings } from './SettingsPanel';
 import { MentionAutocomplete, getMentionQuery, completeMentionInValue } from './MentionAutocomplete';
+import { WorkspaceSelector, type Workspace } from './WorkspaceSelector';
+import { AddWorkspaceModal } from './AddWorkspaceModal';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useAgents } from './hooks/useAgents';
 import { useMessages } from './hooks/useMessages';
+import { useOrchestrator } from './hooks/useOrchestrator';
 import { api } from '../lib/api';
 
 export interface AppProps {
   /** Initial WebSocket URL (optional, defaults to current host) */
   wsUrl?: string;
+  /** Orchestrator API URL (optional, defaults to localhost:3456) */
+  orchestratorUrl?: string;
 }
 
-export function App({ wsUrl }: AppProps) {
-  // WebSocket connection for real-time data
+export function App({ wsUrl, orchestratorUrl }: AppProps) {
+  // WebSocket connection for real-time data (per-project daemon)
   const { data, isConnected, error: wsError } = useWebSocket({ url: wsUrl });
+
+  // Orchestrator for multi-workspace management
+  const {
+    workspaces,
+    activeWorkspaceId,
+    agents: orchestratorAgents,
+    isConnected: isOrchestratorConnected,
+    isLoading: isOrchestratorLoading,
+    error: orchestratorError,
+    switchWorkspace,
+    addWorkspace,
+    removeWorkspace,
+    spawnAgent: orchestratorSpawnAgent,
+    stopAgent: orchestratorStopAgent,
+  } = useOrchestrator({ apiUrl: orchestratorUrl });
 
   // View mode state
   const [viewMode, setViewMode] = useState<'local' | 'fleet'>('local');
 
-  // Project state for unified navigation
+  // Project state for unified navigation (converted from workspaces)
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProject, setCurrentProject] = useState<string | undefined>();
 
@@ -39,6 +59,11 @@ export function App({ wsUrl }: AppProps) {
   const [isSpawnModalOpen, setIsSpawnModalOpen] = useState(false);
   const [isSpawning, setIsSpawning] = useState(false);
   const [spawnError, setSpawnError] = useState<string | null>(null);
+
+  // Add workspace modal state
+  const [isAddWorkspaceOpen, setIsAddWorkspaceOpen] = useState(false);
+  const [isAddingWorkspace, setIsAddingWorkspace] = useState(false);
+  const [addWorkspaceError, setAddWorkspaceError] = useState<string | null>(null);
 
   // Command palette state
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -87,45 +112,98 @@ export function App({ wsUrl }: AppProps) {
   });
 
   // Check if fleet view is available
-  const isFleetAvailable = Boolean(data?.fleet?.servers?.length);
+  const isFleetAvailable = Boolean(data?.fleet?.servers?.length) || workspaces.length > 0;
 
-  // Fetch bridge/project data when fleet is available
+  // Convert workspaces to projects for unified navigation
   useEffect(() => {
-    if (!isFleetAvailable) return;
+    if (workspaces.length > 0) {
+      // Convert workspaces to projects
+      const projectList: Project[] = workspaces.map((workspace) => ({
+        id: workspace.id,
+        path: workspace.path,
+        name: workspace.name,
+        agents: orchestratorAgents
+          .filter((a) => a.workspaceId === workspace.id)
+          .map((a) => ({
+            name: a.name,
+            status: a.status === 'running' ? 'online' : 'offline',
+            isSpawned: true,
+            cli: a.provider,
+          })) as Agent[],
+        lead: undefined,
+      }));
+      setProjects(projectList);
+      setCurrentProject(activeWorkspaceId);
+    }
+  }, [workspaces, orchestratorAgents, activeWorkspaceId]);
+
+  // Fallback: Fetch bridge/project data when fleet is available (legacy)
+  useEffect(() => {
+    if (workspaces.length > 0) return; // Skip if using orchestrator
+    if (!data?.fleet?.servers?.length) return;
 
     const fetchProjects = async () => {
       const result = await api.getBridgeData();
       if (result.success && result.data) {
-        // Destructure to avoid non-null assertion in closure
         const { servers, agents } = result.data;
-        // Convert fleet servers to projects
         const projectList: Project[] = servers.map((server) => ({
           id: server.id,
           path: server.url,
           name: server.name || server.url.split('/').pop(),
           agents: agents.filter((a) => a.server === server.id),
-          lead: undefined, // Could be enhanced to detect lead agent
+          lead: undefined,
         }));
         setProjects(projectList);
       }
     };
 
     fetchProjects();
-    // Refresh periodically
     const interval = setInterval(fetchProjects, 30000);
     return () => clearInterval(interval);
-  }, [isFleetAvailable]);
+  }, [data?.fleet?.servers?.length, workspaces.length]);
 
-  // Handle project selection
+  // Handle workspace selection
+  const handleWorkspaceSelect = useCallback(async (workspace: Workspace) => {
+    try {
+      await switchWorkspace(workspace.id);
+    } catch (err) {
+      console.error('Failed to switch workspace:', err);
+    }
+  }, [switchWorkspace]);
+
+  // Handle add workspace
+  const handleAddWorkspace = useCallback(async (path: string, name?: string) => {
+    setIsAddingWorkspace(true);
+    setAddWorkspaceError(null);
+    try {
+      await addWorkspace(path, name);
+      setIsAddWorkspaceOpen(false);
+    } catch (err) {
+      setAddWorkspaceError(err instanceof Error ? err.message : 'Failed to add workspace');
+      throw err;
+    } finally {
+      setIsAddingWorkspace(false);
+    }
+  }, [addWorkspace]);
+
+  // Handle project selection (also switches workspace if using orchestrator)
   const handleProjectSelect = useCallback((project: Project) => {
     setCurrentProject(project.id);
+
+    // Switch workspace if using orchestrator
+    if (workspaces.length > 0) {
+      switchWorkspace(project.id).catch((err) => {
+        console.error('Failed to switch workspace:', err);
+      });
+    }
+
     // Optionally navigate to project's first agent or general channel
     if (project.agents.length > 0) {
       selectAgent(project.agents[0].name);
       setCurrentChannel(project.agents[0].name);
     }
     closeSidebarOnMobile();
-  }, [selectAgent, setCurrentChannel, closeSidebarOnMobile]);
+  }, [selectAgent, setCurrentChannel, closeSidebarOnMobile, workspaces.length, switchWorkspace]);
 
   // Handle agent selection
   const handleAgentSelect = useCallback((agent: Agent) => {
@@ -150,6 +228,13 @@ export function App({ wsUrl }: AppProps) {
     setIsSpawning(true);
     setSpawnError(null);
     try {
+      // Use orchestrator if workspaces are available
+      if (workspaces.length > 0 && activeWorkspaceId) {
+        await orchestratorSpawnAgent(config.name, config.task, config.command);
+        return true;
+      }
+
+      // Fallback to legacy API
       const result = await api.spawnAgent({ name: config.name, cli: config.command, team: config.team });
       if (!result.success) {
         setSpawnError(result.error || 'Failed to spawn agent');
@@ -162,7 +247,7 @@ export function App({ wsUrl }: AppProps) {
     } finally {
       setIsSpawning(false);
     }
-  }, []);
+  }, [workspaces.length, activeWorkspaceId, orchestratorSpawnAgent]);
 
   // Handle release/kill agent
   const handleReleaseAgent = useCallback(async (agent: Agent) => {
@@ -172,6 +257,13 @@ export function App({ wsUrl }: AppProps) {
     if (!confirmed) return;
 
     try {
+      // Use orchestrator if workspaces are available
+      if (workspaces.length > 0 && activeWorkspaceId) {
+        await orchestratorStopAgent(agent.name);
+        return;
+      }
+
+      // Fallback to legacy API
       const result = await api.releaseAgent(agent.name);
       if (!result.success) {
         console.error('Failed to release agent:', result.error);
@@ -179,7 +271,7 @@ export function App({ wsUrl }: AppProps) {
     } catch (err) {
       console.error('Failed to release agent:', err);
     }
-  }, []);
+  }, [workspaces.length, activeWorkspaceId, orchestratorStopAgent]);
 
   // Handle command palette
   const handleCommandPaletteOpen = useCallback(() => {
@@ -248,23 +340,37 @@ export function App({ wsUrl }: AppProps) {
         onClick={() => setIsSidebarOpen(false)}
       />
 
-      {/* Sidebar */}
-      <Sidebar
-        agents={agents}
-        projects={projects}
-        currentProject={currentProject}
-        selectedAgent={selectedAgent?.name}
-        viewMode={viewMode}
-        isFleetAvailable={isFleetAvailable}
-        isConnected={isConnected}
-        isOpen={isSidebarOpen}
-        onAgentSelect={handleAgentSelect}
-        onProjectSelect={handleProjectSelect}
-        onViewModeChange={setViewMode}
-        onSpawnClick={handleSpawnClick}
-        onReleaseClick={handleReleaseAgent}
-        onClose={() => setIsSidebarOpen(false)}
-      />
+      {/* Sidebar with Workspace Selector */}
+      <div className={`sidebar-container ${isSidebarOpen ? 'open' : ''}`}>
+        {/* Workspace Selector */}
+        <div className="workspace-selector-container">
+          <WorkspaceSelector
+            workspaces={workspaces}
+            activeWorkspaceId={activeWorkspaceId}
+            onSelect={handleWorkspaceSelect}
+            onAddWorkspace={() => setIsAddWorkspaceOpen(true)}
+            isLoading={isOrchestratorLoading}
+          />
+        </div>
+
+        {/* Sidebar */}
+        <Sidebar
+          agents={agents}
+          projects={projects}
+          currentProject={currentProject}
+          selectedAgent={selectedAgent?.name}
+          viewMode={viewMode}
+          isFleetAvailable={isFleetAvailable}
+          isConnected={isConnected || isOrchestratorConnected}
+          isOpen={isSidebarOpen}
+          onAgentSelect={handleAgentSelect}
+          onProjectSelect={handleProjectSelect}
+          onViewModeChange={setViewMode}
+          onSpawnClick={handleSpawnClick}
+          onReleaseClick={handleReleaseAgent}
+          onClose={() => setIsSidebarOpen(false)}
+        />
+      </div>
 
       {/* Main Content */}
       <main className="dashboard-main">
@@ -350,6 +456,18 @@ export function App({ wsUrl }: AppProps) {
         settings={settings}
         onSettingsChange={setSettings}
         onResetSettings={() => setSettings(defaultSettings)}
+      />
+
+      {/* Add Workspace Modal */}
+      <AddWorkspaceModal
+        isOpen={isAddWorkspaceOpen}
+        onClose={() => {
+          setIsAddWorkspaceOpen(false);
+          setAddWorkspaceError(null);
+        }}
+        onAdd={handleAddWorkspace}
+        isAdding={isAddingWorkspace}
+        error={addWorkspaceError}
       />
     </div>
   );
@@ -525,6 +643,38 @@ export const appStyles = `
   display: flex;
   height: 100vh;
   background: #1a1d21;
+}
+
+.sidebar-container {
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  height: 100vh;
+  background: #1a1a2e;
+  border-right: 1px solid #2a2a3e;
+}
+
+.workspace-selector-container {
+  padding: 12px;
+  border-bottom: 1px solid #2a2a3e;
+}
+
+.sidebar-container .sidebar {
+  width: 100%;
+  border-right: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar-container {
+    position: fixed;
+    left: -280px;
+    z-index: 1000;
+    transition: left 0.3s ease;
+  }
+
+  .sidebar-container.open {
+    left: 0;
+  }
 }
 
 .dashboard-main {
