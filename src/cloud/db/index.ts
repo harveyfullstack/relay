@@ -102,6 +102,21 @@ export interface Repository {
   updatedAt: Date;
 }
 
+export interface LinkedDaemon {
+  id: string;
+  userId: string;
+  name: string;
+  machineId: string;
+  apiKeyHash: string;
+  status: 'online' | 'offline';
+  lastSeenAt?: Date;
+  metadata: Record<string, unknown>;
+  pendingUpdates?: Array<{ type: string; payload: unknown }>;
+  messageQueue?: Array<Record<string, unknown>>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // User queries
 export const users = {
   async findById(id: string): Promise<User | null> {
@@ -517,6 +532,180 @@ export const repositories = {
   },
 };
 
+// LinkedDaemon queries
+export const linkedDaemons = {
+  async findById(id: string): Promise<LinkedDaemon | null> {
+    const { rows } = await getPool().query(
+      'SELECT * FROM linked_daemons WHERE id = $1',
+      [id]
+    );
+    return rows[0] ? mapLinkedDaemon(rows[0]) : null;
+  },
+
+  async findByUserId(userId: string): Promise<LinkedDaemon[]> {
+    const { rows } = await getPool().query(
+      'SELECT * FROM linked_daemons WHERE user_id = $1 ORDER BY last_seen_at DESC NULLS LAST',
+      [userId]
+    );
+    return rows.map(mapLinkedDaemon);
+  },
+
+  async findByMachineId(userId: string, machineId: string): Promise<LinkedDaemon | null> {
+    const { rows } = await getPool().query(
+      'SELECT * FROM linked_daemons WHERE user_id = $1 AND machine_id = $2',
+      [userId, machineId]
+    );
+    return rows[0] ? mapLinkedDaemon(rows[0]) : null;
+  },
+
+  async findByApiKeyHash(apiKeyHash: string): Promise<LinkedDaemon | null> {
+    const { rows } = await getPool().query(
+      'SELECT * FROM linked_daemons WHERE api_key_hash = $1',
+      [apiKeyHash]
+    );
+    return rows[0] ? mapLinkedDaemon(rows[0]) : null;
+  },
+
+  async create(data: {
+    userId: string;
+    name: string;
+    machineId: string;
+    apiKeyHash: string;
+    status?: 'online' | 'offline';
+    metadata?: Record<string, unknown>;
+  }): Promise<LinkedDaemon> {
+    const { rows } = await getPool().query(
+      `INSERT INTO linked_daemons (user_id, name, machine_id, api_key_hash, status, metadata, last_seen_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       RETURNING *`,
+      [
+        data.userId,
+        data.name,
+        data.machineId,
+        data.apiKeyHash,
+        data.status || 'online',
+        JSON.stringify(data.metadata || {}),
+      ]
+    );
+    return mapLinkedDaemon(rows[0]);
+  },
+
+  async update(
+    id: string,
+    data: Partial<{
+      name: string;
+      apiKeyHash: string;
+      status: 'online' | 'offline';
+      metadata: Record<string, unknown>;
+      lastSeenAt: Date;
+    }>
+  ): Promise<void> {
+    const updates: string[] = [];
+    const values: unknown[] = [id];
+    let paramCount = 1;
+
+    if (data.name !== undefined) {
+      updates.push(`name = $${++paramCount}`);
+      values.push(data.name);
+    }
+    if (data.apiKeyHash !== undefined) {
+      updates.push(`api_key_hash = $${++paramCount}`);
+      values.push(data.apiKeyHash);
+    }
+    if (data.status !== undefined) {
+      updates.push(`status = $${++paramCount}`);
+      values.push(data.status);
+    }
+    if (data.metadata !== undefined) {
+      updates.push(`metadata = $${++paramCount}`);
+      values.push(JSON.stringify(data.metadata));
+    }
+    if (data.lastSeenAt !== undefined) {
+      updates.push(`last_seen_at = $${++paramCount}`);
+      values.push(data.lastSeenAt);
+    }
+
+    if (updates.length > 0) {
+      updates.push('updated_at = NOW()');
+      await getPool().query(
+        `UPDATE linked_daemons SET ${updates.join(', ')} WHERE id = $1`,
+        values
+      );
+    }
+  },
+
+  async updateLastSeen(id: string): Promise<void> {
+    await getPool().query(
+      `UPDATE linked_daemons SET last_seen_at = NOW(), status = 'online', updated_at = NOW() WHERE id = $1`,
+      [id]
+    );
+  },
+
+  async delete(id: string): Promise<void> {
+    await getPool().query('DELETE FROM linked_daemons WHERE id = $1', [id]);
+  },
+
+  async getPendingUpdates(id: string): Promise<Array<{ type: string; payload: unknown }>> {
+    const { rows } = await getPool().query(
+      'SELECT pending_updates FROM linked_daemons WHERE id = $1',
+      [id]
+    );
+    const updates = rows[0]?.pending_updates || [];
+    // Clear after reading
+    if (updates.length > 0) {
+      await getPool().query(
+        `UPDATE linked_daemons SET pending_updates = '[]'::jsonb WHERE id = $1`,
+        [id]
+      );
+    }
+    return updates;
+  },
+
+  async queueUpdate(id: string, update: { type: string; payload: unknown }): Promise<void> {
+    await getPool().query(
+      `UPDATE linked_daemons SET
+         pending_updates = COALESCE(pending_updates, '[]'::jsonb) || $2::jsonb,
+         updated_at = NOW()
+       WHERE id = $1`,
+      [id, JSON.stringify([update])]
+    );
+  },
+
+  async queueMessage(id: string, message: Record<string, unknown>): Promise<void> {
+    await getPool().query(
+      `UPDATE linked_daemons SET
+         message_queue = COALESCE(message_queue, '[]'::jsonb) || $2::jsonb,
+         updated_at = NOW()
+       WHERE id = $1`,
+      [id, JSON.stringify([message])]
+    );
+  },
+
+  async getQueuedMessages(id: string): Promise<Array<Record<string, unknown>>> {
+    const { rows } = await getPool().query(
+      'SELECT message_queue FROM linked_daemons WHERE id = $1',
+      [id]
+    );
+    return rows[0]?.message_queue || [];
+  },
+
+  async clearMessageQueue(id: string): Promise<void> {
+    await getPool().query(
+      `UPDATE linked_daemons SET message_queue = '[]'::jsonb WHERE id = $1`,
+      [id]
+    );
+  },
+
+  // Mark offline daemons that haven't sent heartbeat in 2 minutes
+  async markStale(): Promise<number> {
+    const { rowCount } = await getPool().query(
+      `UPDATE linked_daemons SET status = 'offline'
+       WHERE status = 'online' AND last_seen_at < NOW() - INTERVAL '2 minutes'`
+    );
+    return rowCount ?? 0;
+  },
+};
+
 // Row mappers
 function mapUser(row: any): User {
   return {
@@ -599,6 +788,23 @@ function mapRepository(row: any): Repository {
   };
 }
 
+function mapLinkedDaemon(row: any): LinkedDaemon {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    machineId: row.machine_id,
+    apiKeyHash: row.api_key_hash,
+    status: row.status,
+    lastSeenAt: row.last_seen_at,
+    metadata: row.metadata || {},
+    pendingUpdates: row.pending_updates || [],
+    messageQueue: row.message_queue || [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 // Database initialization
 export async function initializeDatabase(): Promise<void> {
   const client = await getPool().connect();
@@ -673,6 +879,22 @@ export async function initializeDatabase(): Promise<void> {
         UNIQUE(workspace_id, user_id)
       );
 
+      CREATE TABLE IF NOT EXISTS linked_daemons (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        machine_id VARCHAR(255) NOT NULL,
+        api_key_hash VARCHAR(255) NOT NULL,
+        status VARCHAR(50) NOT NULL DEFAULT 'offline',
+        last_seen_at TIMESTAMP,
+        metadata JSONB NOT NULL DEFAULT '{}',
+        pending_updates JSONB NOT NULL DEFAULT '[]',
+        message_queue JSONB NOT NULL DEFAULT '[]',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(user_id, machine_id)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_credentials_user_id ON credentials(user_id);
       CREATE INDEX IF NOT EXISTS idx_workspaces_user_id ON workspaces(user_id);
       CREATE INDEX IF NOT EXISTS idx_workspaces_custom_domain ON workspaces(custom_domain) WHERE custom_domain IS NOT NULL;
@@ -680,6 +902,9 @@ export async function initializeDatabase(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_repositories_workspace_id ON repositories(workspace_id);
       CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_id ON workspace_members(workspace_id);
       CREATE INDEX IF NOT EXISTS idx_workspace_members_user_id ON workspace_members(user_id);
+      CREATE INDEX IF NOT EXISTS idx_linked_daemons_user_id ON linked_daemons(user_id);
+      CREATE INDEX IF NOT EXISTS idx_linked_daemons_api_key_hash ON linked_daemons(api_key_hash);
+      CREATE INDEX IF NOT EXISTS idx_linked_daemons_status ON linked_daemons(status);
     `);
   } finally {
     client.release();
@@ -693,6 +918,7 @@ export const db = {
   workspaces,
   workspaceMembers,
   repositories,
+  linkedDaemons,
   initialize: initializeDatabase,
   getPool,
 };
