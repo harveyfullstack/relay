@@ -42,6 +42,8 @@ export interface CloudConfig {
     fly?: {
       apiToken: string;
       org: string;
+      region?: string;
+      workspaceDomain?: string; // e.g., ws.agent-relay.com
     };
     railway?: {
       apiToken: string;
@@ -118,6 +120,8 @@ export function loadConfig(): CloudConfig {
         ? {
             apiToken: optionalEnv('FLY_API_TOKEN')!,
             org: optionalEnv('FLY_ORG') || 'personal',
+            region: optionalEnv('FLY_REGION') || 'sjc',
+            workspaceDomain: optionalEnv('FLY_WORKSPACE_DOMAIN'),
           }
         : undefined,
       railway: optionalEnv('RAILWAY_API_TOKEN')

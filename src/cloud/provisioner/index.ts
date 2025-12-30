@@ -46,6 +46,8 @@ interface ComputeProvisioner {
 class FlyProvisioner implements ComputeProvisioner {
   private apiToken: string;
   private org: string;
+  private region: string;
+  private workspaceDomain?: string;
 
   constructor() {
     const config = getConfig();
@@ -54,6 +56,8 @@ class FlyProvisioner implements ComputeProvisioner {
     }
     this.apiToken = config.compute.fly.apiToken;
     this.org = config.compute.fly.org;
+    this.region = config.compute.fly.region || 'sjc';
+    this.workspaceDomain = config.compute.fly.workspaceDomain;
   }
 
   async provision(
@@ -95,7 +99,16 @@ class FlyProvisioner implements ComputeProvisioner {
       body: JSON.stringify(secrets),
     });
 
-    // Create machine
+    // If custom workspace domain is configured, add certificate
+    const customHostname = this.workspaceDomain
+      ? `${appName}.${this.workspaceDomain}`
+      : null;
+
+    if (customHostname) {
+      await this.allocateCertificate(appName, customHostname);
+    }
+
+    // Create machine with auto-stop/start for cost optimization
     const machineResponse = await fetch(
       `https://api.machines.dev/v1/apps/${appName}/machines`,
       {
@@ -105,8 +118,9 @@ class FlyProvisioner implements ComputeProvisioner {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          region: this.region,
           config: {
-            image: 'ghcr.io/agent-relay/workspace:latest',
+            image: 'ghcr.io/khaliqgant/agent-relay-workspace:latest',
             env: {
               WORKSPACE_ID: workspace.id,
               SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled),
@@ -122,6 +136,10 @@ class FlyProvisioner implements ComputeProvisioner {
                 ],
                 protocol: 'tcp',
                 internal_port: 3000,
+                // Auto-stop after 5 minutes of inactivity
+                auto_stop_machines: true,
+                auto_start_machines: true,
+                min_machines_running: 0,
               },
             ],
             guest: {
@@ -139,12 +157,45 @@ class FlyProvisioner implements ComputeProvisioner {
       throw new Error(`Failed to create Fly machine: ${error}`);
     }
 
-    const machine = await machineResponse.json() as { id: string };
+    const machine = (await machineResponse.json()) as { id: string };
+
+    // Return custom domain URL if configured, otherwise default fly.dev
+    const publicUrl = customHostname
+      ? `https://${customHostname}`
+      : `https://${appName}.fly.dev`;
 
     return {
       computeId: machine.id,
-      publicUrl: `https://${appName}.fly.dev`,
+      publicUrl,
     };
+  }
+
+  /**
+   * Allocate SSL certificate for custom domain
+   */
+  private async allocateCertificate(
+    appName: string,
+    hostname: string
+  ): Promise<void> {
+    const response = await fetch(
+      `https://api.machines.dev/v1/apps/${appName}/certificates`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ hostname }),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      // Don't fail if cert already exists
+      if (!error.includes('already exists')) {
+        throw new Error(`Failed to allocate certificate for ${hostname}: ${error}`);
+      }
+    }
   }
 
   async deprovision(workspace: Workspace): Promise<void> {
@@ -271,7 +322,7 @@ class RailwayProvisioner implements ComputeProvisioner {
             projectId,
             name: 'workspace',
             source: {
-              image: 'ghcr.io/agent-relay/workspace:latest',
+              image: 'ghcr.io/khaliqgant/agent-relay-workspace:latest',
             },
           },
         },
@@ -477,7 +528,7 @@ class DockerProvisioner implements ComputeProvisioner {
 
     try {
       execSync(
-        `docker run -d --name ${containerName} -p ${port}:3000 ${envArgs.join(' ')} ghcr.io/agent-relay/workspace:latest`,
+        `docker run -d --name ${containerName} -p ${port}:3000 ${envArgs.join(' ')} ghcr.io/khaliqgant/agent-relay-workspace:latest`,
         { stdio: 'pipe' }
       );
 
