@@ -10,6 +10,33 @@ Local mode is perfect for:
 - Offline/air-gapped environments
 - Learning Agent Relay before going to cloud
 
+## Quick Start (One Command)
+
+```bash
+git clone https://github.com/khaliqgant/agent-relay.git
+cd agent-relay
+npm install
+npm run dev:start
+```
+
+This builds everything and starts:
+- Daemon (message routing)
+- Dashboard (Next.js dev server with hot reload)
+
+**URLs:**
+| Page | URL |
+|------|-----|
+| Landing Page | http://localhost:4281 |
+| Pricing | http://localhost:4281/pricing |
+| Dashboard | http://localhost:4281/app |
+
+**Commands:**
+```bash
+npm run dev:start    # Start everything
+npm run dev:stop     # Stop everything
+npm run dev:attach   # Attach to tmux session
+```
+
 ## Installation
 
 ### Requirements
@@ -24,9 +51,6 @@ Local mode is perfect for:
 # Install build tools and tmux
 sudo apt-get update
 sudo apt-get install -y build-essential tmux
-
-# Install agent-relay
-npm install -g agent-relay
 ```
 
 ### Install on macOS
@@ -37,9 +61,6 @@ brew install tmux
 
 # Install build tools (if needed)
 xcode-select --install
-
-# Install agent-relay
-npm install -g agent-relay
 ```
 
 ### Install on Windows (WSL)
@@ -50,11 +71,59 @@ Agent Relay requires WSL on Windows:
 # In WSL terminal
 sudo apt-get update
 sudo apt-get install -y build-essential tmux
-
-npm install -g agent-relay
 ```
 
-## Quick Start
+## Using the Published Package
+
+If you just want to use Agent Relay (not develop it):
+
+```bash
+npm install -g agent-relay
+agent-relay up
+```
+
+Dashboard at `http://localhost:3888`.
+
+## Development Workflow
+
+### Start Development Environment
+
+```bash
+npm run dev:start
+```
+
+This opens a tmux session with three windows:
+1. **daemon** - Message routing daemon
+2. **dashboard** - Next.js dev server (hot reload)
+3. **agents** - Ready to spawn agents
+
+### Attach to Session
+
+```bash
+npm run dev:attach
+# or
+tmux attach -t agent-relay-dev
+```
+
+Navigate windows with `Ctrl+B` then `n` (next) or `p` (previous).
+
+### Run an Agent
+
+In the agents window (or any terminal):
+
+```bash
+node dist/cli/index.js -n Alice claude
+```
+
+### Stop Everything
+
+```bash
+npm run dev:stop
+```
+
+## Quick Start (Manual)
+
+If you prefer not to use tmux:
 
 ```bash
 # Terminal 1: Start the daemon
@@ -67,7 +136,7 @@ agent-relay -n Alice claude
 agent-relay -n Bob codex
 ```
 
-Your dashboard is now at `http://localhost:3888`.
+Dashboard at `http://localhost:3888`.
 
 ## How It Works
 
