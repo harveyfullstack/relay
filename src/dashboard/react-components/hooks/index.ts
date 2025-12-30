@@ -12,3 +12,4 @@ export {
   type OrchestratorAgent,
   type OrchestratorEvent,
 } from './useOrchestrator';
+export { useAgentLogs, type UseAgentLogsOptions, type UseAgentLogsReturn, type LogLine } from './useAgentLogs';
