@@ -8,6 +8,7 @@ import { Router, Request, Response } from 'express';
 import { requireAuth } from './auth.js';
 import { db, Workspace } from '../db/index.js';
 import { getProvisioner } from '../provisioner/index.js';
+import { checkWorkspaceLimit } from './middleware/planLimits.js';
 
 export const workspacesRouter = Router();
 
@@ -45,7 +46,7 @@ workspacesRouter.get('/', async (req: Request, res: Response) => {
  * POST /api/workspaces
  * Create (provision) a new workspace
  */
-workspacesRouter.post('/', async (req: Request, res: Response) => {
+workspacesRouter.post('/', checkWorkspaceLimit, async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   const { name, providers, repositories, supervisorEnabled, maxAgents } = req.body;
 
@@ -533,7 +534,7 @@ async function removeDomainFromCompute(workspace: Workspace): Promise<void> {
  * POST /api/workspaces/quick
  * Quick provision: one-click with defaults
  */
-workspacesRouter.post('/quick', async (req: Request, res: Response) => {
+workspacesRouter.post('/quick', checkWorkspaceLimit, async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   const { name, repositoryFullName } = req.body;
 
