@@ -204,7 +204,56 @@ authRouter.get('/me', async (req: Request, res: Response) => {
  */
 export function requireAuth(req: Request, res: Response, next: () => void) {
   if (!req.session.userId) {
-    return res.status(401).json({ error: 'Authentication required' });
+    return res.status(401).json({
+      error: 'Authentication required',
+      code: 'SESSION_EXPIRED',
+      message: 'Your session has expired. Please log in again.',
+    });
   }
   next();
 }
+
+/**
+ * GET /api/auth/session
+ * Check if current session is valid
+ */
+authRouter.get('/session', async (req: Request, res: Response) => {
+  if (!req.session.userId) {
+    return res.json({
+      authenticated: false,
+      code: 'SESSION_EXPIRED',
+      message: 'Your session has expired. Please log in again.',
+    });
+  }
+
+  try {
+    // Verify user still exists
+    const user = await db.users.findById(req.session.userId);
+    if (!user) {
+      req.session.destroy(() => {});
+      return res.json({
+        authenticated: false,
+        code: 'USER_NOT_FOUND',
+        message: 'User account not found. Please log in again.',
+      });
+    }
+
+    res.json({
+      authenticated: true,
+      user: {
+        id: user.id,
+        githubUsername: user.githubUsername,
+        email: user.email,
+        avatarUrl: user.avatarUrl,
+        plan: user.plan,
+      },
+    });
+  } catch (error) {
+    console.error('Session check error:', error);
+    res.status(500).json({
+      authenticated: false,
+      code: 'SESSION_ERROR',
+      message: 'An error occurred while checking your session.',
+    });
+  }
+});

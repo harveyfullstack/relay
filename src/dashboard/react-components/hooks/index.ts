@@ -13,3 +13,10 @@ export {
   type OrchestratorEvent,
 } from './useOrchestrator';
 export { useAgentLogs, type UseAgentLogsOptions, type UseAgentLogsReturn, type LogLine } from './useAgentLogs';
+export {
+  useSession,
+  type UseSessionOptions,
+  type UseSessionReturn,
+  type SessionError,
+  type CloudUser,
+} from './useSession';

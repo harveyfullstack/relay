@@ -119,10 +119,10 @@ export class CredentialVault {
       refreshToken: credential.refreshToken
         ? this.decrypt(credential.refreshToken)
         : undefined,
-      tokenExpiresAt: credential.tokenExpiresAt,
-      scopes: credential.scopes,
-      providerAccountId: credential.providerAccountId,
-      providerAccountEmail: credential.providerAccountEmail,
+      tokenExpiresAt: credential.tokenExpiresAt ?? undefined,
+      scopes: credential.scopes ?? undefined,
+      providerAccountId: credential.providerAccountId ?? undefined,
+      providerAccountEmail: credential.providerAccountEmail ?? undefined,
     };
   }
 
@@ -139,10 +139,10 @@ export class CredentialVault {
         refreshToken: cred.refreshToken
           ? this.decrypt(cred.refreshToken)
           : undefined,
-        tokenExpiresAt: cred.tokenExpiresAt,
-        scopes: cred.scopes,
-        providerAccountId: cred.providerAccountId,
-        providerAccountEmail: cred.providerAccountEmail,
+        tokenExpiresAt: cred.tokenExpiresAt ?? undefined,
+        scopes: cred.scopes ?? undefined,
+        providerAccountId: cred.providerAccountId ?? undefined,
+        providerAccountEmail: cred.providerAccountEmail ?? undefined,
       });
     }
 

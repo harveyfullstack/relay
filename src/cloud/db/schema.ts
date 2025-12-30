@@ -39,6 +39,7 @@ export const users = pgTable('users', {
 export const usersRelations = relations(users, ({ many }) => ({
   credentials: many(credentials),
   workspaces: many(workspaces),
+  projectGroups: many(projectGroups),
   repositories: many(repositories),
   linkedDaemons: many(linkedDaemons),
 }));
@@ -75,6 +76,14 @@ export const credentialsRelations = relations(credentials, ({ one }) => ({
 // Workspaces
 // ============================================================================
 
+// Workspace configuration type
+export interface WorkspaceConfig {
+  providers?: string[];
+  repositories?: string[];
+  supervisorEnabled?: boolean;
+  maxAgents?: number;
+}
+
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -85,7 +94,7 @@ export const workspaces = pgTable('workspaces', {
   publicUrl: varchar('public_url', { length: 255 }),
   customDomain: varchar('custom_domain', { length: 255 }),
   customDomainStatus: varchar('custom_domain_status', { length: 50 }),
-  config: jsonb('config').notNull().default({}),
+  config: jsonb('config').$type<WorkspaceConfig>().notNull().default({}),
   errorMessage: text('error_message'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -137,6 +146,42 @@ export const workspaceMembersRelations = relations(workspaceMembers, ({ one }) =
 }));
 
 // ============================================================================
+// Project Groups (grouping of related repositories)
+// ============================================================================
+
+export const projectGroups = pgTable('project_groups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  color: varchar('color', { length: 7 }), // Hex color for UI (e.g., "#3B82F6")
+  icon: varchar('icon', { length: 50 }), // Icon name for UI
+  // Coordinator agent configuration - this agent oversees all repos in the group
+  coordinatorAgent: jsonb('coordinator_agent').$type<{
+    enabled: boolean;
+    name?: string; // Agent name (e.g., "PRPM Lead")
+    model?: string; // AI model to use
+    systemPrompt?: string; // Custom instructions for coordinator
+    capabilities?: string[]; // What the coordinator can do
+  }>().default({ enabled: false }),
+  // Display order for user's groups
+  sortOrder: bigint('sort_order', { mode: 'number' }).notNull().default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index('idx_project_groups_user_id').on(table.userId),
+  userNameIdx: unique('project_groups_user_name_unique').on(table.userId, table.name),
+}));
+
+export const projectGroupsRelations = relations(projectGroups, ({ one, many }) => ({
+  user: one(users, {
+    fields: [projectGroups.userId],
+    references: [users.id],
+  }),
+  repositories: many(repositories),
+}));
+
+// ============================================================================
 // Repositories
 // ============================================================================
 
@@ -144,18 +189,27 @@ export const repositories = pgTable('repositories', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+  projectGroupId: uuid('project_group_id').references(() => projectGroups.id, { onDelete: 'set null' }),
   githubFullName: varchar('github_full_name', { length: 255 }).notNull(),
   githubId: bigint('github_id', { mode: 'number' }).notNull(),
   defaultBranch: varchar('default_branch', { length: 255 }).notNull().default('main'),
   isPrivate: boolean('is_private').notNull().default(false),
   syncStatus: varchar('sync_status', { length: 50 }).notNull().default('pending'),
   lastSyncedAt: timestamp('last_synced_at'),
+  // Project-level agent configuration (optional)
+  projectAgent: jsonb('project_agent').$type<{
+    enabled: boolean;
+    name?: string; // Agent name (e.g., "beads-agent")
+    model?: string;
+    systemPrompt?: string;
+  }>().default({ enabled: false }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => ({
   userGithubIdx: unique('repositories_user_github_unique').on(table.userId, table.githubFullName),
   userIdIdx: index('idx_repositories_user_id').on(table.userId),
   workspaceIdIdx: index('idx_repositories_workspace_id').on(table.workspaceId),
+  projectGroupIdIdx: index('idx_repositories_project_group_id').on(table.projectGroupId),
 }));
 
 export const repositoriesRelations = relations(repositories, ({ one }) => ({
@@ -166,6 +220,10 @@ export const repositoriesRelations = relations(repositories, ({ one }) => ({
   workspace: one(workspaces, {
     fields: [repositories.workspaceId],
     references: [workspaces.id],
+  }),
+  projectGroup: one(projectGroups, {
+    fields: [repositories.projectGroupId],
+    references: [projectGroups.id],
   }),
 }));
 
@@ -245,6 +303,8 @@ export type Workspace = typeof workspaces.$inferSelect;
 export type NewWorkspace = typeof workspaces.$inferInsert;
 export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type NewWorkspaceMember = typeof workspaceMembers.$inferInsert;
+export type ProjectGroup = typeof projectGroups.$inferSelect;
+export type NewProjectGroup = typeof projectGroups.$inferInsert;
 export type Repository = typeof repositories.$inferSelect;
 export type NewRepository = typeof repositories.$inferInsert;
 export type LinkedDaemon = typeof linkedDaemons.$inferSelect;
@@ -253,3 +313,7 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export type NewSubscription = typeof subscriptions.$inferInsert;
 export type UsageRecord = typeof usageRecords.$inferSelect;
 export type NewUsageRecord = typeof usageRecords.$inferInsert;
+
+// Agent configuration types
+export type CoordinatorAgentConfig = NonNullable<ProjectGroup['coordinatorAgent']>;
+export type ProjectAgentConfig = NonNullable<Repository['projectAgent']>;

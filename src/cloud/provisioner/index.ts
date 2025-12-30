@@ -123,10 +123,10 @@ class FlyProvisioner implements ComputeProvisioner {
             image: 'ghcr.io/khaliqgant/agent-relay-workspace:latest',
             env: {
               WORKSPACE_ID: workspace.id,
-              SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled),
-              MAX_AGENTS: String(workspace.config.maxAgents),
-              REPOSITORIES: workspace.config.repositories.join(','),
-              PROVIDERS: workspace.config.providers.join(','),
+              SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled ?? false),
+              MAX_AGENTS: String(workspace.config.maxAgents ?? 10),
+              REPOSITORIES: (workspace.config.repositories ?? []).join(','),
+              PROVIDERS: (workspace.config.providers ?? []).join(','),
             },
             services: [
               {
@@ -335,10 +335,10 @@ class RailwayProvisioner implements ComputeProvisioner {
     // Set environment variables
     const envVars: Record<string, string> = {
       WORKSPACE_ID: workspace.id,
-      SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled),
-      MAX_AGENTS: String(workspace.config.maxAgents),
-      REPOSITORIES: workspace.config.repositories.join(','),
-      PROVIDERS: workspace.config.providers.join(','),
+      SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled ?? false),
+      MAX_AGENTS: String(workspace.config.maxAgents ?? 10),
+      REPOSITORIES: (workspace.config.repositories ?? []).join(','),
+      PROVIDERS: (workspace.config.providers ?? []).join(','),
     };
 
     for (const [provider, token] of credentials) {
@@ -512,10 +512,10 @@ class DockerProvisioner implements ComputeProvisioner {
     // Build environment variables
     const envArgs: string[] = [
       `-e WORKSPACE_ID=${workspace.id}`,
-      `-e SUPERVISOR_ENABLED=${workspace.config.supervisorEnabled}`,
-      `-e MAX_AGENTS=${workspace.config.maxAgents}`,
-      `-e REPOSITORIES=${workspace.config.repositories.join(',')}`,
-      `-e PROVIDERS=${workspace.config.providers.join(',')}`,
+      `-e SUPERVISOR_ENABLED=${workspace.config.supervisorEnabled ?? false}`,
+      `-e MAX_AGENTS=${workspace.config.maxAgents ?? 10}`,
+      `-e REPOSITORIES=${(workspace.config.repositories ?? []).join(',')}`,
+      `-e PROVIDERS=${(workspace.config.providers ?? []).join(',')}`,
     ];
 
     for (const [provider, token] of credentials) {

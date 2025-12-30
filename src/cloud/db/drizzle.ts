@@ -19,8 +19,13 @@ export type {
   NewCredential,
   Workspace,
   NewWorkspace,
+  WorkspaceConfig,
   WorkspaceMember,
   NewWorkspaceMember,
+  ProjectGroup,
+  NewProjectGroup,
+  CoordinatorAgentConfig,
+  ProjectAgentConfig,
   Repository,
   NewRepository,
   LinkedDaemon,
@@ -57,26 +62,41 @@ export function getDb() {
 // User Queries
 // ============================================================================
 
-export const userQueries = {
-  async findById(id: string) {
+export interface UserQueries {
+  findById(id: string): Promise<schema.User | null>;
+  findByGithubId(githubId: string): Promise<schema.User | null>;
+  findByGithubUsername(username: string): Promise<schema.User | null>;
+  findByEmail(email: string): Promise<schema.User | null>;
+  upsert(data: schema.NewUser): Promise<schema.User>;
+  completeOnboarding(userId: string): Promise<void>;
+}
+
+export const userQueries: UserQueries = {
+  async findById(id: string): Promise<schema.User | null> {
     const db = getDb();
     const result = await db.select().from(schema.users).where(eq(schema.users.id, id));
     return result[0] ?? null;
   },
 
-  async findByGithubId(githubId: string) {
+  async findByGithubId(githubId: string): Promise<schema.User | null> {
     const db = getDb();
     const result = await db.select().from(schema.users).where(eq(schema.users.githubId, githubId));
     return result[0] ?? null;
   },
 
-  async findByEmail(email: string) {
+  async findByGithubUsername(username: string): Promise<schema.User | null> {
+    const db = getDb();
+    const result = await db.select().from(schema.users).where(eq(schema.users.githubUsername, username));
+    return result[0] ?? null;
+  },
+
+  async findByEmail(email: string): Promise<schema.User | null> {
     const db = getDb();
     const result = await db.select().from(schema.users).where(eq(schema.users.email, email));
     return result[0] ?? null;
   },
 
-  async upsert(data: schema.NewUser) {
+  async upsert(data: schema.NewUser): Promise<schema.User> {
     const db = getDb();
     const result = await db
       .insert(schema.users)
@@ -94,7 +114,7 @@ export const userQueries = {
     return result[0];
   },
 
-  async completeOnboarding(userId: string) {
+  async completeOnboarding(userId: string): Promise<void> {
     const db = getDb();
     await db
       .update(schema.users)
@@ -107,13 +127,21 @@ export const userQueries = {
 // Credential Queries
 // ============================================================================
 
-export const credentialQueries = {
-  async findByUserId(userId: string) {
+export interface CredentialQueries {
+  findByUserId(userId: string): Promise<schema.Credential[]>;
+  findByUserAndProvider(userId: string, provider: string): Promise<schema.Credential | null>;
+  upsert(data: schema.NewCredential): Promise<schema.Credential>;
+  updateTokens(userId: string, provider: string, accessToken: string, refreshToken?: string, expiresAt?: Date): Promise<void>;
+  delete(userId: string, provider: string): Promise<void>;
+}
+
+export const credentialQueries: CredentialQueries = {
+  async findByUserId(userId: string): Promise<schema.Credential[]> {
     const db = getDb();
     return db.select().from(schema.credentials).where(eq(schema.credentials.userId, userId));
   },
 
-  async findByUserAndProvider(userId: string, provider: string) {
+  async findByUserAndProvider(userId: string, provider: string): Promise<schema.Credential | null> {
     const db = getDb();
     const result = await db
       .select()
@@ -122,7 +150,7 @@ export const credentialQueries = {
     return result[0] ?? null;
   },
 
-  async upsert(data: schema.NewCredential) {
+  async upsert(data: schema.NewCredential): Promise<schema.Credential> {
     const db = getDb();
     const result = await db
       .insert(schema.credentials)
@@ -143,7 +171,31 @@ export const credentialQueries = {
     return result[0];
   },
 
-  async delete(userId: string, provider: string) {
+  async updateTokens(
+    userId: string,
+    provider: string,
+    accessToken: string,
+    refreshToken?: string,
+    expiresAt?: Date
+  ): Promise<void> {
+    const db = getDb();
+    const updates: Record<string, unknown> = {
+      accessToken,
+      updatedAt: new Date(),
+    };
+    if (refreshToken !== undefined) {
+      updates.refreshToken = refreshToken;
+    }
+    if (expiresAt !== undefined) {
+      updates.tokenExpiresAt = expiresAt;
+    }
+    await db
+      .update(schema.credentials)
+      .set(updates)
+      .where(and(eq(schema.credentials.userId, userId), eq(schema.credentials.provider, provider)));
+  },
+
+  async delete(userId: string, provider: string): Promise<void> {
     const db = getDb();
     await db
       .delete(schema.credentials)
@@ -155,14 +207,30 @@ export const credentialQueries = {
 // Workspace Queries
 // ============================================================================
 
-export const workspaceQueries = {
-  async findById(id: string) {
+export interface WorkspaceQueries {
+  findById(id: string): Promise<schema.Workspace | null>;
+  findByUserId(userId: string): Promise<schema.Workspace[]>;
+  findByCustomDomain(domain: string): Promise<schema.Workspace | null>;
+  create(data: schema.NewWorkspace): Promise<schema.Workspace>;
+  updateStatus(
+    id: string,
+    status: string,
+    options?: { computeId?: string; publicUrl?: string; errorMessage?: string }
+  ): Promise<void>;
+  setCustomDomain(id: string, customDomain: string, status?: string): Promise<void>;
+  updateCustomDomainStatus(id: string, status: string): Promise<void>;
+  removeCustomDomain(id: string): Promise<void>;
+  delete(id: string): Promise<void>;
+}
+
+export const workspaceQueries: WorkspaceQueries = {
+  async findById(id: string): Promise<schema.Workspace | null> {
     const db = getDb();
     const result = await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, id));
     return result[0] ?? null;
   },
 
-  async findByUserId(userId: string) {
+  async findByUserId(userId: string): Promise<schema.Workspace[]> {
     const db = getDb();
     return db
       .select()
@@ -171,7 +239,7 @@ export const workspaceQueries = {
       .orderBy(desc(schema.workspaces.createdAt));
   },
 
-  async findByCustomDomain(domain: string) {
+  async findByCustomDomain(domain: string): Promise<schema.Workspace | null> {
     const db = getDb();
     const result = await db
       .select()
@@ -180,7 +248,7 @@ export const workspaceQueries = {
     return result[0] ?? null;
   },
 
-  async create(data: schema.NewWorkspace) {
+  async create(data: schema.NewWorkspace): Promise<schema.Workspace> {
     const db = getDb();
     const result = await db.insert(schema.workspaces).values(data).returning();
     return result[0];
@@ -190,7 +258,7 @@ export const workspaceQueries = {
     id: string,
     status: string,
     options?: { computeId?: string; publicUrl?: string; errorMessage?: string }
-  ) {
+  ): Promise<void> {
     const db = getDb();
     await db
       .update(schema.workspaces)
@@ -204,9 +272,169 @@ export const workspaceQueries = {
       .where(eq(schema.workspaces.id, id));
   },
 
-  async delete(id: string) {
+  async setCustomDomain(id: string, customDomain: string, status = 'pending'): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.workspaces)
+      .set({ customDomain, customDomainStatus: status, updatedAt: new Date() })
+      .where(eq(schema.workspaces.id, id));
+  },
+
+  async updateCustomDomainStatus(id: string, status: string): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.workspaces)
+      .set({ customDomainStatus: status, updatedAt: new Date() })
+      .where(eq(schema.workspaces.id, id));
+  },
+
+  async removeCustomDomain(id: string): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.workspaces)
+      .set({ customDomain: null, customDomainStatus: null, updatedAt: new Date() })
+      .where(eq(schema.workspaces.id, id));
+  },
+
+  async delete(id: string): Promise<void> {
     const db = getDb();
     await db.delete(schema.workspaces).where(eq(schema.workspaces.id, id));
+  },
+};
+
+// ============================================================================
+// Workspace Member Queries
+// ============================================================================
+
+export interface WorkspaceMemberQueries {
+  findByWorkspaceId(workspaceId: string): Promise<schema.WorkspaceMember[]>;
+  findByUserId(userId: string): Promise<schema.WorkspaceMember[]>;
+  findMembership(workspaceId: string, userId: string): Promise<schema.WorkspaceMember | null>;
+  addMember(data: { workspaceId: string; userId: string; role: string; invitedBy: string }): Promise<schema.WorkspaceMember>;
+  acceptInvite(workspaceId: string, userId: string): Promise<void>;
+  updateRole(workspaceId: string, userId: string, role: string): Promise<void>;
+  removeMember(workspaceId: string, userId: string): Promise<void>;
+  getPendingInvites(userId: string): Promise<schema.WorkspaceMember[]>;
+  isOwner(workspaceId: string, userId: string): Promise<boolean>;
+  canEdit(workspaceId: string, userId: string): Promise<boolean>;
+  canView(workspaceId: string, userId: string): Promise<boolean>;
+}
+
+export const workspaceMemberQueries: WorkspaceMemberQueries = {
+  async findByWorkspaceId(workspaceId: string): Promise<schema.WorkspaceMember[]> {
+    const db = getDb();
+    return db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(eq(schema.workspaceMembers.workspaceId, workspaceId));
+  },
+
+  async findByUserId(userId: string): Promise<schema.WorkspaceMember[]> {
+    const db = getDb();
+    return db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(and(eq(schema.workspaceMembers.userId, userId), isNotNull(schema.workspaceMembers.acceptedAt)));
+  },
+
+  async findMembership(workspaceId: string, userId: string): Promise<schema.WorkspaceMember | null> {
+    const db = getDb();
+    const result = await db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, userId)));
+    return result[0] ?? null;
+  },
+
+  async addMember(data: { workspaceId: string; userId: string; role: string; invitedBy: string }): Promise<schema.WorkspaceMember> {
+    const db = getDb();
+    const result = await db
+      .insert(schema.workspaceMembers)
+      .values({
+        workspaceId: data.workspaceId,
+        userId: data.userId,
+        role: data.role,
+        invitedBy: data.invitedBy,
+      })
+      .returning();
+    return result[0];
+  },
+
+  async acceptInvite(workspaceId: string, userId: string): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.workspaceMembers)
+      .set({ acceptedAt: new Date() })
+      .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, userId)));
+  },
+
+  async updateRole(workspaceId: string, userId: string, role: string): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.workspaceMembers)
+      .set({ role })
+      .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, userId)));
+  },
+
+  async removeMember(workspaceId: string, userId: string): Promise<void> {
+    const db = getDb();
+    await db
+      .delete(schema.workspaceMembers)
+      .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, userId)));
+  },
+
+  async getPendingInvites(userId: string): Promise<schema.WorkspaceMember[]> {
+    const db = getDb();
+    return db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(and(eq(schema.workspaceMembers.userId, userId), isNull(schema.workspaceMembers.acceptedAt)));
+  },
+
+  async isOwner(workspaceId: string, userId: string): Promise<boolean> {
+    const db = getDb();
+    const result = await db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(
+        and(
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+          eq(schema.workspaceMembers.userId, userId),
+          eq(schema.workspaceMembers.role, 'owner')
+        )
+      );
+    return result.length > 0;
+  },
+
+  async canEdit(workspaceId: string, userId: string): Promise<boolean> {
+    const db = getDb();
+    const result = await db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(
+        and(
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+          eq(schema.workspaceMembers.userId, userId),
+          isNotNull(schema.workspaceMembers.acceptedAt)
+        )
+      );
+    const member = result[0];
+    return !!member && ['owner', 'admin', 'member'].includes(member.role);
+  },
+
+  async canView(workspaceId: string, userId: string): Promise<boolean> {
+    const db = getDb();
+    const result = await db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(
+        and(
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+          eq(schema.workspaceMembers.userId, userId),
+          isNotNull(schema.workspaceMembers.acceptedAt)
+        )
+      );
+    return result.length > 0;
   },
 };
 
@@ -214,14 +442,44 @@ export const workspaceQueries = {
 // Linked Daemon Queries
 // ============================================================================
 
-export const linkedDaemonQueries = {
-  async findById(id: string) {
+export interface DaemonAgentInfo {
+  daemonId: string;
+  daemonName: string;
+  machineId: string;
+  agents: Array<{ name: string; status: string }>;
+}
+
+export interface DaemonUpdate {
+  type: string;
+  payload: unknown;
+}
+
+export interface LinkedDaemonQueries {
+  findById(id: string): Promise<schema.LinkedDaemon | null>;
+  findByUserId(userId: string): Promise<schema.LinkedDaemon[]>;
+  findByMachineId(userId: string, machineId: string): Promise<schema.LinkedDaemon | null>;
+  findByApiKeyHash(apiKeyHash: string): Promise<schema.LinkedDaemon | null>;
+  create(data: schema.NewLinkedDaemon): Promise<schema.LinkedDaemon>;
+  update(id: string, data: Partial<schema.LinkedDaemon>): Promise<void>;
+  updateLastSeen(id: string): Promise<void>;
+  delete(id: string): Promise<void>;
+  markStale(): Promise<number>;
+  getAllAgentsForUser(userId: string): Promise<DaemonAgentInfo[]>;
+  getPendingUpdates(id: string): Promise<DaemonUpdate[]>;
+  queueUpdate(id: string, update: DaemonUpdate): Promise<void>;
+  queueMessage(id: string, message: Record<string, unknown>): Promise<void>;
+  getQueuedMessages(id: string): Promise<Array<Record<string, unknown>>>;
+  clearMessageQueue(id: string): Promise<void>;
+}
+
+export const linkedDaemonQueries: LinkedDaemonQueries = {
+  async findById(id: string): Promise<schema.LinkedDaemon | null> {
     const db = getDb();
     const result = await db.select().from(schema.linkedDaemons).where(eq(schema.linkedDaemons.id, id));
     return result[0] ?? null;
   },
 
-  async findByUserId(userId: string) {
+  async findByUserId(userId: string): Promise<schema.LinkedDaemon[]> {
     const db = getDb();
     return db
       .select()
@@ -230,7 +488,7 @@ export const linkedDaemonQueries = {
       .orderBy(desc(schema.linkedDaemons.lastSeenAt));
   },
 
-  async findByMachineId(userId: string, machineId: string) {
+  async findByMachineId(userId: string, machineId: string): Promise<schema.LinkedDaemon | null> {
     const db = getDb();
     const result = await db
       .select()
@@ -241,7 +499,7 @@ export const linkedDaemonQueries = {
     return result[0] ?? null;
   },
 
-  async findByApiKeyHash(apiKeyHash: string) {
+  async findByApiKeyHash(apiKeyHash: string): Promise<schema.LinkedDaemon | null> {
     const db = getDb();
     const result = await db
       .select()
@@ -250,7 +508,7 @@ export const linkedDaemonQueries = {
     return result[0] ?? null;
   },
 
-  async create(data: schema.NewLinkedDaemon) {
+  async create(data: schema.NewLinkedDaemon): Promise<schema.LinkedDaemon> {
     const db = getDb();
     const result = await db
       .insert(schema.linkedDaemons)
@@ -259,7 +517,7 @@ export const linkedDaemonQueries = {
     return result[0];
   },
 
-  async update(id: string, data: Partial<schema.LinkedDaemon>) {
+  async update(id: string, data: Partial<schema.LinkedDaemon>): Promise<void> {
     const db = getDb();
     await db
       .update(schema.linkedDaemons)
@@ -267,7 +525,7 @@ export const linkedDaemonQueries = {
       .where(eq(schema.linkedDaemons.id, id));
   },
 
-  async updateLastSeen(id: string) {
+  async updateLastSeen(id: string): Promise<void> {
     const db = getDb();
     await db
       .update(schema.linkedDaemons)
@@ -275,12 +533,12 @@ export const linkedDaemonQueries = {
       .where(eq(schema.linkedDaemons.id, id));
   },
 
-  async delete(id: string) {
+  async delete(id: string): Promise<void> {
     const db = getDb();
     await db.delete(schema.linkedDaemons).where(eq(schema.linkedDaemons.id, id));
   },
 
-  async markStale() {
+  async markStale(): Promise<number> {
     const db = getDb();
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     const result = await db
@@ -295,15 +553,7 @@ export const linkedDaemonQueries = {
     return result.rowCount ?? 0;
   },
 
-  // Get all agents from all daemons for a user (cross-machine discovery)
-  async getAllAgentsForUser(userId: string): Promise<
-    Array<{
-      daemonId: string;
-      daemonName: string;
-      machineId: string;
-      agents: Array<{ name: string; status: string }>;
-    }>
-  > {
+  async getAllAgentsForUser(userId: string): Promise<DaemonAgentInfo[]> {
     const db = getDb();
     const daemons = await db
       .select()
@@ -314,8 +564,200 @@ export const linkedDaemonQueries = {
       daemonId: d.id,
       daemonName: d.name,
       machineId: d.machineId,
-      agents: ((d.metadata as any)?.agents as Array<{ name: string; status: string }>) || [],
+      agents: ((d.metadata as Record<string, unknown>)?.agents as Array<{ name: string; status: string }>) || [],
     }));
+  },
+
+  async getPendingUpdates(id: string): Promise<DaemonUpdate[]> {
+    const db = getDb();
+    const result = await db.select().from(schema.linkedDaemons).where(eq(schema.linkedDaemons.id, id));
+    const daemon = result[0];
+    if (!daemon) return [];
+    const updates = (daemon.pendingUpdates as DaemonUpdate[]) || [];
+    // Clear after reading
+    if (updates.length > 0) {
+      await db
+        .update(schema.linkedDaemons)
+        .set({ pendingUpdates: [] })
+        .where(eq(schema.linkedDaemons.id, id));
+    }
+    return updates;
+  },
+
+  async queueUpdate(id: string, update: DaemonUpdate): Promise<void> {
+    const db = getDb();
+    const result = await db.select().from(schema.linkedDaemons).where(eq(schema.linkedDaemons.id, id));
+    const daemon = result[0];
+    if (!daemon) return;
+    const existing = (daemon.pendingUpdates as DaemonUpdate[]) || [];
+    await db
+      .update(schema.linkedDaemons)
+      .set({ pendingUpdates: [...existing, update], updatedAt: new Date() })
+      .where(eq(schema.linkedDaemons.id, id));
+  },
+
+  async queueMessage(id: string, message: Record<string, unknown>): Promise<void> {
+    const db = getDb();
+    const result = await db.select().from(schema.linkedDaemons).where(eq(schema.linkedDaemons.id, id));
+    const daemon = result[0];
+    if (!daemon) return;
+    const existing = (daemon.messageQueue as Array<Record<string, unknown>>) || [];
+    await db
+      .update(schema.linkedDaemons)
+      .set({ messageQueue: [...existing, message], updatedAt: new Date() })
+      .where(eq(schema.linkedDaemons.id, id));
+  },
+
+  async getQueuedMessages(id: string): Promise<Array<Record<string, unknown>>> {
+    const db = getDb();
+    const result = await db.select().from(schema.linkedDaemons).where(eq(schema.linkedDaemons.id, id));
+    const daemon = result[0];
+    return (daemon?.messageQueue as Array<Record<string, unknown>>) || [];
+  },
+
+  async clearMessageQueue(id: string): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.linkedDaemons)
+      .set({ messageQueue: [] })
+      .where(eq(schema.linkedDaemons.id, id));
+  },
+};
+
+// ============================================================================
+// Project Group Queries
+// ============================================================================
+
+export interface ProjectGroupWithRepositories extends schema.ProjectGroup {
+  repositories: schema.Repository[];
+}
+
+export interface AllGroupsResult {
+  groups: ProjectGroupWithRepositories[];
+  ungroupedRepositories: schema.Repository[];
+}
+
+export interface ProjectGroupQueries {
+  findById(id: string): Promise<schema.ProjectGroup | null>;
+  findByUserId(userId: string): Promise<schema.ProjectGroup[]>;
+  findByName(userId: string, name: string): Promise<schema.ProjectGroup | null>;
+  create(data: schema.NewProjectGroup): Promise<schema.ProjectGroup>;
+  update(id: string, data: Partial<Omit<schema.ProjectGroup, 'id' | 'userId' | 'createdAt'>>): Promise<void>;
+  delete(id: string): Promise<void>;
+  findWithRepositories(id: string): Promise<ProjectGroupWithRepositories | null>;
+  findAllWithRepositories(userId: string): Promise<AllGroupsResult>;
+  updateCoordinatorAgent(id: string, config: schema.CoordinatorAgentConfig): Promise<void>;
+  reorder(userId: string, orderedIds: string[]): Promise<void>;
+}
+
+export const projectGroupQueries: ProjectGroupQueries = {
+  async findById(id: string): Promise<schema.ProjectGroup | null> {
+    const db = getDb();
+    const result = await db.select().from(schema.projectGroups).where(eq(schema.projectGroups.id, id));
+    return result[0] ?? null;
+  },
+
+  async findByUserId(userId: string): Promise<schema.ProjectGroup[]> {
+    const db = getDb();
+    return db
+      .select()
+      .from(schema.projectGroups)
+      .where(eq(schema.projectGroups.userId, userId))
+      .orderBy(schema.projectGroups.sortOrder, schema.projectGroups.name);
+  },
+
+  async findByName(userId: string, name: string): Promise<schema.ProjectGroup | null> {
+    const db = getDb();
+    const result = await db
+      .select()
+      .from(schema.projectGroups)
+      .where(and(eq(schema.projectGroups.userId, userId), eq(schema.projectGroups.name, name)));
+    return result[0] ?? null;
+  },
+
+  async create(data: schema.NewProjectGroup): Promise<schema.ProjectGroup> {
+    const db = getDb();
+    const result = await db.insert(schema.projectGroups).values(data).returning();
+    return result[0];
+  },
+
+  async update(id: string, data: Partial<Omit<schema.ProjectGroup, 'id' | 'userId' | 'createdAt'>>): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.projectGroups)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(schema.projectGroups.id, id));
+  },
+
+  async delete(id: string): Promise<void> {
+    const db = getDb();
+    // Repositories in this group will have projectGroupId set to null (ON DELETE SET NULL)
+    await db.delete(schema.projectGroups).where(eq(schema.projectGroups.id, id));
+  },
+
+  async findWithRepositories(id: string): Promise<ProjectGroupWithRepositories | null> {
+    const db = getDb();
+    const group = await db.select().from(schema.projectGroups).where(eq(schema.projectGroups.id, id));
+    if (!group[0]) return null;
+
+    const repos = await db
+      .select()
+      .from(schema.repositories)
+      .where(eq(schema.repositories.projectGroupId, id))
+      .orderBy(schema.repositories.githubFullName);
+
+    return { ...group[0], repositories: repos };
+  },
+
+  async findAllWithRepositories(userId: string): Promise<AllGroupsResult> {
+    const db = getDb();
+    const groups = await db
+      .select()
+      .from(schema.projectGroups)
+      .where(eq(schema.projectGroups.userId, userId))
+      .orderBy(schema.projectGroups.sortOrder, schema.projectGroups.name);
+
+    // Get repositories for each group
+    const result = await Promise.all(
+      groups.map(async (group) => {
+        const repos = await db
+          .select()
+          .from(schema.repositories)
+          .where(eq(schema.repositories.projectGroupId, group.id))
+          .orderBy(schema.repositories.githubFullName);
+        return { ...group, repositories: repos };
+      })
+    );
+
+    // Also get ungrouped repositories
+    const ungroupedRepos = await db
+      .select()
+      .from(schema.repositories)
+      .where(and(eq(schema.repositories.userId, userId), isNull(schema.repositories.projectGroupId)))
+      .orderBy(schema.repositories.githubFullName);
+
+    return { groups: result, ungroupedRepositories: ungroupedRepos };
+  },
+
+  async updateCoordinatorAgent(id: string, config: schema.CoordinatorAgentConfig): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.projectGroups)
+      .set({ coordinatorAgent: config, updatedAt: new Date() })
+      .where(eq(schema.projectGroups.id, id));
+  },
+
+  async reorder(userId: string, orderedIds: string[]): Promise<void> {
+    const db = getDb();
+    // Update sort_order for each group
+    await Promise.all(
+      orderedIds.map((id, index) =>
+        db
+          .update(schema.projectGroups)
+          .set({ sortOrder: index, updatedAt: new Date() })
+          .where(and(eq(schema.projectGroups.id, id), eq(schema.projectGroups.userId, userId)))
+      )
+    );
   },
 };
 
@@ -323,8 +765,27 @@ export const linkedDaemonQueries = {
 // Repository Queries
 // ============================================================================
 
-export const repositoryQueries = {
-  async findByUserId(userId: string) {
+export interface RepositoryQueries {
+  findById(id: string): Promise<schema.Repository | null>;
+  findByUserId(userId: string): Promise<schema.Repository[]>;
+  findByWorkspaceId(workspaceId: string): Promise<schema.Repository[]>;
+  findByProjectGroupId(projectGroupId: string): Promise<schema.Repository[]>;
+  upsert(data: schema.NewRepository): Promise<schema.Repository>;
+  assignToWorkspace(repoId: string, workspaceId: string): Promise<void>;
+  assignToGroup(repoId: string, projectGroupId: string | null): Promise<void>;
+  updateProjectAgent(id: string, config: schema.ProjectAgentConfig): Promise<void>;
+  updateSyncStatus(id: string, status: string, lastSyncedAt?: Date): Promise<void>;
+  delete(id: string): Promise<void>;
+}
+
+export const repositoryQueries: RepositoryQueries = {
+  async findById(id: string): Promise<schema.Repository | null> {
+    const db = getDb();
+    const result = await db.select().from(schema.repositories).where(eq(schema.repositories.id, id));
+    return result[0] ?? null;
+  },
+
+  async findByUserId(userId: string): Promise<schema.Repository[]> {
     const db = getDb();
     return db
       .select()
@@ -333,7 +794,7 @@ export const repositoryQueries = {
       .orderBy(schema.repositories.githubFullName);
   },
 
-  async findByWorkspaceId(workspaceId: string) {
+  async findByWorkspaceId(workspaceId: string): Promise<schema.Repository[]> {
     const db = getDb();
     return db
       .select()
@@ -341,7 +802,16 @@ export const repositoryQueries = {
       .where(eq(schema.repositories.workspaceId, workspaceId));
   },
 
-  async upsert(data: schema.NewRepository) {
+  async findByProjectGroupId(projectGroupId: string): Promise<schema.Repository[]> {
+    const db = getDb();
+    return db
+      .select()
+      .from(schema.repositories)
+      .where(eq(schema.repositories.projectGroupId, projectGroupId))
+      .orderBy(schema.repositories.githubFullName);
+  },
+
+  async upsert(data: schema.NewRepository): Promise<schema.Repository> {
     const db = getDb();
     const result = await db
       .insert(schema.repositories)
@@ -357,6 +827,47 @@ export const repositoryQueries = {
       })
       .returning();
     return result[0];
+  },
+
+  async assignToWorkspace(repoId: string, workspaceId: string): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.repositories)
+      .set({ workspaceId, updatedAt: new Date() })
+      .where(eq(schema.repositories.id, repoId));
+  },
+
+  async assignToGroup(repoId: string, projectGroupId: string | null): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.repositories)
+      .set({ projectGroupId, updatedAt: new Date() })
+      .where(eq(schema.repositories.id, repoId));
+  },
+
+  async updateProjectAgent(id: string, config: schema.ProjectAgentConfig): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.repositories)
+      .set({ projectAgent: config, updatedAt: new Date() })
+      .where(eq(schema.repositories.id, id));
+  },
+
+  async updateSyncStatus(id: string, status: string, lastSyncedAt?: Date): Promise<void> {
+    const db = getDb();
+    const updates: Record<string, unknown> = { syncStatus: status, updatedAt: new Date() };
+    if (lastSyncedAt) {
+      updates.lastSyncedAt = lastSyncedAt;
+    }
+    await db
+      .update(schema.repositories)
+      .set(updates)
+      .where(eq(schema.repositories.id, id));
+  },
+
+  async delete(id: string): Promise<void> {
+    const db = getDb();
+    await db.delete(schema.repositories).where(eq(schema.repositories.id, id));
   },
 };
 

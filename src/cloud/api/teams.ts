@@ -34,17 +34,29 @@ teamsRouter.get('/workspaces/:workspaceId/members', async (req: Request, res: Re
 
     const members = await db.workspaceMembers.findByWorkspaceId(workspaceId);
 
-    res.json({
-      members: members.map((m) => ({
-        id: m.id,
-        userId: m.userId,
-        role: m.role,
-        invitedAt: m.invitedAt,
-        acceptedAt: m.acceptedAt,
-        isPending: !m.acceptedAt,
-        user: m.user,
-      })),
-    });
+    // Fetch user info for each member
+    const membersWithUsers = await Promise.all(
+      members.map(async (m) => {
+        const user = await db.users.findById(m.userId);
+        return {
+          id: m.id,
+          userId: m.userId,
+          role: m.role,
+          invitedAt: m.invitedAt,
+          acceptedAt: m.acceptedAt,
+          isPending: !m.acceptedAt,
+          user: user
+            ? {
+                githubUsername: user.githubUsername,
+                email: user.email ?? undefined,
+                avatarUrl: user.avatarUrl ?? undefined,
+              }
+            : undefined,
+        };
+      })
+    );
+
+    res.json({ members: membersWithUsers });
   } catch (error) {
     console.error('Error listing members:', error);
     res.status(500).json({ error: 'Failed to list members' });

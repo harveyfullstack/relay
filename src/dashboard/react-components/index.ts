@@ -30,6 +30,13 @@ export { WorkspaceSelector, type WorkspaceSelectorProps, type Workspace } from '
 export { AddWorkspaceModal, type AddWorkspaceModalProps } from './AddWorkspaceModal';
 export { PricingPlans, type PricingPlansProps, type Plan } from './PricingPlans';
 export { BillingPanel, type BillingPanelProps, type Subscription, type Invoice, type PaymentMethod } from './BillingPanel';
+export { SessionExpiredModal, type SessionExpiredModalProps } from './SessionExpiredModal';
+export {
+  CloudSessionProvider,
+  useCloudSession,
+  useCloudSessionOptional,
+  type CloudSessionProviderProps,
+} from './CloudSessionProvider';
 
 // Layout Components
 export { Sidebar, type SidebarProps } from './layout/Sidebar';
@@ -41,6 +48,7 @@ export {
   useAgents,
   useMessages,
   useOrchestrator,
+  useSession,
   type UseWebSocketOptions,
   type UseWebSocketReturn,
   type UseAgentsOptions,
@@ -49,8 +57,12 @@ export {
   type UseMessagesReturn,
   type UseOrchestratorOptions,
   type UseOrchestratorResult,
+  type UseSessionOptions,
+  type UseSessionReturn,
   type DashboardData,
   type AgentWithColor,
   type OrchestratorAgent,
   type OrchestratorEvent,
+  type SessionError,
+  type CloudUser,
 } from './hooks';
