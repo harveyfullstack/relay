@@ -9,6 +9,8 @@ import { EventEmitter } from 'events';
 import { AgentHealthMonitor, getHealthMonitor, HealthMonitorConfig, AgentProcess } from './health-monitor';
 import { Logger, createLogger, LogLevel } from './logger';
 import { metrics } from './metrics';
+import { ContextPersistence, getContextPersistence } from './context-persistence';
+import { createContextHandler, detectProvider, ProviderType } from './provider-context';
 
 export interface SupervisedAgent {
   name: string;
@@ -17,6 +19,8 @@ export interface SupervisedAgent {
   pid: number;
   logFile?: string;
   spawnedAt: Date;
+  workingDir?: string;
+  provider?: ProviderType;
 }
 
 export interface SupervisorConfig {
@@ -28,6 +32,11 @@ export interface SupervisorConfig {
   autoRestart: boolean;
   maxRestarts: number;
   notifyOnCrash: boolean;
+  contextPersistence: {
+    enabled: boolean;
+    baseDir?: string;
+    autoInjectOnRestart: boolean;
+  };
 }
 
 const DEFAULT_CONFIG: SupervisorConfig = {
@@ -41,6 +50,10 @@ const DEFAULT_CONFIG: SupervisorConfig = {
   autoRestart: true,
   maxRestarts: 5,
   notifyOnCrash: true,
+  contextPersistence: {
+    enabled: true,
+    autoInjectOnRestart: true,
+  },
 };
 
 export class AgentSupervisor extends EventEmitter {
@@ -49,6 +62,8 @@ export class AgentSupervisor extends EventEmitter {
   private logger: Logger;
   private agents = new Map<string, SupervisedAgent>();
   private restarters = new Map<string, () => Promise<void>>();
+  private contextPersistence?: ContextPersistence;
+  private contextHandlers = new Map<string, ReturnType<typeof createContextHandler>>();
 
   constructor(config: Partial<SupervisorConfig> = {}) {
     super();
@@ -61,6 +76,13 @@ export class AgentSupervisor extends EventEmitter {
 
     this.healthMonitor = getHealthMonitor(this.config.healthCheck);
     this.setupHealthMonitorEvents();
+
+    // Initialize context persistence if enabled
+    if (this.config.contextPersistence.enabled) {
+      this.contextPersistence = getContextPersistence(this.config.contextPersistence.baseDir);
+      this.contextPersistence.startAutoSave();
+      this.logger.info('Context persistence enabled');
+    }
   }
 
   /**
@@ -80,6 +102,18 @@ export class AgentSupervisor extends EventEmitter {
   stop(): void {
     this.logger.info('Agent supervisor stopping');
     this.healthMonitor.stop();
+
+    // Stop context persistence
+    if (this.contextPersistence) {
+      this.contextPersistence.stopAutoSave();
+    }
+
+    // Cleanup context handlers
+    Array.from(this.contextHandlers.entries()).forEach(([name, handler]) => {
+      handler.cleanup().catch((err) => {
+        this.logger.error('Error cleaning up context handler', { name, error: String(err) });
+      });
+    });
   }
 
   /**
@@ -119,6 +153,44 @@ export class AgentSupervisor extends EventEmitter {
     this.healthMonitor.register(agentProcess);
     metrics.recordSpawn(agent.name);
 
+    // Set up context persistence for this agent
+    if (this.contextPersistence && this.config.contextPersistence.enabled) {
+      const provider = agent.provider || detectProvider(agent.cli);
+      const workingDir = agent.workingDir || process.cwd();
+
+      // Initialize agent state
+      this.contextPersistence.initAgent(agent.name, agent.cli, agent.task);
+
+      // Create provider-specific context handler
+      const contextHandler = createContextHandler({
+        provider,
+        workingDir,
+        agentName: agent.name,
+        task: agent.task,
+      });
+
+      contextHandler.setup().then(() => {
+        this.contextHandlers.set(agent.name, contextHandler);
+
+        // Check for existing handoff to restore
+        const handoff = this.contextPersistence?.loadHandoff(agent.name);
+        if (handoff && this.config.contextPersistence.autoInjectOnRestart) {
+          contextHandler.injectContext(handoff).catch((err) => {
+            this.logger.error('Failed to inject context on start', {
+              name: agent.name,
+              error: String(err),
+            });
+          });
+        }
+      }).catch((err) => {
+        this.logger.error('Failed to setup context handler', {
+          name: agent.name,
+          provider,
+          error: String(err),
+        });
+      });
+    }
+
     this.logger.info('Agent added to supervision', {
       name: agent.name,
       cli: agent.cli,
@@ -133,6 +205,17 @@ export class AgentSupervisor extends EventEmitter {
     this.agents.delete(name);
     this.restarters.delete(name);
     this.healthMonitor.unregister(name);
+
+    // Clean up context handler
+    const contextHandler = this.contextHandlers.get(name);
+    if (contextHandler) {
+      contextHandler.saveContext().then(() => {
+        return contextHandler.cleanup();
+      }).catch((err) => {
+        this.logger.error('Error cleaning up context handler', { name, error: String(err) });
+      });
+      this.contextHandlers.delete(name);
+    }
 
     this.logger.info('Agent removed from supervision', { name });
   }
@@ -229,6 +312,11 @@ export class AgentSupervisor extends EventEmitter {
       metrics.recordCrash(name, reason);
       this.emit('died', { name, reason, restartCount });
 
+      // Record crash in context persistence for resumption
+      if (this.contextPersistence) {
+        this.contextPersistence.recordCrash(name, reason);
+      }
+
       if (this.config.notifyOnCrash) {
         this.notifyCrash(name, reason);
       }
@@ -237,6 +325,12 @@ export class AgentSupervisor extends EventEmitter {
     this.healthMonitor.on('restarting', ({ name, attempt }) => {
       this.logger.info('Restarting agent', { name, attempt });
       metrics.recordRestartAttempt(name);
+
+      // Save checkpoint before restart
+      if (this.contextPersistence) {
+        this.contextPersistence.checkpoint(name);
+      }
+
       this.emit('restarting', { name, attempt });
     });
 
@@ -249,6 +343,20 @@ export class AgentSupervisor extends EventEmitter {
       if (agent) {
         agent.pid = pid;
         agent.spawnedAt = new Date();
+      }
+
+      // Inject context on restart
+      if (this.config.contextPersistence.autoInjectOnRestart) {
+        const handoff = this.contextPersistence?.loadHandoff(name);
+        const contextHandler = this.contextHandlers.get(name);
+        if (handoff && contextHandler) {
+          contextHandler.injectContext(handoff).catch((err) => {
+            this.logger.error('Failed to inject context after restart', {
+              name,
+              error: String(err),
+            });
+          });
+        }
       }
 
       this.emit('restarted', { name, pid, attempt });
