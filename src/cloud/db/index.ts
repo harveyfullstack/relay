@@ -1,0 +1,107 @@
+/**
+ * Agent Relay Cloud - Database Layer
+ *
+ * Re-exports Drizzle ORM queries and types.
+ * All database access should go through Drizzle for type safety.
+ *
+ * Generate migrations: npm run db:generate
+ * Run migrations: npm run db:migrate
+ */
+
+// Re-export all types from schema
+export type {
+  User,
+  NewUser,
+  Credential,
+  NewCredential,
+  Workspace,
+  NewWorkspace,
+  WorkspaceConfig,
+  WorkspaceMember,
+  NewWorkspaceMember,
+  ProjectGroup,
+  NewProjectGroup,
+  CoordinatorAgentConfig,
+  ProjectAgentConfig,
+  Repository,
+  NewRepository,
+  LinkedDaemon,
+  NewLinkedDaemon,
+  Subscription,
+  NewSubscription,
+  UsageRecord,
+  NewUsageRecord,
+} from './schema.js';
+
+// Re-export schema tables for direct access if needed
+export {
+  users as usersTable,
+  credentials as credentialsTable,
+  workspaces as workspacesTable,
+  workspaceMembers as workspaceMembersTable,
+  projectGroups as projectGroupsTable,
+  repositories as repositoriesTable,
+  linkedDaemons as linkedDaemonsTable,
+  subscriptions as subscriptionsTable,
+  usageRecords as usageRecordsTable,
+} from './schema.js';
+
+// Import query modules
+import {
+  getDb,
+  closeDb,
+  runMigrations,
+  userQueries,
+  credentialQueries,
+  workspaceQueries,
+  workspaceMemberQueries,
+  linkedDaemonQueries,
+  projectGroupQueries,
+  repositoryQueries,
+} from './drizzle.js';
+
+// Legacy type aliases for backwards compatibility
+export type PlanType = 'free' | 'pro' | 'team' | 'enterprise';
+export type WorkspaceMemberRole = 'owner' | 'admin' | 'member' | 'viewer';
+
+// Export the db object with all query namespaces
+export const db = {
+  // User operations
+  users: userQueries,
+  // Credential operations
+  credentials: credentialQueries,
+  // Workspace operations
+  workspaces: workspaceQueries,
+  // Workspace member operations
+  workspaceMembers: workspaceMemberQueries,
+  // Project group operations (for grouping repositories)
+  projectGroups: projectGroupQueries,
+  // Repository operations
+  repositories: repositoryQueries,
+  // Linked daemon operations (for local agent-relay instances)
+  linkedDaemons: linkedDaemonQueries,
+  // Database utilities
+  getDb,
+  close: closeDb,
+  runMigrations,
+};
+
+// Export query objects for direct import
+export {
+  userQueries,
+  credentialQueries,
+  workspaceQueries,
+  workspaceMemberQueries,
+  projectGroupQueries,
+  repositoryQueries,
+  linkedDaemonQueries,
+};
+
+// Export database utilities
+export { getDb, closeDb, runMigrations };
+
+// Legacy function - use runMigrations instead
+export async function initializeDatabase(): Promise<void> {
+  console.warn('initializeDatabase() is deprecated. Use runMigrations() instead.');
+  await runMigrations();
+}

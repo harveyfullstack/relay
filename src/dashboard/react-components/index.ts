@@ -10,6 +10,7 @@
 export { AgentCard, type AgentCardProps } from './AgentCard';
 export { AgentList, type AgentListProps } from './AgentList';
 export { ThinkingIndicator, ThinkingDot, type ThinkingIndicatorProps } from './ThinkingIndicator';
+export { MessageStatusIndicator, type MessageStatusIndicatorProps } from './MessageStatusIndicator';
 export { MessageList, type MessageListProps } from './MessageList';
 export { ThreadPanel, type ThreadPanelProps } from './ThreadPanel';
 export { CommandPalette, type CommandPaletteProps, type Command } from './CommandPalette';
@@ -23,9 +24,20 @@ export { BroadcastComposer, type BroadcastComposerProps, type BroadcastTarget } 
 export { SettingsPanel, defaultSettings, type SettingsPanelProps, type Settings } from './SettingsPanel';
 export { NotificationToast, useToasts, type NotificationToastProps, type Toast } from './NotificationToast';
 export { ThemeProvider, ThemeToggle, useTheme, type ThemeProviderProps, type Theme, type ResolvedTheme } from './ThemeProvider';
-export { App, type AppProps } from './App';
+export { App, appStyles, type AppProps } from './App';
 export { MentionAutocomplete, useMentionAutocomplete, getMentionQuery, completeMentionInValue, type MentionAutocompleteProps } from './MentionAutocomplete';
 export { ProjectList, type ProjectListProps } from './ProjectList';
+export { WorkspaceSelector, type WorkspaceSelectorProps, type Workspace } from './WorkspaceSelector';
+export { AddWorkspaceModal, type AddWorkspaceModalProps } from './AddWorkspaceModal';
+export { PricingPlans, type PricingPlansProps, type Plan } from './PricingPlans';
+export { BillingPanel, type BillingPanelProps, type Subscription, type Invoice, type PaymentMethod } from './BillingPanel';
+export { SessionExpiredModal, type SessionExpiredModalProps } from './SessionExpiredModal';
+export {
+  CloudSessionProvider,
+  useCloudSession,
+  useCloudSessionOptional,
+  type CloudSessionProviderProps,
+} from './CloudSessionProvider';
 
 // Layout Components
 export { Sidebar, type SidebarProps } from './layout/Sidebar';
@@ -36,12 +48,22 @@ export {
   useWebSocket,
   useAgents,
   useMessages,
+  useOrchestrator,
+  useSession,
   type UseWebSocketOptions,
   type UseWebSocketReturn,
   type UseAgentsOptions,
   type UseAgentsReturn,
   type UseMessagesOptions,
   type UseMessagesReturn,
+  type UseOrchestratorOptions,
+  type UseOrchestratorResult,
+  type UseSessionOptions,
+  type UseSessionReturn,
   type DashboardData,
   type AgentWithColor,
+  type OrchestratorAgent,
+  type OrchestratorEvent,
+  type SessionError,
+  type CloudUser,
 } from './hooks';

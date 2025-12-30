@@ -41,11 +41,26 @@ export interface UseAgentLogsReturn {
  * Get WebSocket URL for agent log streaming
  */
 function getLogStreamUrl(agentName: string): string {
+  const path = `/ws/logs/${encodeURIComponent(agentName)}`;
+  const isDev = process.env.NODE_ENV === 'development';
+
+  // Server-side / tests: assume dashboard server is running locally on dev port
   if (typeof window === 'undefined') {
-    return `ws://localhost:3888/ws/logs/${encodeURIComponent(agentName)}`;
+    return `ws://localhost:3889${path}`;
   }
+
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws/logs/${encodeURIComponent(agentName)}`;
+  const { hostname, port } = window.location;
+
+  // Next.js dev runs the UI on 3888 with the dashboard server on 3889 (rewrites
+  // don't support WS upgrades). Only reroute in development to avoid breaking
+  // production deployments that also bind to 3888.
+  if (isDev && port === '3888') {
+    const host = hostname || 'localhost';
+    return `${protocol}//${host}:3889${path}`;
+  }
+
+  return `${protocol}//${window.location.host}${path}`;
 }
 
 /**
@@ -62,7 +77,7 @@ export function useAgentLogs(options: UseAgentLogsOptions): UseAgentLogsReturn {
     maxLines = 5000,
     autoConnect = true,
     reconnect = true,
-    maxReconnectAttempts = 5,
+    maxReconnectAttempts = Infinity,
   } = options;
 
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -74,11 +89,17 @@ export function useAgentLogs(options: UseAgentLogsOptions): UseAgentLogsReturn {
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const agentNameRef = useRef(agentName);
+  const manualCloseRef = useRef(false);
+  const shouldReconnectRef = useRef(true);
 
   // Keep agent name ref updated
   agentNameRef.current = agentName;
 
   const connect = useCallback(() => {
+    // Ensure reconnects are allowed for this session
+    shouldReconnectRef.current = true;
+    manualCloseRef.current = false;
+
     // Prevent multiple connections
     if (wsRef.current?.readyState === WebSocket.OPEN || isConnecting) {
       return;
@@ -113,26 +134,59 @@ export function useAgentLogs(options: UseAgentLogsOptions): UseAgentLogsReturn {
       };
 
       ws.onclose = (event) => {
+        const wasManualClose = manualCloseRef.current;
+
         setIsConnected(false);
         setIsConnecting(false);
         wsRef.current = null;
 
+        // Clear any pending reconnect when a close happens
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
+        }
+
+        // Reset manual close flag after handling this close
+        manualCloseRef.current = false;
+
+        // Skip logging/reconnecting for intentional disconnects (cleanup, user toggle)
+        if (wasManualClose) {
+          return;
+        }
+
         // Add system message for disconnection
         if (!event.wasClean) {
+          const willReconnect =
+            shouldReconnectRef.current &&
+            reconnect &&
+            reconnectAttemptsRef.current < maxReconnectAttempts;
+
           setLogs((prev) => [
             ...prev,
             {
               id: generateLogId(),
               timestamp: Date.now(),
-              content: `Disconnected from log stream (code: ${event.code})`,
+              content: willReconnect
+                ? `Lost connection to log stream (code: ${event.code}). Reconnecting...`
+                : `Disconnected from log stream (code: ${event.code})`,
               type: 'system',
               agentName: agentNameRef.current,
             },
           ]);
         }
 
+        // Don't reconnect if agent was not found (custom close code 4404)
+        // This prevents infinite reconnect loops for non-existent agents
+        if (event.code === 4404) {
+          return;
+        }
+
         // Schedule reconnect if enabled
-        if (reconnect && reconnectAttemptsRef.current < maxReconnectAttempts) {
+        if (
+          shouldReconnectRef.current &&
+          reconnect &&
+          reconnectAttemptsRef.current < maxReconnectAttempts
+        ) {
           const delay = Math.min(
             1000 * Math.pow(2, reconnectAttemptsRef.current),
             30000
@@ -153,6 +207,43 @@ export function useAgentLogs(options: UseAgentLogsOptions): UseAgentLogsReturn {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+
+          // Handle error messages from server
+          if (data.type === 'error') {
+            setError(new Error(data.error || `Failed to stream logs for ${data.agent || agentNameRef.current}`));
+            setLogs((prev) => [
+              ...prev,
+              {
+                id: generateLogId(),
+                timestamp: Date.now(),
+                content: `Error: ${data.error || 'Unknown error'}`,
+                type: 'system',
+                agentName: data.agent || agentNameRef.current,
+              },
+            ]);
+            return;
+          }
+
+          // Handle subscribed confirmation
+          if (data.type === 'subscribed') {
+            console.log(`[useAgentLogs] Subscribed to ${data.agent}`);
+            return;
+          }
+
+          // Handle history (initial log dump)
+          if (data.type === 'history' && Array.isArray(data.lines)) {
+            setLogs((prev) => {
+              const historyLines: LogLine[] = data.lines.map((line: string) => ({
+                id: generateLogId(),
+                timestamp: Date.now(),
+                content: line,
+                type: 'stdout' as const,
+                agentName: data.agent || agentNameRef.current,
+              }));
+              return [...prev, ...historyLines].slice(-maxLines);
+            });
+            return;
+          }
 
           // Handle different message formats
           if (typeof data === 'string') {
@@ -228,6 +319,10 @@ export function useAgentLogs(options: UseAgentLogsOptions): UseAgentLogsReturn {
   }, [isConnecting, maxLines, reconnect, maxReconnectAttempts]);
 
   const disconnect = useCallback(() => {
+    // Prevent reconnection attempts after an intentional disconnect
+    shouldReconnectRef.current = false;
+    manualCloseRef.current = true;
+
     // Clear any pending reconnect
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);

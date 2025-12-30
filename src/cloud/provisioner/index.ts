@@ -1,0 +1,820 @@
+/**
+ * Agent Relay Cloud - Workspace Provisioner
+ *
+ * One-click provisioning for compute resources (Fly.io, Railway, Docker).
+ */
+
+import { getConfig } from '../config.js';
+import { db, Workspace } from '../db/index.js';
+import { vault } from '../vault/index.js';
+
+const WORKSPACE_PORT = 3888;
+const FETCH_TIMEOUT_MS = 10_000;
+
+async function loadCredentialToken(userId: string, provider: string): Promise<string | null> {
+  try {
+    const cred = await vault.getCredential(userId, provider);
+    if (cred?.accessToken) {
+      return cred.accessToken;
+    }
+  } catch (error) {
+    console.warn(`Failed to decrypt ${provider} credential from vault; trying raw storage fallback`, error);
+    const raw = await db.credentials.findByUserAndProvider(userId, provider);
+    return raw?.accessToken ?? null;
+  }
+  return null;
+}
+
+async function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit & { retries?: number } = {},
+): Promise<Response> {
+  const retries = options.retries ?? 2;
+  let attempt = 0;
+
+  while (attempt <= retries) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timer);
+      if (!response.ok && response.status >= 500 && attempt < retries) {
+        attempt += 1;
+        await wait(500 * attempt);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      clearTimeout(timer);
+      if (attempt >= retries) {
+        throw error;
+      }
+      attempt += 1;
+      await wait(500 * attempt);
+    }
+  }
+
+  throw new Error('fetchWithRetry exhausted retries');
+}
+
+async function softHealthCheck(url: string): Promise<void> {
+  try {
+    const res = await fetchWithRetry(`${url.replace(/\/$/, '')}/health`, { method: 'GET', retries: 1 });
+    if (!res.ok) {
+      console.warn(`[health] Non-200 from ${url}/health: ${res.status}`);
+    }
+  } catch (error) {
+    console.warn(`[health] Failed to reach ${url}/health`, error);
+  }
+}
+
+export interface ProvisionConfig {
+  userId: string;
+  name: string;
+  providers: string[];
+  repositories: string[];
+  supervisorEnabled?: boolean;
+  maxAgents?: number;
+}
+
+export interface ProvisionResult {
+  workspaceId: string;
+  status: 'provisioning' | 'running' | 'error';
+  publicUrl?: string;
+  error?: string;
+}
+
+export type WorkspaceStatus = Workspace['status'];
+export { Workspace };
+
+/**
+ * Abstract provisioner interface
+ */
+interface ComputeProvisioner {
+  provision(workspace: Workspace, credentials: Map<string, string>): Promise<{
+    computeId: string;
+    publicUrl: string;
+  }>;
+  deprovision(workspace: Workspace): Promise<void>;
+  getStatus(workspace: Workspace): Promise<WorkspaceStatus>;
+  restart(workspace: Workspace): Promise<void>;
+}
+
+/**
+ * Fly.io provisioner
+ */
+class FlyProvisioner implements ComputeProvisioner {
+  private apiToken: string;
+  private org: string;
+  private region: string;
+  private workspaceDomain?: string;
+
+  constructor() {
+    const config = getConfig();
+    if (!config.compute.fly) {
+      throw new Error('Fly.io configuration missing');
+    }
+    this.apiToken = config.compute.fly.apiToken;
+    this.org = config.compute.fly.org;
+    this.region = config.compute.fly.region || 'sjc';
+    this.workspaceDomain = config.compute.fly.workspaceDomain;
+  }
+
+  async provision(
+    workspace: Workspace,
+    credentials: Map<string, string>
+  ): Promise<{ computeId: string; publicUrl: string }> {
+    const appName = `ar-${workspace.id.substring(0, 8)}`;
+
+    // Create Fly app
+    const createResponse = await fetchWithRetry('https://api.machines.dev/v1/apps', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        app_name: appName,
+        org_slug: this.org,
+      }),
+    });
+
+    // Set secrets (credentials)
+    const secrets: Record<string, string> = {};
+    for (const [provider, token] of credentials) {
+      secrets[`${provider.toUpperCase()}_TOKEN`] = token;
+    }
+
+    await fetchWithRetry(`https://api.machines.dev/v1/apps/${appName}/secrets`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(secrets),
+    });
+
+    // If custom workspace domain is configured, add certificate
+    const customHostname = this.workspaceDomain
+      ? `${appName}.${this.workspaceDomain}`
+      : null;
+
+    if (customHostname) {
+      await this.allocateCertificate(appName, customHostname);
+    }
+
+    // Create machine with auto-stop/start for cost optimization
+    const machineResponse = await fetchWithRetry(
+      `https://api.machines.dev/v1/apps/${appName}/machines`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          region: this.region,
+          config: {
+            image: 'ghcr.io/khaliqgant/agent-relay-workspace:latest',
+            env: {
+              WORKSPACE_ID: workspace.id,
+              SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled ?? false),
+              MAX_AGENTS: String(workspace.config.maxAgents ?? 10),
+              REPOSITORIES: (workspace.config.repositories ?? []).join(','),
+              PROVIDERS: (workspace.config.providers ?? []).join(','),
+              PORT: String(WORKSPACE_PORT),
+              AGENT_RELAY_DASHBOARD_PORT: String(WORKSPACE_PORT),
+            },
+            services: [
+              {
+                ports: [
+                  { port: 443, handlers: ['tls', 'http'] },
+                  { port: 80, handlers: ['http'] },
+                ],
+                protocol: 'tcp',
+                internal_port: WORKSPACE_PORT,
+                // Auto-stop after 5 minutes of inactivity
+                auto_stop_machines: true,
+                auto_start_machines: true,
+                min_machines_running: 0,
+              },
+            ],
+            guest: {
+              cpu_kind: 'shared',
+              cpus: 1,
+              memory_mb: 512,
+            },
+          },
+        }),
+      }
+    );
+
+    if (!machineResponse.ok) {
+      const error = await machineResponse.text();
+      throw new Error(`Failed to create Fly machine: ${error}`);
+    }
+
+    const machine = (await machineResponse.json()) as { id: string };
+
+    // Return custom domain URL if configured, otherwise default fly.dev
+    const publicUrl = customHostname
+      ? `https://${customHostname}`
+      : `https://${appName}.fly.dev`;
+
+    await softHealthCheck(publicUrl);
+
+    return {
+      computeId: machine.id,
+      publicUrl,
+    };
+  }
+
+  /**
+   * Allocate SSL certificate for custom domain
+   */
+  private async allocateCertificate(
+    appName: string,
+    hostname: string
+  ): Promise<void> {
+    const response = await fetchWithRetry(
+      `https://api.machines.dev/v1/apps/${appName}/certificates`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ hostname }),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      // Don't fail if cert already exists
+      if (!error.includes('already exists')) {
+        throw new Error(`Failed to allocate certificate for ${hostname}: ${error}`);
+      }
+    }
+  }
+
+  async deprovision(workspace: Workspace): Promise<void> {
+    const appName = `ar-${workspace.id.substring(0, 8)}`;
+
+    await fetchWithRetry(`https://api.machines.dev/v1/apps/${appName}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+      },
+    });
+  }
+
+  async getStatus(workspace: Workspace): Promise<WorkspaceStatus> {
+    if (!workspace.computeId) return 'error';
+
+    const appName = `ar-${workspace.id.substring(0, 8)}`;
+
+    const response = await fetchWithRetry(
+      `https://api.machines.dev/v1/apps/${appName}/machines/${workspace.computeId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.apiToken}`,
+        },
+      }
+    );
+
+    if (!response.ok) return 'error';
+
+    const machine = await response.json() as { state: string };
+
+    switch (machine.state) {
+      case 'started':
+        return 'running';
+      case 'stopped':
+        return 'stopped';
+      case 'created':
+      case 'starting':
+        return 'provisioning';
+      default:
+        return 'error';
+    }
+  }
+
+  async restart(workspace: Workspace): Promise<void> {
+    if (!workspace.computeId) return;
+
+    const appName = `ar-${workspace.id.substring(0, 8)}`;
+
+    await fetchWithRetry(
+      `https://api.machines.dev/v1/apps/${appName}/machines/${workspace.computeId}/restart`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiToken}`,
+        },
+      }
+    );
+  }
+}
+
+/**
+ * Railway provisioner
+ */
+class RailwayProvisioner implements ComputeProvisioner {
+  private apiToken: string;
+
+  constructor() {
+    const config = getConfig();
+    if (!config.compute.railway) {
+      throw new Error('Railway configuration missing');
+    }
+    this.apiToken = config.compute.railway.apiToken;
+  }
+
+  async provision(
+    workspace: Workspace,
+    credentials: Map<string, string>
+  ): Promise<{ computeId: string; publicUrl: string }> {
+    // Create project
+    const projectResponse = await fetchWithRetry('https://backboard.railway.app/graphql/v2', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          mutation CreateProject($input: ProjectCreateInput!) {
+            projectCreate(input: $input) {
+              id
+              name
+            }
+          }
+        `,
+        variables: {
+          input: {
+            name: `agent-relay-${workspace.id.substring(0, 8)}`,
+          },
+        },
+      }),
+    });
+
+    const projectData = await projectResponse.json() as { data: { projectCreate: { id: string } } };
+    const projectId = projectData.data.projectCreate.id;
+
+    // Deploy service
+    const serviceResponse = await fetchWithRetry('https://backboard.railway.app/graphql/v2', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          mutation CreateService($input: ServiceCreateInput!) {
+            serviceCreate(input: $input) {
+              id
+            }
+          }
+        `,
+        variables: {
+          input: {
+            projectId,
+            name: 'workspace',
+            source: {
+              image: 'ghcr.io/khaliqgant/agent-relay-workspace:latest',
+            },
+          },
+        },
+      }),
+    });
+
+    const serviceData = await serviceResponse.json() as { data: { serviceCreate: { id: string } } };
+    const serviceId = serviceData.data.serviceCreate.id;
+
+    // Set environment variables
+    const envVars: Record<string, string> = {
+      WORKSPACE_ID: workspace.id,
+      SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled ?? false),
+      MAX_AGENTS: String(workspace.config.maxAgents ?? 10),
+      REPOSITORIES: (workspace.config.repositories ?? []).join(','),
+      PROVIDERS: (workspace.config.providers ?? []).join(','),
+      PORT: String(WORKSPACE_PORT),
+      AGENT_RELAY_DASHBOARD_PORT: String(WORKSPACE_PORT),
+    };
+
+    for (const [provider, token] of credentials) {
+      envVars[`${provider.toUpperCase()}_TOKEN`] = token;
+    }
+
+    await fetchWithRetry('https://backboard.railway.app/graphql/v2', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          mutation SetVariables($input: VariableCollectionUpsertInput!) {
+            variableCollectionUpsert(input: $input)
+          }
+        `,
+        variables: {
+          input: {
+            projectId,
+            serviceId,
+            variables: envVars,
+          },
+        },
+      }),
+    });
+
+    // Generate domain
+    const domainResponse = await fetchWithRetry('https://backboard.railway.app/graphql/v2', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          mutation CreateDomain($input: ServiceDomainCreateInput!) {
+            serviceDomainCreate(input: $input) {
+              domain
+            }
+          }
+        `,
+        variables: {
+          input: {
+            serviceId,
+          },
+        },
+      }),
+    });
+
+    const domainData = await domainResponse.json() as { data: { serviceDomainCreate: { domain: string } } };
+    const domain = domainData.data.serviceDomainCreate.domain;
+
+    await softHealthCheck(`https://${domain}`);
+
+    return {
+      computeId: projectId,
+      publicUrl: `https://${domain}`,
+    };
+  }
+
+  async deprovision(workspace: Workspace): Promise<void> {
+    if (!workspace.computeId) return;
+
+    await fetchWithRetry('https://backboard.railway.app/graphql/v2', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          mutation DeleteProject($id: String!) {
+            projectDelete(id: $id)
+          }
+        `,
+        variables: {
+          id: workspace.computeId,
+        },
+      }),
+    });
+  }
+
+  async getStatus(workspace: Workspace): Promise<WorkspaceStatus> {
+    if (!workspace.computeId) return 'error';
+
+    const response = await fetchWithRetry('https://backboard.railway.app/graphql/v2', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          query GetProject($id: String!) {
+            project(id: $id) {
+              deployments {
+                edges {
+                  node {
+                    status
+                  }
+                }
+              }
+            }
+          }
+        `,
+        variables: {
+          id: workspace.computeId,
+        },
+      }),
+    });
+
+    const data = await response.json() as {
+      data?: { project?: { deployments?: { edges: Array<{ node: { status: string } }> } } }
+    };
+    const deployments = data.data?.project?.deployments?.edges;
+
+    if (!deployments || deployments.length === 0) return 'provisioning';
+
+    const latestStatus = deployments[0].node.status;
+
+    switch (latestStatus) {
+      case 'SUCCESS':
+        return 'running';
+      case 'BUILDING':
+      case 'DEPLOYING':
+        return 'provisioning';
+      case 'CRASHED':
+      case 'FAILED':
+        return 'error';
+      default:
+        return 'stopped';
+    }
+  }
+
+  async restart(workspace: Workspace): Promise<void> {
+    // Railway doesn't have a direct restart - redeploy instead
+    if (!workspace.computeId) return;
+
+    await fetchWithRetry('https://backboard.railway.app/graphql/v2', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          mutation RedeployService($input: DeploymentTriggerInput!) {
+            deploymentTrigger(input: $input)
+          }
+        `,
+        variables: {
+          input: {
+            projectId: workspace.computeId,
+          },
+        },
+      }),
+    });
+  }
+}
+
+/**
+ * Local Docker provisioner (for development/self-hosted)
+ */
+class DockerProvisioner implements ComputeProvisioner {
+  async provision(
+    workspace: Workspace,
+    credentials: Map<string, string>
+  ): Promise<{ computeId: string; publicUrl: string }> {
+    const containerName = `ar-${workspace.id.substring(0, 8)}`;
+
+    // Build environment variables
+    const envArgs: string[] = [
+      `-e WORKSPACE_ID=${workspace.id}`,
+      `-e SUPERVISOR_ENABLED=${workspace.config.supervisorEnabled ?? false}`,
+      `-e MAX_AGENTS=${workspace.config.maxAgents ?? 10}`,
+      `-e REPOSITORIES=${(workspace.config.repositories ?? []).join(',')}`,
+      `-e PROVIDERS=${(workspace.config.providers ?? []).join(',')}`,
+      `-e PORT=${WORKSPACE_PORT}`,
+      `-e AGENT_RELAY_DASHBOARD_PORT=${WORKSPACE_PORT}`,
+    ];
+
+    for (const [provider, token] of credentials) {
+      envArgs.push(`-e ${provider.toUpperCase()}_TOKEN=${token}`);
+    }
+
+    // Run container
+    const { execSync } = await import('child_process');
+    const hostPort = 3000 + Math.floor(Math.random() * 1000);
+
+    try {
+      execSync(
+        `docker run -d --name ${containerName} -p ${hostPort}:${WORKSPACE_PORT} ${envArgs.join(' ')} ghcr.io/khaliqgant/agent-relay-workspace:latest`,
+        { stdio: 'pipe' }
+      );
+
+      return {
+        computeId: containerName,
+        publicUrl: `http://localhost:${hostPort}`,
+      };
+    } catch (error) {
+      throw new Error(`Failed to start Docker container: ${error}`);
+    }
+  }
+
+  async deprovision(workspace: Workspace): Promise<void> {
+    if (!workspace.computeId) return;
+
+    const { execSync } = await import('child_process');
+    try {
+      execSync(`docker rm -f ${workspace.computeId}`, { stdio: 'pipe' });
+    } catch {
+      // Container may already be removed
+    }
+  }
+
+  async getStatus(workspace: Workspace): Promise<WorkspaceStatus> {
+    if (!workspace.computeId) return 'error';
+
+    const { execSync } = await import('child_process');
+    try {
+      const result = execSync(
+        `docker inspect -f '{{.State.Status}}' ${workspace.computeId}`,
+        { stdio: 'pipe' }
+      ).toString().trim();
+
+      switch (result) {
+        case 'running':
+          return 'running';
+        case 'exited':
+        case 'dead':
+          return 'stopped';
+        case 'created':
+        case 'restarting':
+          return 'provisioning';
+        default:
+          return 'error';
+      }
+    } catch {
+      return 'error';
+    }
+  }
+
+  async restart(workspace: Workspace): Promise<void> {
+    if (!workspace.computeId) return;
+
+    const { execSync } = await import('child_process');
+    try {
+      execSync(`docker restart ${workspace.computeId}`, { stdio: 'pipe' });
+    } catch (error) {
+      throw new Error(`Failed to restart container: ${error}`);
+    }
+  }
+}
+
+/**
+ * Main Workspace Provisioner
+ */
+export class WorkspaceProvisioner {
+  private provisioner: ComputeProvisioner;
+
+  constructor() {
+    const config = getConfig();
+
+    switch (config.compute.provider) {
+      case 'fly':
+        this.provisioner = new FlyProvisioner();
+        break;
+      case 'railway':
+        this.provisioner = new RailwayProvisioner();
+        break;
+      case 'docker':
+      default:
+        this.provisioner = new DockerProvisioner();
+    }
+  }
+
+  /**
+   * Provision a new workspace (one-click)
+   */
+  async provision(config: ProvisionConfig): Promise<ProvisionResult> {
+    // Create workspace record
+    const workspace = await db.workspaces.create({
+      userId: config.userId,
+      name: config.name,
+      computeProvider: getConfig().compute.provider,
+      config: {
+        providers: config.providers,
+        repositories: config.repositories,
+        supervisorEnabled: config.supervisorEnabled ?? true,
+        maxAgents: config.maxAgents ?? 10,
+      },
+    });
+
+    // Get credentials
+    const credentials = new Map<string, string>();
+    for (const provider of config.providers) {
+      const token = await loadCredentialToken(config.userId, provider);
+      if (token) {
+        credentials.set(provider, token);
+      }
+    }
+
+    // GitHub token is required for cloning repositories
+    if (config.repositories.length > 0) {
+      const githubToken = await loadCredentialToken(config.userId, 'github');
+      if (githubToken) {
+        credentials.set('github', githubToken);
+      } else {
+        console.warn(`No GitHub token found for user ${config.userId}; repository cloning may fail.`);
+      }
+    }
+
+    // Provision compute
+    try {
+      const { computeId, publicUrl } = await this.provisioner.provision(
+        workspace,
+        credentials
+      );
+
+      await db.workspaces.updateStatus(workspace.id, 'running', {
+        computeId,
+        publicUrl,
+      });
+
+      return {
+        workspaceId: workspace.id,
+        status: 'running',
+        publicUrl,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+      await db.workspaces.updateStatus(workspace.id, 'error', {
+        errorMessage,
+      });
+
+      return {
+        workspaceId: workspace.id,
+        status: 'error',
+        error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Deprovision a workspace
+   */
+  async deprovision(workspaceId: string): Promise<void> {
+    const workspace = await db.workspaces.findById(workspaceId);
+    if (!workspace) {
+      throw new Error('Workspace not found');
+    }
+
+    await this.provisioner.deprovision(workspace);
+    await db.workspaces.delete(workspaceId);
+  }
+
+  /**
+   * Get workspace status
+   */
+  async getStatus(workspaceId: string): Promise<WorkspaceStatus> {
+    const workspace = await db.workspaces.findById(workspaceId);
+    if (!workspace) {
+      throw new Error('Workspace not found');
+    }
+
+    const status = await this.provisioner.getStatus(workspace);
+
+    // Update database if status changed
+    if (status !== workspace.status) {
+      await db.workspaces.updateStatus(workspaceId, status);
+    }
+
+    return status;
+  }
+
+  /**
+   * Restart a workspace
+   */
+  async restart(workspaceId: string): Promise<void> {
+    const workspace = await db.workspaces.findById(workspaceId);
+    if (!workspace) {
+      throw new Error('Workspace not found');
+    }
+
+    await this.provisioner.restart(workspace);
+  }
+
+  /**
+   * Stop a workspace
+   */
+  async stop(workspaceId: string): Promise<void> {
+    const workspace = await db.workspaces.findById(workspaceId);
+    if (!workspace) {
+      throw new Error('Workspace not found');
+    }
+
+    // For now, just deprovision to stop
+    await this.provisioner.deprovision(workspace);
+    await db.workspaces.updateStatus(workspaceId, 'stopped');
+  }
+}
+
+// Singleton instance
+let _provisioner: WorkspaceProvisioner | null = null;
+
+export function getProvisioner(): WorkspaceProvisioner {
+  if (!_provisioner) {
+    _provisioner = new WorkspaceProvisioner();
+  }
+  return _provisioner;
+}
