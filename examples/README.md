@@ -11,6 +11,8 @@ This folder contains examples for configuring agent-relay in different environme
 | `programmatic-usage.ts` | Using agent-relay as a Node.js library |
 | `slack-claude-bot.ts` | Slack bot with Claude Code via agent-relay |
 | `slack-claude-standalone.ts` | Standalone Slack + Claude Code bot (no relay) |
+| `discord-claude-bot.ts` | Discord bot with Claude Code via agent-relay |
+| `discord-claude-standalone.ts` | Standalone Discord + Claude Code bot (no relay) |
 | `docker-compose.yml` | Docker Compose setup for containerized deployment |
 | `agent-relay.service` | Systemd service file for Linux servers |
 | `team-config.json` | Team configuration with multiple agents |
@@ -91,6 +93,43 @@ SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... npx ts-node examples/slack-cla
 3. **OAuth & Permissions** → add scopes: `app_mentions:read`, `chat:write`
 4. **Event Subscriptions** → subscribe to `app_mention`
 5. Install to workspace → copy Bot Token (`xoxb-...`)
+
+## Discord Bot Examples
+
+Two Discord bot examples are included - both use Claude Code CLI (your subscription, no API costs).
+
+### Standalone Bot (Quick Test)
+
+No agent-relay needed - just Discord + Claude Code:
+
+```bash
+# Install Discord.js
+npm install discord.js
+
+# Run (ensure `claude` CLI is logged in)
+DISCORD_TOKEN=... npx ts-node examples/discord-claude-standalone.ts
+```
+
+### Agent-Relay Bridge
+
+Bridges Discord with your relay network - agents can send messages to Discord:
+
+```bash
+# Start relay daemon first
+agent-relay up
+
+# Run the bridge
+DISCORD_TOKEN=... npx ts-node examples/discord-claude-bot.ts
+```
+
+### Discord App Setup
+
+1. Create app at https://discord.com/developers/applications
+2. **Bot** → Add Bot → copy Token
+3. **Bot** → enable **Message Content Intent**
+4. **OAuth2** → URL Generator → select `bot` scope
+5. Select permissions: `Send Messages`, `Read Message History`
+6. Use generated URL to invite bot to your server
 
 ## Configuration Priority
 
