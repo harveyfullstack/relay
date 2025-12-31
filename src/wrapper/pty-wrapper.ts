@@ -16,7 +16,7 @@ import type { SendPayload, SendMeta, SpeakOnTrigger } from '../protocol/types.js
 import { getProjectPaths } from '../utils/project-namespace.js';
 import { getTrailEnvVars } from '../trajectory/integration.js';
 import { HookRegistry, createTrajectoryHooks, type LifecycleHooks } from '../hooks/index.js';
-import { getContinuityManager, type ContinuityManager } from '../continuity/index.js';
+import { getContinuityManager, parseContinuityCommand, hasContinuityCommand, type ContinuityManager } from '../continuity/index.js';
 
 /** Maximum lines to keep in output buffer */
 const MAX_BUFFER_LINES = 10000;
@@ -83,6 +83,7 @@ export class PtyWrapper extends EventEmitter {
   private sessionStartTime = Date.now();
   private continuity?: ContinuityManager;
   private agentId?: string;
+  private processedContinuityCommands: Set<string> = new Set();
 
   constructor(config: PtyWrapperConfig) {
     super();
@@ -213,10 +214,12 @@ export class PtyWrapper extends EventEmitter {
       console.error(`[pty:${this.config.name}] Session start hook error:`, err);
     });
 
-    // Initialize continuity and get agentId
-    this.initializeAgentId().catch(err => {
-      console.error(`[pty:${this.config.name}] Agent ID initialization error:`, err);
-    });
+    // Initialize continuity and get agentId, then inject context
+    this.initializeAgentId()
+      .then(() => this.injectContinuityContext())
+      .catch(err => {
+        console.error(`[pty:${this.config.name}] Agent ID/continuity initialization error:`, err);
+      });
 
     // Capture output
     this.ptyProcess.onData((data: string) => {
@@ -282,6 +285,86 @@ export class PtyWrapper extends EventEmitter {
   }
 
   /**
+   * Inject continuity context from previous session.
+   * Called after agent ID initialization to restore state from ledger.
+   */
+  private async injectContinuityContext(): Promise<void> {
+    if (!this.continuity || !this.running) return;
+
+    try {
+      const context = await this.continuity.getStartupContext(this.config.name);
+      if (context?.formatted) {
+        // Build context notification similar to TmuxWrapper
+        const taskInfo = context.ledger?.currentTask
+          ? `Task: ${context.ledger.currentTask.slice(0, 50)}`
+          : '';
+        const handoffInfo = context.handoff
+          ? `Last handoff: ${context.handoff.createdAt.toISOString().split('T')[0]}`
+          : '';
+        const statusParts = [taskInfo, handoffInfo].filter(Boolean).join(' | ');
+
+        const notification = `[Continuity] Previous session context loaded.${statusParts ? ` ${statusParts}` : ''}\n\n${context.formatted}`;
+
+        // Inject via relay message to self
+        this.client.sendMessage(this.config.name, notification, 'message', {
+          thread: 'continuity-context',
+        });
+
+        const mode = context.handoff ? 'resume' : 'continue';
+        console.log(`[pty:${this.config.name}] Continuity context injected (${mode})`);
+      }
+    } catch (err: any) {
+      console.error(`[pty:${this.config.name}] Failed to inject continuity context: ${err.message}`);
+    }
+  }
+
+  /**
+   * Parse ->continuity: commands from output and handle them.
+   *
+   * Supported commands:
+   *   ->continuity:save <<<...>>>  - Save session state to ledger
+   *   ->continuity:load            - Request context injection
+   *   ->continuity:search "query"  - Search past handoffs
+   *   ->continuity:uncertain "..."  - Mark item as uncertain
+   *   ->continuity:handoff <<<...>>> - Create explicit handoff
+   */
+  private async parseContinuityCommands(content: string): Promise<void> {
+    if (!this.continuity) return;
+    if (!hasContinuityCommand(content)) return;
+
+    const command = parseContinuityCommand(content);
+    if (!command) return;
+
+    // Deduplication: use type + content hash for commands with content
+    const hasContent = command.content || command.query || command.item;
+    const cmdHash = hasContent
+      ? `${command.type}:${command.content || command.query || command.item}`
+      : `${command.type}:${Date.now()}`; // Allow load/search to run each time if no content
+
+    if (hasContent && this.processedContinuityCommands.has(cmdHash)) return;
+    this.processedContinuityCommands.add(cmdHash);
+
+    // Limit dedup set size
+    if (this.processedContinuityCommands.size > 100) {
+      const oldest = this.processedContinuityCommands.values().next().value;
+      if (oldest) this.processedContinuityCommands.delete(oldest);
+    }
+
+    try {
+      const response = await this.continuity.handleCommand(this.config.name, command);
+      if (response) {
+        // Inject response via relay message to self
+        this.client.sendMessage(this.config.name, response, 'message', {
+          thread: 'continuity-response',
+        });
+        console.log(`[pty:${this.config.name}] Continuity command handled: ${command.type}`);
+      }
+    } catch (err: any) {
+      console.error(`[pty:${this.config.name}] Continuity command error: ${err.message}`);
+    }
+  }
+
+  /**
    * Handle output from the process
    */
   private handleOutput(data: string): void {
@@ -324,8 +407,13 @@ export class PtyWrapper extends EventEmitter {
     // Parse for relay commands
     this.parseRelayCommands();
 
-    // Dispatch output hook (handles phase detection, etc.)
+    // Parse for continuity commands (->continuity:save, ->continuity:load, etc.)
     const cleanData = this.stripAnsi(data);
+    this.parseContinuityCommands(cleanData).catch(err => {
+      console.error(`[pty:${this.config.name}] Continuity command parsing error:`, err);
+    });
+
+    // Dispatch output hook (handles phase detection, etc.)
     this.hookRegistry.dispatchOutput(cleanData, data).catch(err => {
       console.error(`[pty:${this.config.name}] Output hook error:`, err);
     });
