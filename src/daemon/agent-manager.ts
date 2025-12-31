@@ -455,7 +455,7 @@ export class AgentManager extends EventEmitter {
       lastHealthCheck: agent.lastHealthCheck,
       restartCount: agent.restartCount,
       logFile: agent.logFile,
-      continuityId: agent.continuityId ?? agent.pty?.getAgentId(),
+      agentId: agent.agentId ?? agent.pty?.getAgentId(),
     };
   }
 

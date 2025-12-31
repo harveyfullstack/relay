@@ -43,8 +43,8 @@ export interface Agent {
   lastHealthCheck?: Date;
   restartCount: number;
   logFile?: string;
-  /** Continuity agent ID for session resume */
-  continuityId?: string;
+  /** Unique agent ID for session resume */
+  agentId?: string;
 }
 
 /**
