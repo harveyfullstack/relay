@@ -255,9 +255,25 @@ export async function startDashboard(
     skipUTF8Validation: true,
     maxPayload: 100 * 1024 * 1024
   });
+  const wssPresence = new WebSocketServer({
+    noServer: true,
+    perMessageDeflate: false,
+    skipUTF8Validation: true,
+    maxPayload: 1024 * 1024 // 1MB - presence messages are small
+  });
 
   // Track log subscriptions: agentName -> Set of WebSocket clients
   const logSubscriptions = new Map<string, Set<WebSocket>>();
+
+  // Track online users for presence: username -> UserPresence
+  interface UserPresence {
+    username: string;
+    avatarUrl?: string;
+    connectedAt: string;
+    lastSeen: string;
+    ws: WebSocket;
+  }
+  const onlineUsers = new Map<string, UserPresence>();
 
   // Manually handle upgrade requests and route to correct WebSocketServer
   server.on('upgrade', (request, socket, head) => {
@@ -274,6 +290,10 @@ export async function startDashboard(
     } else if (pathname === '/ws/logs' || pathname.startsWith('/ws/logs/')) {
       wssLogs.handleUpgrade(request, socket, head, (ws) => {
         wssLogs.emit('connection', ws, request);
+      });
+    } else if (pathname === '/ws/presence') {
+      wssPresence.handleUpgrade(request, socket, head, (ws) => {
+        wssPresence.emit('connection', ws, request);
       });
     } else {
       // Unknown path - destroy socket
@@ -292,6 +312,10 @@ export async function startDashboard(
 
   wssLogs.on('error', (err) => {
     console.error('[dashboard] Logs WebSocket server error:', err);
+  });
+
+  wssPresence.on('error', (err) => {
+    console.error('[dashboard] Presence WebSocket server error:', err);
   });
 
   if (storage) {
@@ -1341,6 +1365,114 @@ export async function startDashboard(
 
   // Expose broadcastLogOutput for PTY wrappers to call
   (global as any).__broadcastLogOutput = broadcastLogOutput;
+
+  // ===== Presence WebSocket Handler =====
+
+  // Helper to broadcast to all presence clients
+  const broadcastPresence = (message: object, exclude?: WebSocket) => {
+    const payload = JSON.stringify(message);
+    wssPresence.clients.forEach((client) => {
+      if (client !== exclude && client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    });
+  };
+
+  // Helper to get online users list (without ws reference)
+  const getOnlineUsersList = () => {
+    return Array.from(onlineUsers.values()).map(({ ws, ...user }) => user);
+  };
+
+  wssPresence.on('connection', (ws) => {
+    console.log('[dashboard] Presence WebSocket client connected');
+    let clientUsername: string | undefined;
+
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === 'presence') {
+          if (msg.action === 'join' && msg.user?.username) {
+            const now = new Date().toISOString();
+            const username: string = msg.user.username;
+            clientUsername = username;
+
+            // Store user presence
+            onlineUsers.set(username, {
+              username,
+              avatarUrl: msg.user.avatarUrl,
+              connectedAt: now,
+              lastSeen: now,
+              ws,
+            });
+
+            console.log(`[dashboard] User ${clientUsername} came online`);
+
+            // Send current online users list to the new client
+            ws.send(JSON.stringify({
+              type: 'presence_list',
+              users: getOnlineUsersList(),
+            }));
+
+            // Broadcast join to all other clients
+            broadcastPresence({
+              type: 'presence_join',
+              user: {
+                username,
+                avatarUrl: msg.user.avatarUrl,
+                connectedAt: now,
+                lastSeen: now,
+              },
+            }, ws);
+
+          } else if (msg.action === 'leave' && msg.username) {
+            onlineUsers.delete(msg.username);
+            console.log(`[dashboard] User ${msg.username} went offline`);
+
+            // Broadcast leave to all clients
+            broadcastPresence({
+              type: 'presence_leave',
+              username: msg.username,
+            });
+          }
+        } else if (msg.type === 'typing') {
+          // Update last seen
+          if (clientUsername && onlineUsers.has(clientUsername)) {
+            const user = onlineUsers.get(clientUsername)!;
+            user.lastSeen = new Date().toISOString();
+          }
+
+          // Broadcast typing indicator to all other clients
+          broadcastPresence({
+            type: 'typing',
+            username: msg.username,
+            avatarUrl: msg.avatarUrl,
+            isTyping: msg.isTyping,
+          }, ws);
+        }
+      } catch (err) {
+        console.error('[dashboard] Invalid presence message:', err);
+      }
+    });
+
+    ws.on('error', (err) => {
+      console.error('[dashboard] Presence WebSocket client error:', err);
+    });
+
+    ws.on('close', () => {
+      // Clean up on disconnect
+      if (clientUsername) {
+        onlineUsers.delete(clientUsername);
+        console.log(`[dashboard] User ${clientUsername} disconnected`);
+
+        // Broadcast leave
+        broadcastPresence({
+          type: 'presence_leave',
+          username: clientUsername,
+        });
+      }
+    });
+  });
 
   app.get('/api/data', (req, res) => {
     getAllData().then((data) => res.json(data)).catch((err) => {

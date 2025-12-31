@@ -21,10 +21,14 @@ import { FileAutocomplete, getFileQuery, completeFileInValue } from './FileAutoc
 import { WorkspaceSelector, type Workspace } from './WorkspaceSelector';
 import { AddWorkspaceModal } from './AddWorkspaceModal';
 import { LogViewerPanel } from './LogViewerPanel';
+import { TypingIndicator } from './TypingIndicator';
+import { OnlineUsersIndicator } from './OnlineUsersIndicator';
+import { UserProfilePanel } from './UserProfilePanel';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useAgents } from './hooks/useAgents';
 import { useMessages } from './hooks/useMessages';
 import { useOrchestrator } from './hooks/useOrchestrator';
+import { usePresence, type UserPresence } from './hooks/usePresence';
 import { useCloudSessionOptional } from './CloudSessionProvider';
 import { api } from '../lib/api';
 import type { CurrentUser } from './MessageList';
@@ -65,6 +69,16 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         avatarUrl: cloudSession.user.avatarUrl,
       }
     : undefined;
+
+  // Presence tracking for online users and typing indicators
+  const { onlineUsers, typingUsers, sendTyping, isConnected: isPresenceConnected } = usePresence({
+    currentUser: currentUser
+      ? { username: currentUser.displayName, avatarUrl: currentUser.avatarUrl }
+      : undefined,
+  });
+
+  // User profile panel state
+  const [selectedUserProfile, setSelectedUserProfile] = useState<UserPresence | null>(null);
 
   // View mode state
   const [viewMode, setViewMode] = useState<'local' | 'fleet'>('local');
@@ -557,6 +571,15 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           onMenuClick={() => setIsSidebarOpen(true)}
           hasUnreadNotifications={hasUnreadMessages}
         />
+        {/* Online users indicator - only show in cloud mode */}
+        {currentUser && onlineUsers.length > 0 && (
+          <div className="flex items-center justify-end px-4 py-1 bg-bg-tertiary/80 border-b border-border-subtle">
+            <OnlineUsersIndicator
+              onlineUsers={onlineUsers}
+              onUserClick={setSelectedUserProfile}
+            />
+          </div>
+        )}
         </div>
 
         {/* Content Area */}
@@ -634,12 +657,21 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           })()}
         </div>
 
+        {/* Typing Indicator */}
+        {typingUsers.length > 0 && (
+          <div className="px-4 bg-bg-tertiary border-t border-border-subtle">
+            <TypingIndicator typingUsers={typingUsers} />
+          </div>
+        )}
+
         {/* Message Composer */}
         <div className="p-4 bg-bg-tertiary border-t border-border-subtle">
           <MessageComposer
             recipient={currentChannel === 'general' ? '*' : currentChannel}
             agents={agents}
+            humanUsers={humanUsers}
             onSend={sendMessage}
+            onTyping={sendTyping}
             isSending={isSending}
             error={sendError}
           />
@@ -719,6 +751,17 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           onAgentChange={setLogViewerAgent}
         />
       )}
+
+      {/* User Profile Panel */}
+      <UserProfilePanel
+        user={selectedUserProfile}
+        onClose={() => setSelectedUserProfile(null)}
+        onMention={(username) => {
+          // TODO: Focus composer and insert @username
+          // For now, just close the panel
+          setSelectedUserProfile(null);
+        }}
+      />
     </div>
   );
 }
@@ -741,12 +784,14 @@ interface PendingAttachment {
 interface MessageComposerProps {
   recipient: string;
   agents: Agent[];
+  humanUsers: HumanUser[];
   onSend: (to: string, content: string, thread?: string, attachmentIds?: string[]) => Promise<boolean>;
+  onTyping?: (isTyping: boolean) => void;
   isSending: boolean;
   error: string | null;
 }
 
-function MessageComposer({ recipient, agents, onSend, isSending, error }: MessageComposerProps) {
+function MessageComposer({ recipient, agents, humanUsers, onSend, onTyping, isSending, error }: MessageComposerProps) {
   const [message, setMessage] = useState('');
   const [cursorPosition, setCursorPosition] = useState(0);
   const [showMentions, setShowMentions] = useState(false);
@@ -840,6 +885,9 @@ function MessageComposer({ recipient, agents, onSend, isSending, error }: Messag
     const cursorPos = e.target.selectionStart || 0;
     setMessage(value);
     setCursorPosition(cursorPos);
+
+    // Send typing indicator when user has content
+    onTyping?.(value.trim().length > 0);
 
     // Check for file autocomplete first (@ followed by path-like pattern)
     const fileQuery = getFileQuery(value, cursorPos);
