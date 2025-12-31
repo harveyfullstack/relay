@@ -33,6 +33,67 @@ Unlike Continuous-Claude-v2 which uses Claude Code hooks, we implement continuit
 | Trigger mechanism | Hook events | Output patterns + relay messages |
 | Context injection | Hook injection | Message injection via PTY |
 
+## Relationship to Trajectory System (PR #38)
+
+This proposal is designed to **complement** the trajectory system (PR #38), not replace it:
+
+| System | Scope | Focus |
+|--------|-------|-------|
+| **Trajectory** | Within-session | Decision tracking, PDERO phases |
+| **Continuity** | Cross-session | State persistence, context reload |
+
+### How They Work Together
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Agent Work Session                        │
+├─────────────────────────────────────────────────────────────┤
+│  TRAJECTORY (within-session, fine-grained)                  │
+│  ├─ Plan phase: "Implement auth"                            │
+│  ├─ Design phase: "Use JWT + refresh tokens"                │
+│  ├─ Execute phase: [decisions, tool calls, code]            │
+│  ├─ Review phase: "Tests pass"                              │
+│  └─ Observe phase: "Performance good"                       │
+│                         │                                   │
+│                         ▼ (on completion or context limit)  │
+│  CONTINUITY (cross-session, coarse-grained)                 │
+│  └─ Handoff auto-generated from trajectory                  │
+│     ├─ Summary: trajectory.summary                          │
+│     ├─ Decisions: trajectory.decisions[]                    │
+│     ├─ Phase: trajectory.currentPhase                       │
+│     └─ Next steps: derived from PDERO state                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Integration Points
+
+1. **Trajectory completion → Auto-handoff**
+   - When `trail complete` is called, auto-generate a handoff
+   - Include trajectory summary, decisions, learnings
+
+2. **Hooks system shared**
+   - Use trajectory's hooks (PR #38) for continuity triggers
+   - `onAgentStop` → save ledger
+   - `onMessageSent` → update ledger
+
+3. **Memory adapters optional backend**
+   - Continuity can optionally use trajectory's memory adapters
+   - Default: SQLite + FTS5 (local, searchable)
+   - Optional: supermemory.ai (cloud, semantic search)
+
+4. **PDERO phases inform ledger**
+   - Ledger's `currentTask` maps to trajectory's current phase
+   - Decisions from trajectory populate ledger's `keyDecisions`
+
+### Non-Overlapping Responsibilities
+
+| Trajectory Handles | Continuity Handles |
+|-------------------|-------------------|
+| PDERO phase transitions | Cross-session state reload |
+| Decision recording | Handoff document creation |
+| `trail` CLI integration | Context injection on spawn |
+| Fine-grained step tracking | FTS5 searchable history |
+
 ## Core Concepts
 
 ### Philosophy: "Clear, Don't Compact"
@@ -50,6 +111,7 @@ Instead of relying on lossy summarization:
 | **Handoffs** | Cross-session transfer documents | Permanent, searchable |
 | **Artifact Index** | SQLite+FTS5 knowledge base | Permanent |
 | **Continuity Protocol** | Relay message extensions | N/A |
+| **Trajectory Bridge** | Integration with PR #38 | Via hooks |
 
 ## Integration Architecture
 
@@ -409,6 +471,90 @@ agent-relay continuity clear Alice
 - [ ] Learning extraction
 - [ ] Automatic context limit detection
 
+## Trajectory Bridge (PR #38 Integration)
+
+### Bridge Implementation
+
+```typescript
+// src/continuity/trajectory-bridge.ts
+import { getTrajectoryStatus, type CompleteTrajectoryOptions } from '../trajectory/integration.js';
+import type { HookContext } from '../hooks/types.js';
+
+/**
+ * Bridge between trajectory system and continuity system.
+ * Automatically creates handoffs from trajectory data.
+ */
+export class TrajectoryBridge {
+  constructor(
+    private continuityManager: ContinuityManager,
+    private hookRegistry: HookRegistry
+  ) {
+    this.registerHooks();
+  }
+
+  private registerHooks() {
+    // When trajectory completes, create handoff
+    this.hookRegistry.register('onTrajectoryComplete', async (ctx, data) => {
+      const handoff = await this.createHandoffFromTrajectory(
+        ctx.agentId,
+        data.trajectory
+      );
+      await this.continuityManager.saveHandoff(handoff);
+    });
+
+    // When agent stops, save ledger with trajectory context
+    this.hookRegistry.register('onAgentStop', async (ctx) => {
+      const trajectoryStatus = await getTrajectoryStatus();
+      if (trajectoryStatus.active) {
+        await this.continuityManager.saveLedger(ctx.agentId, {
+          currentPhase: trajectoryStatus.phase,
+          trajectoryId: trajectoryStatus.trajectoryId,
+        });
+      }
+    });
+  }
+
+  async createHandoffFromTrajectory(
+    agentName: string,
+    trajectory: TrajectoryData
+  ): Promise<Handoff> {
+    return {
+      id: generateId(),
+      agentName,
+      cli: trajectory.agent || 'unknown',
+      summary: trajectory.summary || '',
+      taskDescription: trajectory.task?.title || '',
+      completedWork: trajectory.completedSteps || [],
+      nextSteps: this.deriveNextSteps(trajectory),
+      fileReferences: trajectory.filesModified || [],
+      decisions: trajectory.decisions || [],
+      relatedHandoffs: [],
+      createdAt: new Date(),
+      triggerReason: 'trajectory_complete',
+      // Trajectory-specific fields
+      trajectoryId: trajectory.id,
+      pderoPhase: trajectory.currentPhase,
+      confidence: trajectory.confidence,
+      learnings: trajectory.learnings,
+    };
+  }
+}
+```
+
+### Handoff Extended for Trajectory
+
+```typescript
+interface Handoff {
+  // ... existing fields ...
+
+  // Trajectory integration (optional, present if from trajectory)
+  trajectoryId?: string;
+  pderoPhase?: PDEROPhase;
+  confidence?: number;
+  learnings?: string[];
+}
+```
+
 ## Files to Create/Modify
 
 ### New Files
@@ -419,8 +565,9 @@ src/continuity/
 ├── ledger-store.ts
 ├── handoff-store.ts
 ├── artifact-index.ts
-├── parser.ts          # Continuity command parsing
-└── formatter.ts       # Context formatting for injection
+├── parser.ts              # Continuity command parsing
+├── formatter.ts           # Context formatting for injection
+└── trajectory-bridge.ts   # Integration with PR #38
 
 src/dashboard/react-components/
 ├── AgentContextMeter.tsx
@@ -436,6 +583,7 @@ src/protocol/types.ts       # Add continuity message types
 src/daemon/router.ts        # Handle continuity messages
 src/daemon/server.ts        # Add continuity API endpoints
 src/cli/index.ts            # Add continuity commands
+src/hooks/registry.ts       # Register continuity hooks (PR #38)
 ```
 
 ## CLI Support Matrix
@@ -470,3 +618,5 @@ src/cli/index.ts            # Add continuity commands
 - [Continuous-Claude-v2](https://github.com/parcadei/Continuous-Claude-v2)
 - [Agent Relay Architecture](../ARCHITECTURE.md)
 - [Relay Protocol Spec](../protocol/README.md)
+- [Trajectory Integration PR #38](https://github.com/AgentWorkforce/relay/pull/38)
+- [Agent Trajectories Package](https://github.com/steveyegge/agent-trajectories)
