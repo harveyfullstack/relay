@@ -92,11 +92,11 @@ export class ContinuityManager {
   }
 
   /**
-   * Generate a unique agent ID (short, human-readable)
+   * Generate a unique agent ID using UUID v4
    */
   generateAgentId(): string {
-    // Format: agent_XXXXX (5 hex chars = 1M possibilities)
-    return `agent_${crypto.randomBytes(3).toString('hex').slice(0, 5)}`;
+    // Use crypto.randomUUID() for proper UUID v4
+    return crypto.randomUUID();
   }
 
   // =========================================================================

@@ -3,17 +3,38 @@
  *
  * Persists within-session state as JSON files.
  * One ledger per agent, overwritten each session.
+ *
+ * Features:
+ * - agentId index for O(1) lookups
+ * - Hash-based filenames to avoid collisions
+ * - File locking for concurrent access safety
  */
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type { Ledger } from './types.js';
+
+/** Index mapping agentId -> agentName for fast lookups */
+interface AgentIdIndex {
+  [agentId: string]: string; // agentId -> agentName
+}
+
+/** Lock state for managing concurrent access */
+interface LockState {
+  promise: Promise<void>;
+  release: () => void;
+}
 
 export class LedgerStore {
   private basePath: string;
+  private indexPath: string;
+  private index: AgentIdIndex | null = null;
+  private locks: Map<string, LockState> = new Map();
 
   constructor(basePath: string) {
     this.basePath = basePath;
+    this.indexPath = path.join(basePath, '_agent-id-index.json');
   }
 
   /**
@@ -21,32 +42,130 @@ export class LedgerStore {
    */
   async initialize(): Promise<void> {
     await fs.mkdir(this.basePath, { recursive: true });
+    await this.loadIndex();
+  }
+
+  /**
+   * Generate a unique, collision-free filename from agent name
+   * Uses SHA-256 hash prefix + sanitized name for readability
+   */
+  private getFilenameForAgent(agentName: string): string {
+    // Create a short hash to ensure uniqueness
+    const hash = crypto.createHash('sha256').update(agentName).digest('hex').slice(0, 8);
+    // Also include sanitized name for human readability
+    const safeName = agentName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32);
+    return `${safeName}_${hash}`;
   }
 
   /**
    * Get the file path for an agent's ledger
    */
   private getLedgerPath(agentName: string): string {
-    // Sanitize agent name for filesystem
-    const safeName = agentName.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return path.join(this.basePath, `${safeName}.json`);
+    const filename = this.getFilenameForAgent(agentName);
+    return path.join(this.basePath, `${filename}.json`);
   }
 
   /**
-   * Save a ledger for an agent
+   * Load the agentId index from disk
+   */
+  private async loadIndex(): Promise<void> {
+    try {
+      const content = await fs.readFile(this.indexPath, 'utf-8');
+      this.index = JSON.parse(content) as AgentIdIndex;
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        this.index = {};
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Save the agentId index to disk
+   */
+  private async saveIndex(): Promise<void> {
+    if (!this.index) return;
+    await fs.writeFile(this.indexPath, JSON.stringify(this.index, null, 2), 'utf-8');
+  }
+
+  /**
+   * Update the index with a new agentId -> agentName mapping
+   */
+  private async updateIndex(agentId: string, agentName: string): Promise<void> {
+    if (!this.index) await this.loadIndex();
+    if (this.index) {
+      this.index[agentId] = agentName;
+      await this.saveIndex();
+    }
+  }
+
+  /**
+   * Remove an agentId from the index
+   */
+  private async removeFromIndex(agentId: string): Promise<void> {
+    if (!this.index) await this.loadIndex();
+    if (this.index && this.index[agentId]) {
+      delete this.index[agentId];
+      await this.saveIndex();
+    }
+  }
+
+  /**
+   * Acquire a lock for an agent's ledger (simple async mutex)
+   */
+  private async acquireLock(agentName: string): Promise<() => void> {
+    const key = this.getFilenameForAgent(agentName);
+
+    // Wait for any existing lock
+    const existingLock = this.locks.get(key);
+    if (existingLock) {
+      await existingLock.promise;
+    }
+
+    // Create new lock
+    let release: () => void = () => {};
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    this.locks.set(key, { promise, release });
+
+    return () => {
+      release();
+      this.locks.delete(key);
+    };
+  }
+
+  /**
+   * Save a ledger for an agent (with locking)
    */
   async save(agentName: string, ledger: Ledger): Promise<void> {
     await this.initialize();
-    const filePath = this.getLedgerPath(agentName);
+    const releaseLock = await this.acquireLock(agentName);
 
-    // Ensure updatedAt is set
-    const ledgerToSave: Ledger = {
-      ...ledger,
-      agentName,
-      updatedAt: new Date(),
-    };
+    try {
+      const filePath = this.getLedgerPath(agentName);
 
-    await fs.writeFile(filePath, JSON.stringify(ledgerToSave, null, 2), 'utf-8');
+      // Ensure updatedAt is set
+      const ledgerToSave: Ledger = {
+        ...ledger,
+        agentName,
+        updatedAt: new Date(),
+      };
+
+      // Write to temp file first, then rename (atomic write)
+      const tempPath = `${filePath}.tmp.${Date.now()}`;
+      await fs.writeFile(tempPath, JSON.stringify(ledgerToSave, null, 2), 'utf-8');
+      await fs.rename(tempPath, filePath);
+
+      // Update agentId index
+      if (ledger.agentId) {
+        await this.updateIndex(ledger.agentId, agentName);
+      }
+    } finally {
+      releaseLock();
+    }
   }
 
   /**
@@ -81,16 +200,30 @@ export class LedgerStore {
    * Delete a ledger for an agent
    */
   async delete(agentName: string): Promise<boolean> {
-    const filePath = this.getLedgerPath(agentName);
+    const releaseLock = await this.acquireLock(agentName);
 
     try {
-      await fs.unlink(filePath);
-      return true;
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
-        return false;
+      // Load ledger to get agentId for index cleanup
+      const ledger = await this.load(agentName);
+      const filePath = this.getLedgerPath(agentName);
+
+      try {
+        await fs.unlink(filePath);
+
+        // Remove from index
+        if (ledger?.agentId) {
+          await this.removeFromIndex(ledger.agentId);
+        }
+
+        return true;
+      } catch (error: any) {
+        if (error.code === 'ENOENT') {
+          return false;
+        }
+        throw error;
       }
-      throw error;
+    } finally {
+      releaseLock();
     }
   }
 
@@ -113,10 +246,27 @@ export class LedgerStore {
    */
   async listAgents(): Promise<string[]> {
     try {
+      await this.initialize();
       const files = await fs.readdir(this.basePath);
-      return files
-        .filter((f: string) => f.endsWith('.json'))
-        .map((f: string) => f.replace('.json', ''));
+      const agents: string[] = [];
+
+      for (const file of files) {
+        // Skip index file and non-JSON files
+        if (!file.endsWith('.json') || file.startsWith('_')) continue;
+
+        try {
+          const filePath = path.join(this.basePath, file);
+          const content = await fs.readFile(filePath, 'utf-8');
+          const ledger = JSON.parse(content) as Ledger;
+          if (ledger.agentName) {
+            agents.push(ledger.agentName);
+          }
+        } catch {
+          // Skip corrupted files
+        }
+      }
+
+      return agents;
     } catch (error: any) {
       if (error.code === 'ENOENT') {
         return [];
@@ -126,26 +276,38 @@ export class LedgerStore {
   }
 
   /**
-   * Update specific fields in a ledger (merge)
+   * Update specific fields in a ledger (merge, with locking)
    */
   async update(
     agentName: string,
     updates: Partial<Omit<Ledger, 'agentName' | 'updatedAt'>>
   ): Promise<Ledger | null> {
-    const existing = await this.load(agentName);
-    if (!existing) {
-      return null;
+    const releaseLock = await this.acquireLock(agentName);
+
+    try {
+      const existing = await this.load(agentName);
+      if (!existing) {
+        return null;
+      }
+
+      const updated: Ledger = {
+        ...existing,
+        ...updates,
+        agentName,
+        agentId: existing.agentId, // Preserve agentId
+        updatedAt: new Date(),
+      };
+
+      // Use internal save that doesn't acquire lock again
+      const filePath = this.getLedgerPath(agentName);
+      const tempPath = `${filePath}.tmp.${Date.now()}`;
+      await fs.writeFile(tempPath, JSON.stringify(updated, null, 2), 'utf-8');
+      await fs.rename(tempPath, filePath);
+
+      return updated;
+    } finally {
+      releaseLock();
     }
-
-    const updated: Ledger = {
-      ...existing,
-      ...updates,
-      agentName,
-      updatedAt: new Date(),
-    };
-
-    await this.save(agentName, updated);
-    return updated;
   }
 
   /**
@@ -156,16 +318,25 @@ export class LedgerStore {
     field: 'completed' | 'inProgress' | 'blocked' | 'uncertainItems',
     item: string
   ): Promise<boolean> {
-    const ledger = await this.load(agentName);
-    if (!ledger) {
-      return false;
-    }
+    const releaseLock = await this.acquireLock(agentName);
 
-    if (!ledger[field].includes(item)) {
-      ledger[field].push(item);
-      await this.save(agentName, ledger);
+    try {
+      const ledger = await this.load(agentName);
+      if (!ledger) {
+        return false;
+      }
+
+      if (!ledger[field].includes(item)) {
+        ledger[field].push(item);
+        const filePath = this.getLedgerPath(agentName);
+        const tempPath = `${filePath}.tmp.${Date.now()}`;
+        await fs.writeFile(tempPath, JSON.stringify({ ...ledger, updatedAt: new Date() }, null, 2), 'utf-8');
+        await fs.rename(tempPath, filePath);
+      }
+      return true;
+    } finally {
+      releaseLock();
     }
-    return true;
   }
 
   /**
@@ -175,17 +346,28 @@ export class LedgerStore {
     agentName: string,
     decision: Omit<Ledger['keyDecisions'][0], 'timestamp'>
   ): Promise<boolean> {
-    const ledger = await this.load(agentName);
-    if (!ledger) {
-      return false;
-    }
+    const releaseLock = await this.acquireLock(agentName);
 
-    ledger.keyDecisions.push({
-      ...decision,
-      timestamp: new Date(),
-    });
-    await this.save(agentName, ledger);
-    return true;
+    try {
+      const ledger = await this.load(agentName);
+      if (!ledger) {
+        return false;
+      }
+
+      ledger.keyDecisions.push({
+        ...decision,
+        timestamp: new Date(),
+      });
+
+      const filePath = this.getLedgerPath(agentName);
+      const tempPath = `${filePath}.tmp.${Date.now()}`;
+      await fs.writeFile(tempPath, JSON.stringify({ ...ledger, updatedAt: new Date() }, null, 2), 'utf-8');
+      await fs.rename(tempPath, filePath);
+
+      return true;
+    } finally {
+      releaseLock();
+    }
   }
 
   /**
@@ -217,16 +399,52 @@ export class LedgerStore {
   }
 
   /**
-   * Find a ledger by agent ID
+   * Find a ledger by agent ID (O(1) via index)
    */
   async findByAgentId(agentId: string): Promise<Ledger | null> {
+    await this.initialize();
+
+    // Use index for O(1) lookup
+    if (this.index && this.index[agentId]) {
+      const agentName = this.index[agentId];
+      const ledger = await this.load(agentName);
+      // Verify the agentId still matches (index could be stale)
+      if (ledger && ledger.agentId === agentId) {
+        return ledger;
+      }
+      // Index is stale, remove it
+      await this.removeFromIndex(agentId);
+    }
+
+    // Fallback: scan all ledgers (and rebuild index)
     const agents = await this.listAgents();
     for (const agentName of agents) {
       const ledger = await this.load(agentName);
       if (ledger && ledger.agentId === agentId) {
+        // Update index for future lookups
+        await this.updateIndex(agentId, agentName);
         return ledger;
       }
     }
+
     return null;
+  }
+
+  /**
+   * Rebuild the agentId index from all ledgers
+   */
+  async rebuildIndex(): Promise<void> {
+    await this.initialize();
+    this.index = {};
+
+    const agents = await this.listAgents();
+    for (const agentName of agents) {
+      const ledger = await this.load(agentName);
+      if (ledger?.agentId) {
+        this.index[ledger.agentId] = agentName;
+      }
+    }
+
+    await this.saveIndex();
   }
 }
