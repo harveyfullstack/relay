@@ -37,6 +37,14 @@ interface ActiveWorker extends WorkerInfo {
   logFile?: string;
 }
 
+/** Callback for agent death notifications */
+export type OnAgentDeathCallback = (info: {
+  name: string;
+  exitCode: number | null;
+  agentId?: string;
+  resumeInstructions?: string;
+}) => void;
+
 export class AgentSpawner {
   private activeWorkers: Map<string, ActiveWorker> = new Map();
   private agentsPath: string;
@@ -45,6 +53,7 @@ export class AgentSpawner {
   private logsDir: string;
   private workersPath: string;
   private dashboardPort?: number;
+  private onAgentDeath?: OnAgentDeathCallback;
 
   constructor(projectRoot: string, _tmuxSession?: string, dashboardPort?: number) {
     const paths = getProjectPaths(projectRoot);
@@ -65,6 +74,14 @@ export class AgentSpawner {
    */
   setDashboardPort(port: number): void {
     this.dashboardPort = port;
+  }
+
+  /**
+   * Set callback for agent death notifications.
+   * Called when an agent exits unexpectedly (non-zero exit code).
+   */
+  setOnAgentDeath(callback: OnAgentDeathCallback): void {
+    this.onAgentDeath = callback;
   }
 
   /**
@@ -143,8 +160,25 @@ export class AgentSpawner {
         },
         onExit: (code) => {
           if (debug) console.log(`[spawner:debug] Worker ${name} exited with code ${code}`);
+
+          // Get the agentId before removing from active workers
+          const worker = this.activeWorkers.get(name);
+          const agentId = worker?.pty?.getAgentId?.();
+
           this.activeWorkers.delete(name);
           this.saveWorkersMetadata();
+
+          // Notify if agent died unexpectedly (non-zero exit)
+          if (code !== 0 && code !== null && this.onAgentDeath) {
+            this.onAgentDeath({
+              name,
+              exitCode: code,
+              agentId,
+              resumeInstructions: agentId
+                ? `To resume this agent's work, use: --resume ${agentId}`
+                : undefined,
+            });
+          }
         },
       };
 

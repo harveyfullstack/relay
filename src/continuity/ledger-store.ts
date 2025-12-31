@@ -24,13 +24,18 @@ interface AgentIdIndex {
 interface LockState {
   promise: Promise<void>;
   release: () => void;
+  acquiredAt: number; // Timestamp for expiry check
 }
+
+/** Lock expiry time in milliseconds (5 minutes) */
+const LOCK_EXPIRY_MS = 5 * 60 * 1000;
 
 export class LedgerStore {
   private basePath: string;
   private indexPath: string;
   private index: AgentIdIndex | null = null;
   private locks: Map<string, LockState> = new Map();
+  private indexLock: LockState | null = null; // Global lock for index operations
 
   constructor(basePath: string) {
     this.basePath = basePath;
@@ -82,32 +87,94 @@ export class LedgerStore {
   }
 
   /**
-   * Save the agentId index to disk
+   * Save the agentId index to disk (atomic write)
    */
   private async saveIndex(): Promise<void> {
     if (!this.index) return;
-    await fs.writeFile(this.indexPath, JSON.stringify(this.index, null, 2), 'utf-8');
+    const tempPath = `${this.indexPath}.tmp.${Date.now()}`;
+    await fs.writeFile(tempPath, JSON.stringify(this.index, null, 2), 'utf-8');
+    await fs.rename(tempPath, this.indexPath);
   }
 
   /**
-   * Update the index with a new agentId -> agentName mapping
+   * Acquire the global index lock
+   */
+  private async acquireIndexLock(): Promise<() => void> {
+    const startTime = Date.now();
+    const timeoutMs = 5000;
+
+    while (this.indexLock) {
+      // Check for expired lock
+      if (Date.now() - this.indexLock.acquiredAt > LOCK_EXPIRY_MS) {
+        this.indexLock.release();
+        this.indexLock = null;
+        break;
+      }
+
+      // Check timeout
+      if (Date.now() - startTime > timeoutMs) {
+        throw new Error('Index lock acquisition timeout');
+      }
+
+      // Wait briefly and retry
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    let release: () => void = () => {};
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    this.indexLock = { promise, release, acquiredAt: Date.now() };
+
+    return () => {
+      release();
+      this.indexLock = null;
+    };
+  }
+
+  /**
+   * Update the index with a new agentId -> agentName mapping (with locking)
    */
   private async updateIndex(agentId: string, agentName: string): Promise<void> {
-    if (!this.index) await this.loadIndex();
-    if (this.index) {
-      this.index[agentId] = agentName;
-      await this.saveIndex();
+    const releaseIndexLock = await this.acquireIndexLock();
+    try {
+      if (!this.index) await this.loadIndex();
+      if (this.index) {
+        this.index[agentId] = agentName;
+        await this.saveIndex();
+      }
+    } finally {
+      releaseIndexLock();
     }
   }
 
   /**
-   * Remove an agentId from the index
+   * Remove an agentId from the index (with locking)
    */
   private async removeFromIndex(agentId: string): Promise<void> {
-    if (!this.index) await this.loadIndex();
-    if (this.index && this.index[agentId]) {
-      delete this.index[agentId];
-      await this.saveIndex();
+    const releaseIndexLock = await this.acquireIndexLock();
+    try {
+      if (!this.index) await this.loadIndex();
+      if (this.index && this.index[agentId]) {
+        delete this.index[agentId];
+        await this.saveIndex();
+      }
+    } finally {
+      releaseIndexLock();
+    }
+  }
+
+  /**
+   * Check and release expired locks
+   */
+  private cleanupExpiredLocks(): void {
+    const now = Date.now();
+    for (const [key, lock] of this.locks.entries()) {
+      if (now - lock.acquiredAt > LOCK_EXPIRY_MS) {
+        lock.release();
+        this.locks.delete(key);
+      }
     }
   }
 
@@ -127,6 +194,9 @@ export class LedgerStore {
     const key = this.getFilenameForAgent(agentName);
     const startTime = Date.now();
 
+    // Cleanup any expired locks first
+    this.cleanupExpiredLocks();
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       // Check timeout
       if (Date.now() - startTime > timeoutMs) {
@@ -135,14 +205,20 @@ export class LedgerStore {
 
       const existingLock = this.locks.get(key);
 
-      if (!existingLock) {
+      // Check if existing lock is expired
+      if (existingLock && Date.now() - existingLock.acquiredAt > LOCK_EXPIRY_MS) {
+        existingLock.release();
+        this.locks.delete(key);
+      }
+
+      if (!existingLock || Date.now() - existingLock.acquiredAt > LOCK_EXPIRY_MS) {
         // Lock is available, acquire it
         let release: () => void = () => {};
         const promise = new Promise<void>((resolve) => {
           release = resolve;
         });
 
-        this.locks.set(key, { promise, release });
+        this.locks.set(key, { promise, release, acquiredAt: Date.now() });
 
         return () => {
           release();
@@ -191,7 +267,7 @@ export class LedgerStore {
       release = resolve;
     });
 
-    this.locks.set(key, { promise, release });
+    this.locks.set(key, { promise, release, acquiredAt: Date.now() });
 
     return () => {
       release();

@@ -411,6 +411,14 @@ export class Daemon {
   }
 
   /**
+   * Broadcast a system message to all connected agents.
+   * Used for system notifications like agent death announcements.
+   */
+  broadcastSystemMessage(message: string, data?: Record<string, unknown>): void {
+    this.router.broadcastSystemMessage(message, data);
+  }
+
+  /**
    * Get connection count.
    */
   get connectionCount(): number {

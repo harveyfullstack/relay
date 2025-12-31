@@ -693,6 +693,38 @@ export class Router {
   }
 
   /**
+   * Broadcast a system message to all connected agents.
+   * Used for system notifications like agent death announcements.
+   */
+  broadcastSystemMessage(message: string, data?: Record<string, unknown>): void {
+    const envelope: SendEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'SEND',
+      id: uuid(),
+      ts: Date.now(),
+      from: '_system',
+      to: '*',
+      payload: {
+        kind: 'message',
+        body: message,
+        data: {
+          ...data,
+          _isSystemMessage: true,
+        },
+      },
+    };
+
+    // Broadcast to all agents
+    for (const [agentName, connection] of this.agents.entries()) {
+      const deliver = this.createDeliverEnvelope('_system', agentName, envelope, connection);
+      const sent = connection.send(deliver);
+      if (sent) {
+        console.log(`[router] System broadcast sent to ${agentName}`);
+      }
+    }
+  }
+
+  /**
    * Replay any pending (unacked) messages for a resumed session.
    */
   async replayPending(connection: RoutableConnection): Promise<void> {

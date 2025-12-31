@@ -802,6 +802,13 @@ export class PtyWrapper extends EventEmitter {
     if (!this.running) return;
     this.running = false;
 
+    // Auto-save continuity state before stopping
+    if (this.continuity) {
+      this.continuity.autoSave(this.config.name, 'session_end').catch((err) => {
+        console.error(`[pty:${this.config.name}] Continuity auto-save failed:`, err);
+      });
+    }
+
     // Dispatch session end hook (handles trajectory completion)
     this.hookRegistry.dispatchSessionEnd(0, true).catch(err => {
       console.error(`[pty:${this.config.name}] Session end hook error:`, err);
@@ -827,6 +834,13 @@ export class PtyWrapper extends EventEmitter {
    */
   kill(): void {
     this.running = false;
+
+    // Auto-save continuity state before killing (best effort)
+    if (this.continuity) {
+      this.continuity.autoSave(this.config.name, 'crash').catch((err) => {
+        console.error(`[pty:${this.config.name}] Continuity auto-save failed:`, err);
+      });
+    }
 
     // Dispatch session end hook (forced termination)
     this.hookRegistry.dispatchSessionEnd(undefined, false).catch(err => {

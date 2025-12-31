@@ -390,11 +390,21 @@ export class AgentManager extends EventEmitter {
       agent.status = code === 0 ? 'stopped' : 'crashed';
 
       if (agent.status === 'crashed') {
+        // Get the continuity agentId for resume info
+        const continuityAgentId = agent.agentId ?? agent.pty?.getAgentId();
+
         this.emitEvent({
           type: 'agent:crashed',
           workspaceId: agent.workspaceId,
           agentId,
-          data: { name: agent.name, exitCode: code },
+          data: {
+            name: agent.name,
+            exitCode: code,
+            continuityAgentId,
+            resumeInstructions: continuityAgentId
+              ? `To resume this agent's work, use: --resume ${continuityAgentId}`
+              : undefined,
+          },
           timestamp: new Date(),
         });
       }
