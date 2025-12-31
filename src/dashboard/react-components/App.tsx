@@ -872,6 +872,9 @@ function MessageComposer({ recipient, agents, onSend, isSending, error }: Messag
 
       if (mentionedName === '*' || mentionedName.toLowerCase() === 'everyone' || mentionedName.toLowerCase() === 'all') {
         target = '*';
+      } else if (mentionedName.toLowerCase().startsWith('team:')) {
+        // Team mention - pass through to backend (e.g., team:frontend)
+        target = mentionedName;
       } else {
         // Check if this is a file path mention (contains / or ends with common file extensions)
         // If so, keep the full message as content and use default recipient

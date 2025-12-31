@@ -464,6 +464,22 @@ export async function startDashboard(
     }
   };
 
+  // Helper to get team members from agents.json
+  const getTeamMembers = (teamName: string): string[] => {
+    const agentsPath = path.join(teamDir, 'agents.json');
+    if (!fs.existsSync(agentsPath)) return [];
+
+    try {
+      const data = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
+      const members = (data.agents || [])
+        .filter((a: { team?: string }) => a.team === teamName)
+        .map((a: { name: string }) => a.name);
+      return members;
+    } catch {
+      return [];
+    }
+  };
+
   // API endpoint to send messages
   app.post('/api/send', async (req, res) => {
     const { to, message, thread, attachments: attachmentIds } = req.body;
@@ -472,9 +488,27 @@ export async function startDashboard(
       return res.status(400).json({ error: 'Missing "to" or "message" field' });
     }
 
-    // Fail fast if target agent is offline (except broadcasts)
-    if (to !== '*' && !isAgentOnline(to)) {
-      return res.status(404).json({ error: `Agent "${to}" is not online` });
+    // Check if this is a team mention (team:teamName)
+    const teamMatch = to.match(/^team:(.+)$/);
+    let targets: string[];
+
+    if (teamMatch) {
+      const teamName = teamMatch[1];
+      const members = getTeamMembers(teamName);
+      if (members.length === 0) {
+        return res.status(404).json({ error: `No agents found in team "${teamName}"` });
+      }
+      // Filter to only online members
+      targets = members.filter(isAgentOnline);
+      if (targets.length === 0) {
+        return res.status(404).json({ error: `No online agents in team "${teamName}"` });
+      }
+    } else {
+      // Fail fast if target agent is offline (except broadcasts)
+      if (to !== '*' && !isAgentOnline(to)) {
+        return res.status(404).json({ error: `Agent "${to}" is not online` });
+      }
+      targets = [to];
     }
 
     if (!relayClient || relayClient.state !== 'READY') {
@@ -503,11 +537,20 @@ export async function startDashboard(
         ? { attachments }
         : undefined;
 
-      const sent = relayClient.sendMessage(to, message, 'message', messageData, thread);
-      if (sent) {
-        res.json({ success: true });
+      // Send to all targets (single agent, team members, or broadcast)
+      let allSent = true;
+      for (const target of targets) {
+        const sent = relayClient.sendMessage(target, message, 'message', messageData, thread);
+        if (!sent) {
+          allSent = false;
+          console.error(`[dashboard] Failed to send message to ${target}`);
+        }
+      }
+
+      if (allSent) {
+        res.json({ success: true, sentTo: targets.length > 1 ? targets : targets[0] });
       } else {
-        res.status(500).json({ error: 'Failed to send message' });
+        res.status(500).json({ error: 'Failed to send message to some recipients' });
       }
     } catch (err) {
       console.error('[dashboard] Failed to send message:', err);
