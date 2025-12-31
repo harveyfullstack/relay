@@ -464,20 +464,36 @@ export async function startDashboard(
     }
   };
 
-  // Helper to get team members from agents.json
+  // Helper to get team members from agents.json and spawner's active workers
   const getTeamMembers = (teamName: string): string[] => {
-    const agentsPath = path.join(teamDir, 'agents.json');
-    if (!fs.existsSync(agentsPath)) return [];
+    const members = new Set<string>();
 
-    try {
-      const data = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
-      const members = (data.agents || [])
-        .filter((a: { team?: string }) => a.team === teamName)
-        .map((a: { name: string }) => a.name);
-      return members;
-    } catch {
-      return [];
+    // Check spawner's active workers first (they have accurate team info)
+    if (spawner) {
+      const activeWorkers = spawner.getActiveWorkers();
+      for (const worker of activeWorkers) {
+        if (worker.team === teamName) {
+          members.add(worker.name);
+        }
+      }
     }
+
+    // Also check agents.json for persisted team info
+    const agentsPath = path.join(teamDir, 'agents.json');
+    if (fs.existsSync(agentsPath)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
+        for (const agent of (data.agents || [])) {
+          if (agent.team === teamName) {
+            members.add(agent.name);
+          }
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    return Array.from(members);
   };
 
   // API endpoint to send messages
@@ -696,12 +712,13 @@ export async function startDashboard(
         const data = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
         // Convert agents.json format to team.json format
         return {
-          agents: data.agents.map((a: { name: string; connectedAt?: string; cli?: string; lastSeen?: string }) => ({
+          agents: data.agents.map((a: { name: string; connectedAt?: string; cli?: string; lastSeen?: string; team?: string }) => ({
             name: a.name,
             role: 'Agent',
             cli: a.cli ?? 'Unknown',
             lastSeen: a.lastSeen ?? a.connectedAt,
             lastActive: a.lastSeen ?? a.connectedAt,
+            team: a.team,
           })),
         };
       } catch (e) {
@@ -857,6 +874,7 @@ export async function startDashboard(
         lastSeen: a.lastSeen,
         lastActive: a.lastActive,
         needsAttention: false,
+        team: a.team,
       });
     });
 

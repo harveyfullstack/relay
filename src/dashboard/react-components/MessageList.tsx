@@ -68,6 +68,8 @@ export function MessageList({
   const [autoScroll, setAutoScroll] = useState(true);
   const prevFilteredLengthRef = useRef<number>(0);
   const prevChannelRef = useRef<string>(currentChannel);
+  // Track when we're doing a programmatic scroll to prevent handleScroll from disabling autoScroll
+  const isProgrammaticScrollRef = useRef(false);
 
   // Filter messages for current channel
   const filteredMessages = messages.filter((msg) => {
@@ -80,6 +82,8 @@ export function MessageList({
   // Handle scroll to detect manual scroll (disable/enable auto-scroll)
   const handleScroll = useCallback(() => {
     if (!scrollContainerRef.current) return;
+    // Skip if this is a programmatic scroll (from auto-scroll or new messages)
+    if (isProgrammaticScrollRef.current) return;
 
     const container = scrollContainerRef.current;
     const isAtBottom =
@@ -98,6 +102,8 @@ export function MessageList({
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (autoScroll && scrollContainerRef.current) {
+      // Mark that we're doing a programmatic scroll
+      isProgrammaticScrollRef.current = true;
       // Use requestAnimationFrame to ensure DOM has been updated
       // before scrolling to the new content
       requestAnimationFrame(() => {
@@ -105,6 +111,11 @@ export function MessageList({
           const container = scrollContainerRef.current;
           container.scrollTop = container.scrollHeight;
         }
+        // Clear the flag after scroll is complete
+        // Use setTimeout to ensure scroll event has been processed
+        setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 100);
       });
     }
   }, [filteredMessages.length, autoScroll]);
@@ -117,10 +128,15 @@ export function MessageList({
       setAutoScroll(true);
       // Scroll to bottom on channel change
       if (scrollContainerRef.current) {
+        isProgrammaticScrollRef.current = true;
         const container = scrollContainerRef.current;
         // Use setTimeout to ensure DOM has updated
         setTimeout(() => {
           container.scrollTop = container.scrollHeight;
+          // Clear the flag after scroll is complete
+          setTimeout(() => {
+            isProgrammaticScrollRef.current = false;
+          }, 100);
         }, 0);
       }
     }
