@@ -526,7 +526,7 @@ export class Router {
             _targetDaemonName: remoteAgent.daemonName,
           },
           thread: envelope.payload.thread,
-          status: 'sent',
+          status: 'unread',
           is_urgent: false,
           is_broadcast: false,
         }).catch(err => console.error('[router] Failed to persist cross-machine message:', err));
