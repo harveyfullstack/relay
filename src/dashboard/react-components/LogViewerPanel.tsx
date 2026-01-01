@@ -133,7 +133,7 @@ export function LogViewerPanel({
           <div className="flex items-center gap-4">
             {/* Agent avatar with shine effect */}
             <div
-              className="relative w-11 h-11 rounded-xl flex items-center justify-center text-sm font-bold overflow-hidden"
+              className="relative shrink-0 w-11 h-11 rounded-xl flex items-center justify-center text-sm font-bold overflow-hidden"
               style={{
                 backgroundColor: colors.primary,
                 color: colors.text,

@@ -492,7 +492,7 @@ function LogLineItem({
 
   if (compact) {
     return (
-      <div className={`${getTypeStyles()} leading-5 whitespace-pre-wrap break-all`}>
+      <div className={`${getTypeStyles()} leading-5 whitespace-pre-wrap break-all min-w-0 overflow-hidden`}>
         {parseAnsiColors(log.content)}
       </div>
     );
@@ -517,7 +517,7 @@ function LogLineItem({
         </span>
       )}
       <span
-        className={`flex-1 whitespace-pre-wrap break-all leading-relaxed ${getTypeStyles()}`}
+        className={`flex-1 min-w-0 overflow-hidden whitespace-pre-wrap break-all leading-relaxed ${getTypeStyles()}`}
       >
         {highlightContent(log.content)}
       </span>

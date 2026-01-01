@@ -6,6 +6,8 @@
  */
 
 import React, { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message, Agent, Attachment } from '../types';
 import { MessageStatusIndicator } from './MessageStatusIndicator';
 import { ThinkingIndicator } from './ThinkingIndicator';
@@ -287,7 +289,7 @@ function MessageItem({ message, isHighlighted, onThreadClick, recipientProcessin
         </div>
       )}
 
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 overflow-hidden">
         {/* Message Header */}
         <div className="flex items-center gap-2 mb-1.5 flex-wrap">
           <span
@@ -454,6 +456,94 @@ function MessageAttachments({ attachments }: MessageAttachmentsProps) {
 }
 
 /**
+ * Custom theme extending oneDark to match dashboard styling
+ */
+const customCodeTheme = {
+  ...oneDark,
+  'pre[class*="language-"]': {
+    ...oneDark['pre[class*="language-"]'],
+    background: 'rgba(15, 23, 42, 0.8)',
+    margin: '0.5rem 0',
+    padding: '1rem',
+    borderRadius: '0.5rem',
+    border: '1px solid rgba(148, 163, 184, 0.1)',
+    fontSize: '0.75rem',
+    lineHeight: '1.5',
+  },
+  'code[class*="language-"]': {
+    ...oneDark['code[class*="language-"]'],
+    background: 'transparent',
+    fontSize: '0.75rem',
+  },
+};
+
+/**
+ * CodeBlock Component - Renders syntax highlighted code
+ */
+interface CodeBlockProps {
+  code: string;
+  language: string;
+}
+
+function CodeBlock({ code, language }: CodeBlockProps) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, [code]);
+
+  // Normalize language names for syntax highlighter
+  const normalizedLanguage = language.toLowerCase().replace(/^(js|jsx)$/, 'javascript')
+    .replace(/^(ts|tsx)$/, 'typescript')
+    .replace(/^(py)$/, 'python')
+    .replace(/^(rb)$/, 'ruby')
+    .replace(/^(sh|shell|zsh)$/, 'bash');
+
+  return (
+    <div className="relative group my-2">
+      {/* Language badge and copy button */}
+      <div className="absolute top-2 right-2 flex items-center gap-2 z-10">
+        {language && language !== 'text' && (
+          <span className="text-xs px-2 py-0.5 rounded bg-accent-cyan/20 text-accent-cyan font-mono">
+            {language}
+          </span>
+        )}
+        <button
+          onClick={handleCopy}
+          className="opacity-0 group-hover:opacity-100 transition-opacity text-xs px-2 py-1 rounded bg-bg-tertiary hover:bg-bg-card text-text-muted hover:text-text-primary border border-border-subtle"
+          title="Copy code"
+        >
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
+      </div>
+      <SyntaxHighlighter
+        language={normalizedLanguage}
+        style={customCodeTheme}
+        customStyle={{
+          margin: 0,
+          background: 'rgba(15, 23, 42, 0.8)',
+        }}
+        showLineNumbers={code.split('\n').length > 3}
+        lineNumberStyle={{
+          minWidth: '2.5em',
+          paddingRight: '1em',
+          color: 'rgba(148, 163, 184, 0.4)',
+          userSelect: 'none',
+        }}
+      >
+        {code.trim()}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
+
+/**
  * Check if a line looks like part of a table (has pipe characters)
  */
 function isTableLine(line: string): boolean {
@@ -469,14 +559,61 @@ function isTableSeparator(line: string): boolean {
 }
 
 interface ContentSection {
-  type: 'text' | 'table';
+  type: 'text' | 'table' | 'code';
   content: string;
+  language?: string;
 }
 
 /**
- * Split content into text and table sections
+ * Split content into text, table, and code sections
+ * Code blocks are detected by fenced code block syntax (```language ... ```)
  */
 function splitContentSections(content: string): ContentSection[] {
+  const sections: ContentSection[] = [];
+
+  // First, extract code blocks using regex
+  // Matches ```language\ncode\n``` or ```\ncode\n```
+  const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = codeBlockRegex.exec(content)) !== null) {
+    // Add any content before this code block
+    if (match.index > lastIndex) {
+      const beforeContent = content.slice(lastIndex, match.index);
+      const beforeSections = splitTextAndTableSections(beforeContent);
+      sections.push(...beforeSections);
+    }
+
+    // Add the code block
+    sections.push({
+      type: 'code',
+      language: match[1] || 'text',
+      content: match[2],
+    });
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add any remaining content after the last code block
+  if (lastIndex < content.length) {
+    const afterContent = content.slice(lastIndex);
+    const afterSections = splitTextAndTableSections(afterContent);
+    sections.push(...afterSections);
+  }
+
+  // If no code blocks were found, just split text/tables
+  if (sections.length === 0) {
+    return splitTextAndTableSections(content);
+  }
+
+  return sections;
+}
+
+/**
+ * Split content into text and table sections (helper for non-code content)
+ */
+function splitTextAndTableSections(content: string): ContentSection[] {
   const lines = content.split('\n');
   const sections: ContentSection[] = [];
   let currentSection: ContentSection | null = null;
@@ -524,8 +661,18 @@ function formatMessageBody(content: string): React.ReactNode {
     ));
   }
 
-  // Render mixed content with tables
+  // Render mixed content with tables and code blocks
   return sections.map((section, sectionIndex) => {
+    if (section.type === 'code') {
+      return (
+        <CodeBlock
+          key={sectionIndex}
+          code={section.content}
+          language={section.language || 'text'}
+        />
+      );
+    }
+
     if (section.type === 'table') {
       return (
         <pre
