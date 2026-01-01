@@ -39,7 +39,10 @@ export function ThreadPanel({
 
   // Auto-scroll when new replies arrive
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Use requestAnimationFrame to ensure DOM has been updated
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    });
   }, [replies.length]);
 
   // Focus input when panel opens
@@ -232,7 +235,7 @@ function ThreadAttachments({ attachments }: ThreadAttachmentsProps) {
             title={`View ${attachment.filename}`}
           >
             <img
-              src={attachment.url}
+              src={attachment.data || attachment.url}
               alt={attachment.filename}
               className="max-h-32 max-w-[200px] rounded-lg border border-border object-cover transition-all duration-150 group-hover:border-accent/50 group-hover:shadow-md"
               loading="lazy"
@@ -265,7 +268,7 @@ function ThreadAttachments({ attachments }: ThreadAttachmentsProps) {
         >
           <div className="relative max-w-[90vw] max-h-[90vh]">
             <img
-              src={lightboxImage.url}
+              src={lightboxImage.data || lightboxImage.url}
               alt={lightboxImage.filename}
               className="max-w-full max-h-[90vh] rounded-lg shadow-2xl"
               onClick={(e) => e.stopPropagation()}
