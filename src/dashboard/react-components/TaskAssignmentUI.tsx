@@ -43,9 +43,9 @@ export function TaskAssignmentUI({
   const [priority, setPriority] = useState<TaskAssignment['priority']>('medium');
   const [showForm, setShowForm] = useState(false);
 
-  // Filter to online agents only
+  // Filter to available agents (exclude offline and error states)
   const availableAgents = useMemo(() => {
-    return agents.filter((a) => a.status === 'online' || a.status === 'busy');
+    return agents.filter((a) => a.status !== 'offline' && a.status !== 'error');
   }, [agents]);
 
   // Group tasks by status
