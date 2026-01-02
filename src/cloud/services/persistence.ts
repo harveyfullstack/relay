@@ -70,13 +70,17 @@ export class CloudPersistenceService {
     const agentName = wrapper.name;
 
     // Create session record
-    const [session] = await db.insert(agentSessions).values({
+    const result = await db.insert(agentSessions).values({
       workspaceId: this.config.workspaceId,
       agentName,
       status: 'active',
       startedAt: new Date(),
     }).returning();
 
+    const session = result[0];
+    if (!session) {
+      throw new Error(`Failed to create session for agent ${agentName}`);
+    }
     const sessionId = session.id;
 
     // Create event handlers
@@ -126,12 +130,18 @@ export class CloudPersistenceService {
     try {
       const db = getDb();
 
-      const [summaryRecord] = await db.insert(agentSummaries).values({
+      const result = await db.insert(agentSummaries).values({
         sessionId,
         agentName: event.agentName,
         summary: event.summary,
         createdAt: new Date(),
       }).returning();
+
+      const summaryRecord = result[0];
+      if (!summaryRecord) {
+        console.error(`[persistence] Insert returned no record for ${event.agentName}`);
+        return;
+      }
 
       console.log(`[persistence] Saved summary for ${event.agentName}: ${event.summary.currentTask || 'no task'}`);
 

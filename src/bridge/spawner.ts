@@ -27,6 +27,8 @@ import type {
 export interface CloudPersistenceHandler {
   onSummary: (agentName: string, event: SummaryEvent) => Promise<void>;
   onSessionEnd: (agentName: string, event: SessionEndEvent) => Promise<void>;
+  /** Optional cleanup method for tests and graceful shutdown */
+  destroy?: () => void;
 }
 
 /** Worker metadata stored in workers.json */

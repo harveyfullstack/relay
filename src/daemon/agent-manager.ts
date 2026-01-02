@@ -25,6 +25,8 @@ import type {
 export interface CloudPersistenceHandler {
   onSummary: (agentId: string, event: SummaryEvent) => Promise<void>;
   onSessionEnd: (agentId: string, event: SessionEndEvent) => Promise<void>;
+  /** Optional cleanup method for tests and graceful shutdown */
+  destroy?: () => void;
 }
 
 const logger = createLogger('agent-manager');

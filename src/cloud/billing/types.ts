@@ -20,14 +20,18 @@ export interface BillingPlan {
   priceYearly: number; // cents
   stripePriceIdMonthly?: string;
   stripePriceIdYearly?: string;
-  limits: PlanLimits;
+  limits: BillingPlanLimits;
   features: string[];
 }
 
 /**
- * Resource limits per plan
+ * Resource limits per plan for billing/display purposes.
+ * These limits are shown to customers on pricing pages and in account settings.
+ *
+ * Note: For runtime limit checking (API enforcement), use PlanLimits from
+ * src/cloud/services/planLimits.ts which has a focused subset of limits.
  */
-export interface PlanLimits {
+export interface BillingPlanLimits {
   maxWorkspaces: number;
   maxAgentsPerWorkspace: number;
   maxTeamMembers: number;
