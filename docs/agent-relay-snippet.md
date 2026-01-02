@@ -298,15 +298,23 @@ Flag items that need verification in future sessions:
 - Use `--handoff` flag for major milestones
 - Mark uncertainties as you encounter them
 
-## Work Trajectories
+## Work Trajectories (Required)
 
-Use Trail to record your work as a trajectory for future agents and humans to follow.
+**Trajectory recording is MANDATORY for all agent work sessions.** Use Trail to record your work as a trajectory for future agents and humans to follow.
+
+### Enforcement
+
+Trajectories are enforced via hooks:
+- **onSessionStart** → Automatically calls `trail start` with task context
+- **onSessionEnd** → Prompts for `trail complete` if trajectory is open
+
+If hooks are not configured, you MUST manually call trail commands. Failure to record trajectories results in lost context for future agents.
 
 ### When Starting Work
 
-**Call `trail start` BEFORE diving into implementation** - this captures your full journey, not just the end result.
+**REQUIRED: Call `trail start` BEFORE diving into implementation** - this captures your full journey, not just the end result.
 
-Start a trajectory when picking up a task:
+Start a trajectory immediately when picking up a task:
 
 ```bash
 trail start "Implement user authentication"
@@ -338,7 +346,7 @@ trail decision "Used existing auth middleware"
 
 ### Completing Work
 
-When done, complete with a retrospective:
+**REQUIRED: Always close your trajectory before ending a session.** When done, complete with a retrospective:
 
 ```bash
 trail complete --summary "Added JWT auth with refresh tokens" --confidence 0.85
