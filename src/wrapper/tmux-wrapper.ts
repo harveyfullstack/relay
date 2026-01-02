@@ -551,9 +551,9 @@ export class TmuxWrapper {
 
       // Inject trail instructions
       if (this.trajectory?.isTrailInstalledSync()) {
-        await this.sleep(100);
+        await sleep(100);
         await this.sendKeysLiteral(trailInstructions);
-        await this.sleep(50);
+        await sleep(50);
         await this.sendKeys('Enter');
       }
 
@@ -578,9 +578,9 @@ export class TmuxWrapper {
           context.ledger ? `Task: ${context.ledger.currentTask?.slice(0, 50) || 'unknown'}` : ''
         }${context.handoff ? ` | Last handoff: ${context.handoff.createdAt.toISOString().split('T')[0]}` : ''}`;
 
-        await this.sleep(200);
+        await sleep(200);
         await this.sendKeysLiteral(notification);
-        await this.sleep(50);
+        await sleep(50);
         await this.sendKeys('Enter');
 
         // Queue the full context for injection when agent is ready

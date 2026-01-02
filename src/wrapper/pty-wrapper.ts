@@ -1125,7 +1125,7 @@ export class PtyWrapper extends EventEmitter {
     if (this.ptyProcess) {
       // Try graceful termination first
       this.ptyProcess.write('\x03'); // Ctrl+C
-      await this.sleep(1000);
+      await sleep(1000);
       if (this.ptyProcess) {
         this.ptyProcess.kill();
       }
@@ -1147,7 +1147,7 @@ export class PtyWrapper extends EventEmitter {
       try {
         await Promise.race([
           this.continuity.autoSave(this.config.name, 'crash'),
-          this.sleep(2000), // 2s timeout for crash saves
+          sleep(2000), // 2s timeout for crash saves
         ]);
       } catch (err) {
         console.error(`[pty:${this.config.name}] Continuity auto-save failed:`, err);
@@ -1158,7 +1158,7 @@ export class PtyWrapper extends EventEmitter {
     try {
       await Promise.race([
         this.hookRegistry.dispatchSessionEnd(undefined, false),
-        this.sleep(1000), // 1s timeout for hooks on kill
+        sleep(1000), // 1s timeout for hooks on kill
       ]);
     } catch (err) {
       console.error(`[pty:${this.config.name}] Session end hook error:`, err);
