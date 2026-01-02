@@ -38,6 +38,8 @@ export interface PlanLimits {
   sla: boolean;
   ssoEnabled: boolean;
   auditLogs: boolean;
+  /** Cloud session persistence (summaries, session tracking) - Pro+ only */
+  sessionPersistence: boolean;
 }
 
 /**

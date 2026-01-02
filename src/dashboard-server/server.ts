@@ -16,8 +16,24 @@ import { AgentSpawner, type CloudPersistenceHandler } from '../bridge/spawner.js
 import type { ProjectConfig, SpawnRequest } from '../bridge/types.js';
 import { loadTeamsConfig } from '../bridge/teams-config.js';
 
-// Dynamic import for cloud persistence (only loaded when RELAY_CLOUD_ENABLED=true)
+/**
+ * Initialize cloud persistence for session tracking.
+ *
+ * Activation modes:
+ * 1. Local dev: Set RELAY_CLOUD_ENABLED=true and DATABASE_URL
+ * 2. Cloud deployment: Plan-based - user must have Pro+ subscription
+ *    (enforced at cloud API level when linking daemon or enabling workspace)
+ *
+ * Session persistence (Pro+ feature) enables:
+ * - [[SUMMARY]] blocks saved to PostgreSQL
+ * - [[SESSION_END]] markers for session tracking
+ * - Session recovery and agent handoff
+ *
+ * @see canUseSessionPersistence in services/planLimits.ts
+ */
 async function initCloudPersistence(workspaceId: string): Promise<CloudPersistenceHandler | null> {
+  // Local dev mode: simple env var check
+  // Cloud mode: plan check happens at API level (daemon linking, workspace config)
   if (process.env.RELAY_CLOUD_ENABLED !== 'true') {
     return null;
   }

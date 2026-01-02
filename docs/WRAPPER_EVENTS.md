@@ -325,21 +325,30 @@ export RELAY_SUMMARY_MIN_OUTPUTS=100
 export RELAY_SUMMARY_REMINDER_ENABLED=false
 ```
 
-### Cloud Persistence
+### Cloud Persistence (Pro+ Feature)
+
+> **Note:** Session persistence is a premium feature requiring Pro plan or higher.
+> In cloud deployments, access is enforced at the organization level via `canUseSessionPersistence()`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RELAY_CLOUD_ENABLED` | `false` | Set to `true` to enable cloud persistence |
+| `RELAY_CLOUD_ENABLED` | `false` | Set to `true` to enable cloud persistence (for local dev/testing) |
 | `RELAY_WORKSPACE_ID` | Auto-generated | UUID for workspace scoping (auto-generated from project path if not set) |
 | `DATABASE_URL` | Required | PostgreSQL connection string (required when cloud enabled) |
 
-Example:
+**Local Development:**
 ```bash
-# Enable cloud persistence
+# Enable cloud persistence for local testing
 export RELAY_CLOUD_ENABLED=true
 export DATABASE_URL=postgresql://user:pass@localhost:5432/relay
 export RELAY_WORKSPACE_ID=550e8400-e29b-41d4-a716-446655440000
 ```
+
+**Cloud Deployment:**
+In cloud deployments, the `RELAY_CLOUD_ENABLED` env var is not used.
+Instead, session persistence is enabled per-organization based on subscription:
+- **Free plan:** Not available
+- **Pro+ plans:** Session persistence enabled
 
 ### Priority
 
