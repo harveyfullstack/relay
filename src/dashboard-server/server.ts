@@ -15,6 +15,7 @@ import { MultiProjectClient } from '../bridge/multi-project-client.js';
 import { AgentSpawner, type CloudPersistenceHandler } from '../bridge/spawner.js';
 import type { ProjectConfig, SpawnRequest } from '../bridge/types.js';
 import { loadTeamsConfig } from '../bridge/teams-config.js';
+import { getMemoryMonitor } from '../resiliency/memory-monitor.js';
 
 /**
  * Initialize cloud persistence for session tracking.
@@ -418,7 +419,7 @@ export async function startDashboard(
     // Initialize memory monitoring for cloud deployments
     // Memory monitoring is enabled by default when cloud is enabled
     if (process.env.RELAY_CLOUD_ENABLED === 'true' || process.env.RELAY_MEMORY_MONITORING === 'true') {
-      import('../resiliency/memory-monitor.js').then(({ getMemoryMonitor }) => {
+      try {
         const memoryMonitor = getMemoryMonitor({
           checkIntervalMs: 10000, // Check every 10 seconds
           enableTrendAnalysis: true,
@@ -434,9 +435,9 @@ export async function startDashboard(
             memoryMonitor.register(worker.name, worker.pid);
           }
         }
-      }).catch((err) => {
+      } catch (err) {
         console.warn('[dashboard] Failed to initialize memory monitoring:', err);
-      });
+      }
     }
   }
 
@@ -2134,8 +2135,8 @@ export async function startDashboard(
             alertLevel: rssBytes > 1024 * 1024 * 1024 ? 'critical' :
                        rssBytes > 512 * 1024 * 1024 ? 'warning' : 'normal',
             highWatermark: rssBytes,
-            uptimeMs: worker.startedAt ? Date.now() - new Date(worker.startedAt).getTime() : 0,
-            startedAt: worker.startedAt,
+            uptimeMs: worker.spawnedAt ? Date.now() - worker.spawnedAt : 0,
+            startedAt: worker.spawnedAt ? new Date(worker.spawnedAt).toISOString() : undefined,
           });
         }
       }

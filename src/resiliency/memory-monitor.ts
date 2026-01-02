@@ -12,6 +12,7 @@
 
 import { EventEmitter } from 'events';
 import { execSync } from 'child_process';
+import * as os from 'os';
 
 export interface MemorySnapshot {
   timestamp: Date;
@@ -652,7 +653,6 @@ export class AgentMemoryMonitor extends EventEmitter {
       return { total, free, available };
     } catch {
       // Fallback for non-Linux
-      const os = require('os');
       return {
         total: os.totalmem(),
         free: os.freemem(),
