@@ -497,10 +497,10 @@ function Footer() {
       <div className="footer-bottom">
         <p>© 2025 Agent Relay. All rights reserved.</p>
         <div className="social-links">
-          <a href="https://github.com/agent-relay" aria-label="GitHub">
+          <a href="https://github.com/AgentWorkforce/relay" aria-label="GitHub">
             <GitHubIcon />
           </a>
-          <a href="https://twitter.com/agentrelay" aria-label="Twitter">
+          <a href="https://twitter.com/agent_relay" aria-label="Twitter">
             <TwitterIcon />
           </a>
           <a href="https://discord.gg/agentrelay" aria-label="Discord">
