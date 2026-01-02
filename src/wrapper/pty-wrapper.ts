@@ -17,6 +17,28 @@ import type { SendPayload, SendMeta, SpeakOnTrigger } from '../protocol/types.js
 /** Maximum lines to keep in output buffer */
 const MAX_BUFFER_LINES = 10000;
 
+/** Maximum retry attempts for injection */
+const MAX_INJECTION_RETRIES = 3;
+
+/** Timeout for output stability check (ms) */
+const STABILITY_TIMEOUT_MS = 3000;
+
+/** Polling interval for stability check (ms) */
+const STABILITY_POLL_MS = 200;
+
+/** Required consecutive stable polls before injection */
+const REQUIRED_STABLE_POLLS = 2;
+
+/** Timeout for injection verification (ms) */
+const VERIFICATION_TIMEOUT_MS = 2000;
+
+/** Result of an injection attempt */
+interface InjectionResult {
+  success: boolean;
+  attempts: number;
+  fallbackUsed?: boolean;
+}
+
 export interface PtyWrapperConfig {
   name: string;
   command: string;
@@ -44,10 +66,17 @@ export interface PtyWrapperConfig {
   streamLogs?: boolean;
 }
 
+export interface InjectionFailedEvent {
+  messageId: string;
+  from: string;
+  attempts: number;
+}
+
 export interface PtyWrapperEvents {
   output: (data: string) => void;
   exit: (code: number) => void;
   error: (error: Error) => void;
+  'injection-failed': (event: InjectionFailedEvent) => void;
 }
 
 export class PtyWrapper extends EventEmitter {
@@ -64,6 +93,8 @@ export class PtyWrapper extends EventEmitter {
   private messageQueue: Array<{ from: string; body: string; messageId: string; thread?: string; importance?: number; data?: Record<string, unknown>; originalTo?: string }> = [];
   private isInjecting = false;
   private readyForMessages = false;
+  private lastOutputTime = 0;
+  private injectionMetrics = { total: 0, successFirstTry: 0, successWithRetry: 0, failed: 0 };
   private logFilePath?: string;
   private logStream?: fs.WriteStream;
   private hasAcceptedPrompt = false;
@@ -180,6 +211,9 @@ export class PtyWrapper extends EventEmitter {
    * Handle output from the process
    */
   private handleOutput(data: string): void {
+    // Track output timing for stability checks
+    this.lastOutputTime = Date.now();
+
     // Append to raw buffer
     this.rawBuffer += data;
 
@@ -588,13 +622,144 @@ export class PtyWrapper extends EventEmitter {
   }
 
   /**
-   * Process queued messages
+   * Wait for output to stabilize before injection.
+   * Returns true if output has been stable for the required duration.
+   */
+  private async waitForOutputStable(): Promise<boolean> {
+    const startTime = Date.now();
+    let stablePolls = 0;
+    let lastBufferLength = this.rawBuffer.length;
+
+    while (Date.now() - startTime < STABILITY_TIMEOUT_MS) {
+      await this.sleep(STABILITY_POLL_MS);
+
+      const timeSinceOutput = Date.now() - this.lastOutputTime;
+      const bufferUnchanged = this.rawBuffer.length === lastBufferLength;
+
+      // Consider stable if no output for at least one poll interval
+      if (timeSinceOutput >= STABILITY_POLL_MS && bufferUnchanged) {
+        stablePolls++;
+        if (stablePolls >= REQUIRED_STABLE_POLLS) {
+          return true;
+        }
+      } else {
+        stablePolls = 0;
+        lastBufferLength = this.rawBuffer.length;
+      }
+    }
+
+    // Timeout - return true anyway to avoid blocking forever
+    console.warn(`[pty:${this.config.name}] Stability timeout, proceeding with injection`);
+    return true;
+  }
+
+  /**
+   * Verify that an injected message appeared in the output.
+   * Looks for the message pattern in recent output.
+   */
+  private async verifyInjection(shortId: string, from: string): Promise<boolean> {
+    const expectedPattern = `Relay message from ${from} [${shortId}]`;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < VERIFICATION_TIMEOUT_MS) {
+      // Check if pattern appears in recent buffer
+      // Look at last 2000 chars to avoid scanning entire buffer
+      const recentOutput = this.rawBuffer.slice(-2000);
+      if (recentOutput.includes(expectedPattern)) {
+        return true;
+      }
+
+      await this.sleep(100);
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if the agent process is still alive and responsive.
+   */
+  private isAgentAlive(): boolean {
+    return this.running && this.ptyProcess !== undefined;
+  }
+
+  /**
+   * Perform a single injection attempt.
+   */
+  private async performInjection(injection: string): Promise<void> {
+    if (!this.ptyProcess || !this.running) {
+      throw new Error('PTY process not running');
+    }
+
+    // Write message to PTY, then send Enter separately after a small delay
+    this.ptyProcess.write(injection);
+    await this.sleep(50);
+    this.ptyProcess.write('\r');
+  }
+
+  /**
+   * Inject a message with retry logic and verification.
+   */
+  private async injectWithRetry(
+    injection: string,
+    shortId: string,
+    from: string
+  ): Promise<InjectionResult> {
+    this.injectionMetrics.total++;
+
+    for (let attempt = 0; attempt < MAX_INJECTION_RETRIES; attempt++) {
+      try {
+        // Perform the injection
+        await this.performInjection(injection);
+
+        // Verify it appeared in output
+        const verified = await this.verifyInjection(shortId, from);
+
+        if (verified) {
+          if (attempt === 0) {
+            this.injectionMetrics.successFirstTry++;
+          } else {
+            this.injectionMetrics.successWithRetry++;
+            console.log(`[pty:${this.config.name}] Injection succeeded on attempt ${attempt + 1}`);
+          }
+          return { success: true, attempts: attempt + 1 };
+        }
+
+        // Not verified - log and retry
+        console.warn(
+          `[pty:${this.config.name}] Injection not verified, attempt ${attempt + 1}/${MAX_INJECTION_RETRIES}`
+        );
+
+        // Backoff before retry
+        if (attempt < MAX_INJECTION_RETRIES - 1) {
+          await this.sleep(300 * (attempt + 1));
+        }
+      } catch (err: any) {
+        console.error(`[pty:${this.config.name}] Injection error on attempt ${attempt + 1}: ${err.message}`);
+      }
+    }
+
+    // All retries failed
+    this.injectionMetrics.failed++;
+    return { success: false, attempts: MAX_INJECTION_RETRIES };
+  }
+
+  /**
+   * Process queued messages with reliability improvements:
+   * 1. Wait for output stability before injection
+   * 2. Verify injection appeared in output
+   * 3. Retry with backoff on failure
+   * 4. Fall back to logging on complete failure
    */
   private async processMessageQueue(): Promise<void> {
     // Wait until instructions have been injected and agent is ready
     if (!this.readyForMessages) return;
     if (this.isInjecting || this.messageQueue.length === 0) return;
-    if (!this.ptyProcess || !this.running) return;
+
+    // Health check: is agent still alive?
+    if (!this.isAgentAlive()) {
+      console.error(`[pty:${this.config.name}] Agent not alive, cannot inject messages`);
+      return;
+    }
 
     this.isInjecting = true;
 
@@ -605,6 +770,9 @@ export class PtyWrapper extends EventEmitter {
     }
 
     try {
+      // Wait for output to stabilize before injecting
+      await this.waitForOutputStable();
+
       const shortId = msg.messageId.substring(0, 8);
       // Strip ANSI escape sequences and orphaned control sequences from message body
       const sanitizedBody = this.stripAnsi(msg.body).replace(/[\r\n]+/g, ' ').trim();
@@ -629,11 +797,23 @@ export class PtyWrapper extends EventEmitter {
 
       const injection = `Relay message from ${msg.from} [${shortId}]${threadHint}${importanceHint}${channelHint}${attachmentHint}: ${sanitizedBody}`;
 
-      // Write message to PTY, then send Enter separately after a small delay
-      // This matches how TmuxWrapper does it for better CLI compatibility
-      this.ptyProcess.write(injection);
-      await this.sleep(50);
-      this.ptyProcess.write('\r');
+      // Inject with retry and verification
+      const result = await this.injectWithRetry(injection, shortId, msg.from);
+
+      if (!result.success) {
+        // Log the failed message for debugging/recovery
+        console.error(
+          `[pty:${this.config.name}] Message delivery failed after ${result.attempts} attempts: ` +
+          `from=${msg.from} id=${shortId}`
+        );
+
+        // Emit event for external monitoring (e.g., dashboard)
+        this.emit('injection-failed', {
+          messageId: msg.messageId,
+          from: msg.from,
+          attempts: result.attempts,
+        });
+      }
     } catch (err: any) {
       console.error(`[pty:${this.config.name}] Injection failed: ${err.message}`);
     } finally {
@@ -753,5 +933,33 @@ export class PtyWrapper extends EventEmitter {
 
   get logPath(): string | undefined {
     return this.logFilePath;
+  }
+
+  /**
+   * Get injection reliability metrics
+   */
+  getInjectionMetrics(): {
+    total: number;
+    successFirstTry: number;
+    successWithRetry: number;
+    failed: number;
+    successRate: number;
+  } {
+    const total = this.injectionMetrics.total;
+    const successRate = total > 0
+      ? ((this.injectionMetrics.successFirstTry + this.injectionMetrics.successWithRetry) / total) * 100
+      : 100;
+
+    return {
+      ...this.injectionMetrics,
+      successRate: Math.round(successRate * 100) / 100,
+    };
+  }
+
+  /**
+   * Get count of pending messages in queue
+   */
+  get pendingMessageCount(): number {
+    return this.messageQueue.length;
   }
 }
