@@ -9,7 +9,7 @@ import path from 'node:path';
 import { sleep } from './utils.js';
 import { getProjectPaths } from '../utils/project-namespace.js';
 import { resolveCommand } from '../utils/command-resolver.js';
-import { PtyWrapper, type PtyWrapperConfig } from '../wrapper/pty-wrapper.js';
+import { PtyWrapper, type PtyWrapperConfig, type SummaryEvent, type SessionEndEvent } from '../wrapper/pty-wrapper.js';
 import { selectShadowCli } from './shadow-cli.js';
 import type {
   SpawnRequest,
@@ -19,6 +19,15 @@ import type {
   SpawnWithShadowResult,
   SpeakOnTrigger,
 } from './types.js';
+
+/**
+ * Cloud persistence handler interface.
+ * Implement this to persist agent session data to cloud storage.
+ */
+export interface CloudPersistenceHandler {
+  onSummary: (agentName: string, event: SummaryEvent) => Promise<void>;
+  onSessionEnd: (agentName: string, event: SessionEndEvent) => Promise<void>;
+}
 
 /** Worker metadata stored in workers.json */
 interface WorkerMeta {
@@ -45,6 +54,7 @@ export class AgentSpawner {
   private logsDir: string;
   private workersPath: string;
   private dashboardPort?: number;
+  private cloudPersistence?: CloudPersistenceHandler;
 
   constructor(projectRoot: string, _tmuxSession?: string, dashboardPort?: number) {
     const paths = getProjectPaths(projectRoot);
@@ -65,6 +75,41 @@ export class AgentSpawner {
    */
   setDashboardPort(port: number): void {
     this.dashboardPort = port;
+  }
+
+  /**
+   * Set cloud persistence handler for forwarding PtyWrapper events.
+   * When set, 'summary' and 'session-end' events from spawned agents
+   * are forwarded to the handler for cloud persistence (PostgreSQL/Redis).
+   *
+   * Note: Enable via RELAY_CLOUD_ENABLED=true environment variable.
+   */
+  setCloudPersistence(handler: CloudPersistenceHandler): void {
+    this.cloudPersistence = handler;
+    console.log('[spawner] Cloud persistence handler set');
+  }
+
+  /**
+   * Bind cloud persistence event handlers to a PtyWrapper.
+   */
+  private bindCloudPersistenceEvents(name: string, pty: PtyWrapper): void {
+    if (!this.cloudPersistence) return;
+
+    pty.on('summary', async (event) => {
+      try {
+        await this.cloudPersistence!.onSummary(name, event);
+      } catch (err) {
+        console.error(`[spawner] Cloud persistence summary error for ${name}:`, err);
+      }
+    });
+
+    pty.on('session-end', async (event) => {
+      try {
+        await this.cloudPersistence!.onSessionEnd(name, event);
+      } catch (err) {
+        console.error(`[spawner] Cloud persistence session-end error for ${name}:`, err);
+      }
+    });
   }
 
   /**
@@ -159,6 +204,9 @@ export class AgentSpawner {
           broadcast(name, data);
         }
       });
+
+      // Bind cloud persistence events (if enabled)
+      this.bindCloudPersistenceEvents(name, pty);
 
       await pty.start();
 

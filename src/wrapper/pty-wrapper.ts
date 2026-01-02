@@ -953,12 +953,18 @@ export class PtyWrapper extends EventEmitter {
    * Works with any CLI (Claude, Gemini, Codex, etc.)
    */
   private trackOutputAndRemind(data: string): void {
-    // Disabled if config.summaryReminder === false
+    // Disabled if config.summaryReminder === false or env RELAY_SUMMARY_REMINDER_ENABLED=false
     if (this.config.summaryReminder === false) return;
+    if (process.env.RELAY_SUMMARY_REMINDER_ENABLED === 'false') return;
 
     const config = this.config.summaryReminder ?? {};
-    const intervalMinutes = config.intervalMinutes ?? 15;
-    const minOutputs = config.minOutputs ?? 50;
+    // Env vars take precedence over config, config takes precedence over defaults
+    const intervalMinutes = process.env.RELAY_SUMMARY_INTERVAL_MINUTES
+      ? parseInt(process.env.RELAY_SUMMARY_INTERVAL_MINUTES, 10)
+      : (config.intervalMinutes ?? 15);
+    const minOutputs = process.env.RELAY_SUMMARY_MIN_OUTPUTS
+      ? parseInt(process.env.RELAY_SUMMARY_MIN_OUTPUTS, 10)
+      : (config.minOutputs ?? 50);
 
     // Only count "significant" outputs (more than just whitespace/control chars)
     const cleanData = stripAnsi(data).trim();

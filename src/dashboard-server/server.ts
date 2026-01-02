@@ -12,9 +12,85 @@ import { RelayClient } from '../wrapper/client.js';
 import { computeNeedsAttention } from './needs-attention.js';
 import { computeSystemMetrics, formatPrometheusMetrics } from './metrics.js';
 import { MultiProjectClient } from '../bridge/multi-project-client.js';
-import { AgentSpawner } from '../bridge/spawner.js';
+import { AgentSpawner, type CloudPersistenceHandler } from '../bridge/spawner.js';
 import type { ProjectConfig, SpawnRequest } from '../bridge/types.js';
 import { loadTeamsConfig } from '../bridge/teams-config.js';
+
+// Dynamic import for cloud persistence (only loaded when RELAY_CLOUD_ENABLED=true)
+async function initCloudPersistence(workspaceId: string): Promise<CloudPersistenceHandler | null> {
+  if (process.env.RELAY_CLOUD_ENABLED !== 'true') {
+    return null;
+  }
+
+  try {
+    // Dynamic import to avoid loading cloud dependencies unless enabled
+    const { getDb } = await import('../cloud/db/drizzle.js');
+    const { agentSessions, agentSummaries } = await import('../cloud/db/schema.js');
+    const { eq } = await import('drizzle-orm');
+
+    const db = getDb();
+    console.log('[dashboard] Cloud persistence enabled');
+
+    // Track active sessions per agent
+    const agentSessionIds = new Map<string, string>();
+
+    return {
+      onSummary: async (agentName, event) => {
+        try {
+          // Ensure we have a session for this agent
+          let sessionId = agentSessionIds.get(agentName);
+          if (!sessionId) {
+            // Create a new session
+            const [session] = await db.insert(agentSessions).values({
+              workspaceId,
+              agentName,
+              status: 'active',
+              startedAt: new Date(),
+            }).returning();
+            sessionId = session.id;
+            agentSessionIds.set(agentName, sessionId);
+          }
+
+          // Insert summary
+          await db.insert(agentSummaries).values({
+            sessionId,
+            agentName,
+            summary: event.summary,
+            createdAt: new Date(),
+          });
+
+          console.log(`[cloud] Saved summary for ${agentName}: ${event.summary.currentTask || 'no task'}`);
+        } catch (err) {
+          console.error(`[cloud] Failed to save summary for ${agentName}:`, err);
+        }
+      },
+
+      onSessionEnd: async (agentName, event) => {
+        try {
+          const sessionId = agentSessionIds.get(agentName);
+          if (sessionId) {
+            // Update session as ended
+            await db.update(agentSessions)
+              .set({
+                status: 'ended',
+                endedAt: new Date(),
+                endMarker: event.marker,
+              })
+              .where(eq(agentSessions.id, sessionId));
+
+            agentSessionIds.delete(agentName);
+            console.log(`[cloud] Session ended for ${agentName}: ${event.marker.summary || 'no summary'}`);
+          }
+        } catch (err) {
+          console.error(`[cloud] Failed to end session for ${agentName}:`, err);
+        }
+      },
+    };
+  } catch (err) {
+    console.warn('[dashboard] Cloud persistence not available:', err);
+    return null;
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -225,6 +301,21 @@ export async function startDashboard(
   const spawner: AgentSpawner | undefined = enableSpawner
     ? new AgentSpawner(projectRoot || dataDir, tmuxSession)
     : undefined;
+
+  // Initialize cloud persistence if enabled (RELAY_CLOUD_ENABLED=true)
+  if (spawner) {
+    // Use workspace ID from env or generate from project root
+    const workspaceId = process.env.RELAY_WORKSPACE_ID ||
+      crypto.createHash('sha256').update(projectRoot || dataDir).digest('hex').slice(0, 36);
+
+    initCloudPersistence(workspaceId).then((cloudHandler) => {
+      if (cloudHandler) {
+        spawner.setCloudPersistence(cloudHandler);
+      }
+    }).catch((err) => {
+      console.warn('[dashboard] Failed to initialize cloud persistence:', err);
+    });
+  }
 
   process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err);

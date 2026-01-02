@@ -300,3 +300,50 @@ Agent Output
 3. **Handle async errors** - Event handlers for `summary` and `session-end` can be async, but errors should be caught
 
 4. **Deduplication is automatic** - PtyWrapper deduplicates summary events based on content, preventing repeated persistence of the same summary
+
+---
+
+## Environment Variables
+
+Configure PtyWrapper and cloud persistence behavior via environment variables:
+
+### Summary Reminders
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RELAY_SUMMARY_REMINDER_ENABLED` | `true` | Set to `false` to disable automatic summary reminders |
+| `RELAY_SUMMARY_INTERVAL_MINUTES` | `15` | Minutes of activity before injecting a summary reminder |
+| `RELAY_SUMMARY_MIN_OUTPUTS` | `50` | Minimum significant outputs before reminding |
+
+Example:
+```bash
+# Remind every 30 minutes after 100 outputs
+export RELAY_SUMMARY_INTERVAL_MINUTES=30
+export RELAY_SUMMARY_MIN_OUTPUTS=100
+
+# Disable reminders entirely
+export RELAY_SUMMARY_REMINDER_ENABLED=false
+```
+
+### Cloud Persistence
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RELAY_CLOUD_ENABLED` | `false` | Set to `true` to enable cloud persistence |
+| `RELAY_WORKSPACE_ID` | Auto-generated | UUID for workspace scoping (auto-generated from project path if not set) |
+| `DATABASE_URL` | Required | PostgreSQL connection string (required when cloud enabled) |
+
+Example:
+```bash
+# Enable cloud persistence
+export RELAY_CLOUD_ENABLED=true
+export DATABASE_URL=postgresql://user:pass@localhost:5432/relay
+export RELAY_WORKSPACE_ID=550e8400-e29b-41d4-a716-446655440000
+```
+
+### Priority
+
+Environment variables take precedence over programmatic config:
+1. Environment variable (highest priority)
+2. `PtyWrapperConfig.summaryReminder` option
+3. Default values (lowest priority)
