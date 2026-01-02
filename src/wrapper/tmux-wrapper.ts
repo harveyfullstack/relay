@@ -730,7 +730,7 @@ export class TmuxWrapper {
       const cleanContent = stripAnsi(stdout);
       // Join continuation lines that TUIs split across multiple lines
       const joinedContent = this.joinContinuationLines(cleanContent);
-      const { commands } = this.parser.parse(joinedContent);
+      const { commands, output: filteredOutput } = this.parser.parse(joinedContent);
 
       // Debug: log relay commands being parsed
       if (commands.length > 0 && this.config.debug) {
@@ -747,12 +747,13 @@ export class TmuxWrapper {
         this.processedOutputLength = stdout.length;
 
         // Stream new output to daemon for dashboard log viewing
+        // Use filtered output to exclude thinking blocks and relay commands
         if (this.config.streamLogs && this.client.state === 'READY') {
-          // Send incremental output since last log
-          const newContent = cleanContent.substring(this.lastLoggedLength);
+          // Send incremental filtered output since last log
+          const newContent = filteredOutput.substring(this.lastLoggedLength);
           if (newContent.length > 0) {
             this.client.sendLog(newContent);
-            this.lastLoggedLength = cleanContent.length;
+            this.lastLoggedLength = filteredOutput.length;
           }
         }
       }

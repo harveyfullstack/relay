@@ -93,8 +93,8 @@ function isSpawnOrReleaseCommand(line: string): boolean {
 }
 
 // Claude extended thinking block markers - skip content inside these
-const THINKING_START = /<antml:thinking>/;
-const THINKING_END = /<\/thinking>/;
+const THINKING_START = new RegExp(String.raw`<` + `thinking>`);
+const THINKING_END = new RegExp(String.raw`</` + `thinking>`);
 
 /**
  * Patterns that indicate instructional/example text that should NOT be parsed as actual commands.

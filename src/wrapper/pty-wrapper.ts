@@ -139,6 +139,7 @@ export class PtyWrapper extends EventEmitter {
   private processedContinuityCommands: Set<string> = new Set();
   private lastSummaryRawContent = ''; // Dedup summary event emissions
   private sessionEndProcessed = false; // Track if we've already emitted session-end
+  private inThinkingBlock = false; // Track if inside <thinking>...</thinking>
   private lastSummaryTime = Date.now(); // Track when last summary was output
   private outputsSinceSummary = 0; // Count outputs since last summary
   private detectedTask?: string; // Auto-detected task from agent config
@@ -464,8 +465,12 @@ export class PtyWrapper extends EventEmitter {
     this.emit('output', data);
 
     // Stream to daemon for dashboard log viewing (if connected)
+    // Filter out Claude's extended thinking blocks before streaming
     if (this.config.streamLogs !== false && this.client.state === 'READY') {
-      this.client.sendLog(data);
+      const filteredData = this.filterThinkingBlocks(data);
+      if (filteredData) {
+        this.client.sendLog(filteredData);
+      }
     }
 
     // Auto-accept Claude's first-run prompt for --dangerously-skip-permissions
@@ -512,6 +517,57 @@ export class PtyWrapper extends EventEmitter {
 
     // Track outputs and potentially remind about summaries
     this.trackOutputAndRemind(data);
+  }
+
+  /**
+   * Filter Claude's extended thinking blocks from output.
+   * Thinking blocks are wrapped in <thinking>...</thinking> tags and should
+   * not be streamed to the dashboard or stored in output buffers.
+   *
+   * This method tracks state across calls to handle multi-line thinking blocks.
+   */
+  private filterThinkingBlocks(data: string): string {
+    const THINKING_START = /<thinking>/;
+    const THINKING_END = /<\/thinking>/;
+
+    const lines = data.split('\n');
+    const outputLines: string[] = [];
+
+    for (const line of lines) {
+      // If in thinking block, check for end
+      if (this.inThinkingBlock) {
+        if (THINKING_END.test(line)) {
+          this.inThinkingBlock = false;
+          // If there's content after </thinking> on the same line, keep it
+          const afterEnd = line.split('</thinking>')[1];
+          if (afterEnd && afterEnd.trim()) {
+            outputLines.push(afterEnd);
+          }
+        }
+        // Skip this line - inside thinking block
+        continue;
+      }
+
+      // Check for thinking start
+      if (THINKING_START.test(line)) {
+        this.inThinkingBlock = true;
+        // Check if it ends on the same line
+        if (THINKING_END.test(line)) {
+          this.inThinkingBlock = false;
+        }
+        // Keep content before <thinking> if any
+        const beforeStart = line.split('<thinking>')[0];
+        if (beforeStart && beforeStart.trim()) {
+          outputLines.push(beforeStart);
+        }
+        continue;
+      }
+
+      // Normal line - keep it
+      outputLines.push(line);
+    }
+
+    return outputLines.join('\n');
   }
 
   /**
