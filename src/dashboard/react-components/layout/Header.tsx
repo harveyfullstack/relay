@@ -22,6 +22,10 @@ export interface HeaderProps {
   onHistoryClick?: () => void;
   onNewConversationClick?: () => void;
   onCoordinatorClick?: () => void;
+  /** Fleet view toggle */
+  onFleetClick?: () => void;
+  /** Whether fleet view is currently active */
+  isFleetViewActive?: boolean;
   /** Mobile: open sidebar handler */
   onMenuClick?: () => void;
   /** Show notification badge on mobile menu button */
@@ -38,6 +42,8 @@ export function Header({
   onHistoryClick,
   onNewConversationClick,
   onCoordinatorClick,
+  onFleetClick,
+  isFleetViewActive,
   onMenuClick,
   hasUnreadNotifications,
 }: HeaderProps) {
@@ -178,6 +184,21 @@ export function Header({
           </button>
         )}
 
+        {/* Fleet Overview toggle */}
+        {onFleetClick && (
+          <button
+            className={`flex items-center justify-center p-2 border rounded-lg cursor-pointer transition-all duration-150 ${
+              isFleetViewActive
+                ? 'bg-accent-cyan/20 border-accent-cyan text-accent-cyan'
+                : 'bg-bg-tertiary border-border-subtle text-text-secondary hover:bg-bg-elevated hover:border-border-medium hover:text-accent-cyan'
+            }`}
+            onClick={onFleetClick}
+            title={isFleetViewActive ? 'Back to Chat' : 'Fleet Overview'}
+          >
+            <FleetIcon />
+          </button>
+        )}
+
         <a
           href="/metrics"
           className="flex items-center justify-center p-2 bg-bg-tertiary border border-border-subtle rounded-lg text-text-secondary cursor-pointer transition-all duration-150 hover:bg-bg-elevated hover:border-border-medium hover:text-accent-orange no-underline"
@@ -232,6 +253,16 @@ function MetricsIcon() {
       <path d="M18 17V9" />
       <path d="M13 17V5" />
       <path d="M8 17v-3" />
+    </svg>
+  );
+}
+
+function FleetIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
     </svg>
   );
 }

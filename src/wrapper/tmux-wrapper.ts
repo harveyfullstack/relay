@@ -1270,6 +1270,7 @@ export class TmuxWrapper {
 
   /**
    * Inject a message with retry logic and verification.
+   * Includes dedup check to prevent double-injection race condition.
    */
   private async injectWithRetry(
     injection: string,
@@ -1280,6 +1281,17 @@ export class TmuxWrapper {
 
     for (let attempt = 0; attempt < INJECTION_CONSTANTS.MAX_RETRIES; attempt++) {
       try {
+        // On retry attempts, first check if message already exists (race condition fix)
+        // Previous injection may have succeeded but verification timed out
+        if (attempt > 0) {
+          const alreadyExists = await this.verifyInjection(shortId, from);
+          if (alreadyExists) {
+            this.injectionMetrics.successWithRetry++;
+            this.logStderr(`Message already present (late verification), skipping re-injection`);
+            return { success: true, attempts: attempt + 1 };
+          }
+        }
+
         // Perform the injection
         await this.performInjection(injection);
 

@@ -22,6 +22,10 @@ import { WorkspaceSelector, type Workspace } from './WorkspaceSelector';
 import { AddWorkspaceModal } from './AddWorkspaceModal';
 import { LogViewerPanel } from './LogViewerPanel';
 import { TrajectoryViewer } from './TrajectoryViewer';
+import { DecisionQueue, type Decision } from './DecisionQueue';
+import { FleetOverview } from './FleetOverview';
+import type { ServerInfo } from './ServerCard';
+import { TaskAssignmentUI, type TaskAssignment } from './TaskAssignmentUI';
 import { TypingIndicator } from './TypingIndicator';
 import { OnlineUsersIndicator } from './OnlineUsersIndicator';
 import { UserProfilePanel } from './UserProfilePanel';
@@ -33,7 +37,7 @@ import { useOrchestrator } from './hooks/useOrchestrator';
 import { useTrajectory } from './hooks/useTrajectory';
 import { usePresence, type UserPresence } from './hooks/usePresence';
 import { useCloudSessionOptional } from './CloudSessionProvider';
-import { api } from '../lib/api';
+import { api, convertApiDecision } from '../lib/api';
 import type { CurrentUser } from './MessageList';
 
 /**
@@ -134,6 +138,21 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   // Coordinator panel state
   const [isCoordinatorOpen, setIsCoordinatorOpen] = useState(false);
+
+  // Decision queue state
+  const [isDecisionQueueOpen, setIsDecisionQueueOpen] = useState(false);
+  const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [decisionProcessing, setDecisionProcessing] = useState<Record<string, boolean>>({});
+
+  // Fleet overview state
+  const [isFleetViewActive, setIsFleetViewActive] = useState(false);
+  const [fleetServers, setFleetServers] = useState<ServerInfo[]>([]);
+  const [selectedServerId, setSelectedServerId] = useState<string | undefined>();
+
+  // Task assignment state
+  const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
+  const [assignedTasks, setAssignedTasks] = useState<TaskAssignment[]>([]);
+  const [isAssigning, setIsAssigning] = useState(false);
 
   // Mobile sidebar state
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -542,6 +561,134 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     setLogViewerAgent(agent);
   }, []);
 
+  // Fetch fleet servers periodically when fleet view is active
+  useEffect(() => {
+    if (!isFleetViewActive) return;
+
+    const fetchFleetServers = async () => {
+      const result = await api.getFleetServers();
+      if (result.success && result.data) {
+        // Convert FleetServer to ServerInfo format
+        const servers: ServerInfo[] = result.data.servers.map((s) => ({
+          id: s.id,
+          name: s.name,
+          url: `http://localhost:4280`, // Default URL for local daemon
+          status: s.status === 'healthy' ? 'online' : s.status === 'degraded' ? 'degraded' : 'offline',
+          agentCount: s.agents.length,
+          uptime: s.uptime,
+          lastSeen: s.lastHeartbeat,
+        }));
+        setFleetServers(servers);
+      }
+    };
+
+    fetchFleetServers();
+    const interval = setInterval(fetchFleetServers, 5000);
+    return () => clearInterval(interval);
+  }, [isFleetViewActive]);
+
+  // Fetch decisions periodically when queue is open
+  useEffect(() => {
+    if (!isDecisionQueueOpen) return;
+
+    const fetchDecisions = async () => {
+      const result = await api.getDecisions();
+      if (result.success && result.data) {
+        setDecisions(result.data.decisions.map(convertApiDecision));
+      }
+    };
+
+    fetchDecisions();
+    const interval = setInterval(fetchDecisions, 5000);
+    return () => clearInterval(interval);
+  }, [isDecisionQueueOpen]);
+
+  // Decision queue handlers
+  const handleDecisionApprove = useCallback(async (decisionId: string, optionId?: string) => {
+    setDecisionProcessing((prev) => ({ ...prev, [decisionId]: true }));
+    try {
+      const result = await api.approveDecision(decisionId, optionId);
+      if (result.success) {
+        setDecisions((prev) => prev.filter((d) => d.id !== decisionId));
+      } else {
+        console.error('Failed to approve decision:', result.error);
+      }
+    } catch (err) {
+      console.error('Failed to approve decision:', err);
+    } finally {
+      setDecisionProcessing((prev) => ({ ...prev, [decisionId]: false }));
+    }
+  }, []);
+
+  const handleDecisionReject = useCallback(async (decisionId: string, reason?: string) => {
+    setDecisionProcessing((prev) => ({ ...prev, [decisionId]: true }));
+    try {
+      const result = await api.rejectDecision(decisionId, reason);
+      if (result.success) {
+        setDecisions((prev) => prev.filter((d) => d.id !== decisionId));
+      } else {
+        console.error('Failed to reject decision:', result.error);
+      }
+    } catch (err) {
+      console.error('Failed to reject decision:', err);
+    } finally {
+      setDecisionProcessing((prev) => ({ ...prev, [decisionId]: false }));
+    }
+  }, []);
+
+  const handleDecisionDismiss = useCallback(async (decisionId: string) => {
+    const result = await api.dismissDecision(decisionId);
+    if (result.success) {
+      setDecisions((prev) => prev.filter((d) => d.id !== decisionId));
+    }
+  }, []);
+
+  // Fetch tasks periodically when panel is open
+  useEffect(() => {
+    if (!isTaskPanelOpen) return;
+
+    const fetchTasks = async () => {
+      const result = await api.getTasks();
+      if (result.success && result.data) {
+        setAssignedTasks(result.data.tasks);
+      }
+    };
+
+    fetchTasks();
+    const interval = setInterval(fetchTasks, 5000);
+    return () => clearInterval(interval);
+  }, [isTaskPanelOpen]);
+
+  // Task assignment handlers
+  const handleTaskAssign = useCallback(async (
+    agentName: string,
+    title: string,
+    description: string,
+    priority: TaskAssignment['priority']
+  ) => {
+    setIsAssigning(true);
+    try {
+      const result = await api.createTask({ agentName, title, description, priority });
+      if (result.success && result.data?.task) {
+        const newTask = result.data.task;
+        setAssignedTasks((prev) => [newTask, ...prev]);
+      } else {
+        console.error('Failed to assign task:', result.error);
+      }
+    } catch (err) {
+      console.error('Failed to assign task:', err);
+    } finally {
+      setIsAssigning(false);
+    }
+  }, []);
+
+  const handleTaskCancel = useCallback(async (taskId: string) => {
+    const result = await api.cancelTask(taskId);
+    if (result.success) {
+      setAssignedTasks((prev) => prev.filter((t) => t.id !== taskId));
+    }
+  }, []);
+
   // Handle command palette
   const handleCommandPaletteOpen = useCallback(() => {
     setIsCommandPaletteOpen(true);
@@ -674,6 +821,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           onHistoryClick={handleHistoryClick}
           onNewConversationClick={handleNewConversationClick}
           onCoordinatorClick={handleCoordinatorClick}
+          onFleetClick={() => setIsFleetViewActive(!isFleetViewActive)}
+          isFleetViewActive={isFleetViewActive}
           onMenuClick={() => setIsSidebarOpen(true)}
           hasUnreadNotifications={hasUnreadMessages}
         />
@@ -708,6 +857,20 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
               <div className="flex flex-col items-center justify-center h-full text-text-muted text-center">
                 <LoadingSpinner />
                 <p className="font-display text-text-secondary">Connecting to dashboard...</p>
+              </div>
+            ) : isFleetViewActive ? (
+              <div className="p-4 h-full overflow-y-auto">
+                <FleetOverview
+                  servers={fleetServers}
+                  agents={agents}
+                  selectedServerId={selectedServerId}
+                  onServerSelect={setSelectedServerId}
+                  onServerReconnect={(serverId) => {
+                    // TODO: Implement server reconnect via API
+                    console.log('Reconnecting to server:', serverId);
+                  }}
+                  isLoading={!data}
+                />
               </div>
             ) : (
               <MessageList
@@ -892,6 +1055,93 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
             <circle cx="12" cy="12" r="10" />
             <polyline points="12 6 12 12 16 14" />
           </svg>
+        </button>
+      )}
+
+      {/* Decision Queue Panel */}
+      {isDecisionQueueOpen && (
+        <div className="fixed left-4 bottom-4 w-[400px] max-h-[500px] z-50 shadow-modal">
+          <div className="relative">
+            <button
+              onClick={() => setIsDecisionQueueOpen(false)}
+              className="absolute -top-2 -right-2 w-6 h-6 bg-bg-elevated border border-border rounded-full flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover z-10"
+              title="Close decisions"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+            <DecisionQueue
+              decisions={decisions}
+              onApprove={handleDecisionApprove}
+              onReject={handleDecisionReject}
+              onDismiss={handleDecisionDismiss}
+              isProcessing={decisionProcessing}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Decision Queue Toggle Button (bottom-left when panel is closed) */}
+      {!isDecisionQueueOpen && decisions.length > 0 && (
+        <button
+          onClick={() => setIsDecisionQueueOpen(true)}
+          className="fixed left-4 bottom-4 w-12 h-12 bg-warning text-bg-deep rounded-full shadow-[0_0_20px_rgba(255,107,53,0.4)] flex items-center justify-center hover:scale-105 transition-transform z-50"
+          title={`${decisions.length} pending decision${decisions.length > 1 ? 's' : ''}`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          {decisions.length > 0 && (
+            <span className="absolute -top-1 -right-1 w-5 h-5 bg-error text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+              {decisions.length}
+            </span>
+          )}
+        </button>
+      )}
+
+      {/* Task Assignment Panel */}
+      {isTaskPanelOpen && (
+        <div className="fixed right-4 bottom-20 w-[450px] max-h-[600px] z-50 shadow-modal">
+          <div className="relative">
+            <button
+              onClick={() => setIsTaskPanelOpen(false)}
+              className="absolute -top-2 -right-2 w-6 h-6 bg-bg-elevated border border-border rounded-full flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover z-10"
+              title="Close task panel"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+            <TaskAssignmentUI
+              agents={agents}
+              tasks={assignedTasks}
+              onAssign={handleTaskAssign}
+              onCancel={handleTaskCancel}
+              isAssigning={isAssigning}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Task Assignment Toggle Button (bottom-right, offset from trajectory) */}
+      {!isTaskPanelOpen && (
+        <button
+          onClick={() => setIsTaskPanelOpen(true)}
+          className="fixed right-20 bottom-4 w-12 h-12 bg-accent-purple text-white rounded-full shadow-[0_0_20px_rgba(168,85,247,0.4)] flex items-center justify-center hover:scale-105 transition-transform z-50"
+          title="Assign Task"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M9 11l3 3L22 4" />
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+          </svg>
+          {assignedTasks.filter((t) => t.status === 'assigned' || t.status === 'in_progress').length > 0 && (
+            <span className="absolute -top-1 -right-1 w-5 h-5 bg-accent text-bg-deep text-[10px] font-bold rounded-full flex items-center justify-center">
+              {assignedTasks.filter((t) => t.status === 'assigned' || t.status === 'in_progress').length}
+            </span>
+          )}
         </button>
       )}
 

@@ -496,6 +496,233 @@ export const api = {
       return { success: false, error: 'Network error' };
     }
   },
+
+  // ===== Decision Queue API =====
+
+  /**
+   * Get all pending decisions
+   */
+  async getDecisions(): Promise<ApiResponse<{ decisions: ApiDecision[] }>> {
+    try {
+      const response = await fetch(`${API_BASE}/api/decisions`);
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return { success: true, data: { decisions: data.decisions || [] } };
+      }
+
+      return { success: false, error: data.error || 'Failed to fetch decisions' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  /**
+   * Approve a decision
+   */
+  async approveDecision(id: string, optionId?: string, response?: string): Promise<ApiResponse<void>> {
+    try {
+      const res = await fetch(`${API_BASE}/api/decisions/${encodeURIComponent(id)}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ optionId, response }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        return { success: true };
+      }
+
+      return { success: false, error: data.error || 'Failed to approve decision' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  /**
+   * Reject a decision
+   */
+  async rejectDecision(id: string, reason?: string): Promise<ApiResponse<void>> {
+    try {
+      const res = await fetch(`${API_BASE}/api/decisions/${encodeURIComponent(id)}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        return { success: true };
+      }
+
+      return { success: false, error: data.error || 'Failed to reject decision' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  /**
+   * Dismiss a decision
+   */
+  async dismissDecision(id: string): Promise<ApiResponse<void>> {
+    try {
+      const res = await fetch(`${API_BASE}/api/decisions/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        return { success: true };
+      }
+
+      return { success: false, error: data.error || 'Failed to dismiss decision' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  // ===== Fleet Overview API =====
+
+  /**
+   * Get fleet servers
+   */
+  async getFleetServers(): Promise<ApiResponse<{ servers: FleetServer[] }>> {
+    try {
+      const response = await fetch(`${API_BASE}/api/fleet/servers`);
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return { success: true, data: { servers: data.servers || [] } };
+      }
+
+      return { success: false, error: data.error || 'Failed to fetch fleet servers' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  /**
+   * Get fleet statistics
+   */
+  async getFleetStats(): Promise<ApiResponse<{ stats: FleetStats }>> {
+    try {
+      const response = await fetch(`${API_BASE}/api/fleet/stats`);
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return { success: true, data: { stats: data.stats } };
+      }
+
+      return { success: false, error: data.error || 'Failed to fetch fleet stats' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  // ===== Task Assignment API =====
+
+  /**
+   * Get all tasks
+   */
+  async getTasks(params?: {
+    status?: string;
+    agent?: string;
+  }): Promise<ApiResponse<{ tasks: TaskAssignment[] }>> {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params?.status) queryParams.set('status', params.status);
+      if (params?.agent) queryParams.set('agent', params.agent);
+
+      const response = await fetch(`${API_BASE}/api/tasks?${queryParams}`);
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return { success: true, data: { tasks: data.tasks || [] } };
+      }
+
+      return { success: false, error: data.error || 'Failed to fetch tasks' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  /**
+   * Create and assign a task
+   */
+  async createTask(request: {
+    agentName: string;
+    title: string;
+    description?: string;
+    priority: 'low' | 'medium' | 'high' | 'critical';
+  }): Promise<ApiResponse<{ task: TaskAssignment }>> {
+    try {
+      const response = await fetch(`${API_BASE}/api/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return { success: true, data: { task: data.task } };
+      }
+
+      return { success: false, error: data.error || 'Failed to create task' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  /**
+   * Update task status
+   */
+  async updateTask(id: string, updates: {
+    status?: TaskAssignment['status'];
+    result?: string;
+  }): Promise<ApiResponse<{ task: TaskAssignment }>> {
+    try {
+      const response = await fetch(`${API_BASE}/api/tasks/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return { success: true, data: { task: data.task } };
+      }
+
+      return { success: false, error: data.error || 'Failed to update task' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  /**
+   * Cancel a task
+   */
+  async cancelTask(id: string): Promise<ApiResponse<void>> {
+    try {
+      const response = await fetch(`${API_BASE}/api/tasks/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return { success: true };
+      }
+
+      return { success: false, error: data.error || 'Failed to cancel task' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
 };
 
 // History API types
@@ -551,6 +778,85 @@ export interface FileSearchResponse {
   files: FileSearchResult[];
   query: string;
   searchRoot: string;
+}
+
+// Decision Queue types (API response format)
+export interface ApiDecision {
+  id: string;
+  agentName: string;
+  title: string;
+  description: string;
+  options?: { id: string; label: string; description?: string }[];
+  urgency: 'low' | 'medium' | 'high' | 'critical';
+  category: 'approval' | 'choice' | 'input' | 'confirmation';
+  createdAt: string;
+  expiresAt?: string;
+  context?: Record<string, unknown>;
+}
+
+// Decision type (component format)
+export interface Decision {
+  id: string;
+  agentName: string;
+  timestamp: string | number;
+  type: 'approval' | 'choice' | 'confirmation' | 'input';
+  title: string;
+  description: string;
+  options?: { id: string; label: string; description?: string }[];
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  context?: Record<string, unknown>;
+  expiresAt?: string | number;
+}
+
+// Convert API decision to component format
+export function convertApiDecision(apiDecision: ApiDecision): Decision {
+  return {
+    id: apiDecision.id,
+    agentName: apiDecision.agentName,
+    timestamp: apiDecision.createdAt,
+    type: apiDecision.category,
+    title: apiDecision.title,
+    description: apiDecision.description,
+    options: apiDecision.options,
+    priority: apiDecision.urgency,
+    context: apiDecision.context,
+    expiresAt: apiDecision.expiresAt,
+  };
+}
+
+// Fleet types
+export interface FleetServer {
+  id: string;
+  name: string;
+  status: 'healthy' | 'degraded' | 'offline';
+  agents: { name: string; status: string }[];
+  cpuUsage: number;
+  memoryUsage: number;
+  activeConnections: number;
+  uptime: number;
+  lastHeartbeat: string;
+}
+
+export interface FleetStats {
+  totalAgents: number;
+  onlineAgents: number;
+  busyAgents: number;
+  pendingDecisions: number;
+  activeTasks: number;
+}
+
+// Task Assignment types
+export interface TaskAssignment {
+  id: string;
+  agentName: string;
+  title: string;
+  description: string;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  status: 'pending' | 'assigned' | 'in_progress' | 'completed' | 'failed';
+  createdAt: string;
+  assignedAt?: string;
+  completedAt?: string;
+  result?: string;
 }
 
 /**

@@ -211,3 +211,71 @@ Or for a simple close: `[[SESSION_END]]Work complete.[[/SESSION_END]]`
 - Session recovery if connection drops
 - Progress tracking in dashboard
 - Proper session cleanup in cloud
+
+## Session Continuity (Cross-Session)
+
+Output `->continuity:` patterns to persist state across sessions. This is different from `[[SUMMARY]]` blocks - continuity creates permanent records that survive agent restarts.
+
+### Save Session State
+
+Save your current state to the ledger:
+
+```
+->continuity:save <<<
+Current task: Implementing user authentication
+Completed: User model, JWT utils, Login endpoint
+In progress: Logout endpoint, Token refresh
+Key decisions: Using refresh tokens for security
+Files: src/auth/jwt.ts:10-50, src/models/user.ts
+>>>
+```
+
+To also create a permanent handoff document (recommended before long operations):
+
+```
+->continuity:save --handoff <<<
+Current task: Implementing auth module
+Completed: User model, JWT utils
+Next steps: Login endpoint, Session middleware
+Key decisions: JWT with refresh tokens, bcrypt for passwords
+Files: src/auth/*.ts
+>>>
+```
+
+### Load Previous Context
+
+Request your previous session context (auto-loaded on startup, but can request manually):
+
+```
+->continuity:load
+```
+
+### Search Past Work
+
+Search across all previous handoffs:
+
+```
+->continuity:search "authentication patterns"
+->continuity:search "database migration"
+```
+
+### Mark Uncertain Items
+
+Flag items that need verification in future sessions:
+
+```
+->continuity:uncertain "API rate limit handling unclear"
+```
+
+### When to Save
+
+**Always save before:**
+- Long-running operations (builds, tests, deployments)
+- Context-heavy operations (might trigger compaction)
+- Switching to a different task area
+- Taking a break or ending session
+
+**Good rhythm:**
+- Save progress every 15-20 minutes of active work
+- Use `--handoff` flag for major milestones
+- Mark uncertainties as you encounter them

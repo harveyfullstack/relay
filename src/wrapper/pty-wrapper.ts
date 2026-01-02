@@ -491,13 +491,8 @@ export class PtyWrapper extends EventEmitter {
     // Parse for relay commands
     this.parseRelayCommands();
 
-    // Parse for continuity commands (->continuity:save, ->continuity:load, etc.)
-    const cleanData = stripAnsi(data);
-    this.parseContinuityCommands(cleanData).catch(err => {
-      console.error(`[pty:${this.config.name}] Continuity command parsing error:`, err);
-    });
-
     // Dispatch output hook (handles phase detection, etc.)
+    const cleanData = stripAnsi(data);
     this.hookRegistry.dispatchOutput(cleanData, data).catch(err => {
       console.error(`[pty:${this.config.name}] Output hook error:`, err);
     });
@@ -507,6 +502,13 @@ export class PtyWrapper extends EventEmitter {
     const cleanContent = stripAnsi(this.rawBuffer);
     this.checkForSummaryAndEmit(cleanContent);
     this.checkForSessionEndAndEmit(cleanContent);
+
+    // Parse for continuity commands (->continuity:save, ->continuity:load, etc.)
+    // Use rawBuffer (accumulated content) not immediate chunk, since multi-line
+    // fenced commands like ->continuity:save <<<...>>> span multiple output events
+    this.parseContinuityCommands(cleanContent).catch(err => {
+      console.error(`[pty:${this.config.name}] Continuity command parsing error:`, err);
+    });
 
     // Track outputs and potentially remind about summaries
     this.trackOutputAndRemind(data);

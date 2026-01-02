@@ -2705,6 +2705,425 @@ Start by greeting the project leads and asking for status updates.`;
     }
   });
 
+  // ===== Decision Queue API =====
+
+  interface Decision {
+    id: string;
+    agentName: string;
+    title: string;
+    description: string;
+    options?: { id: string; label: string; description?: string }[];
+    urgency: 'low' | 'medium' | 'high' | 'critical';
+    category: 'approval' | 'choice' | 'input' | 'confirmation';
+    createdAt: string;
+    expiresAt?: string;
+    context?: Record<string, unknown>;
+  }
+
+  const decisions = new Map<string, Decision>();
+
+  /**
+   * GET /api/decisions - List all pending decisions
+   */
+  app.get('/api/decisions', (_req, res) => {
+    const allDecisions = Array.from(decisions.values())
+      .sort((a, b) => {
+        const urgencyOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+        return urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
+      });
+    res.json({ success: true, decisions: allDecisions });
+  });
+
+  /**
+   * POST /api/decisions - Create a new decision request
+   * Body: { agentName, title, description, options?, urgency, category, expiresAt?, context? }
+   */
+  app.post('/api/decisions', (req, res) => {
+    const { agentName, title, description, options, urgency, category, expiresAt, context } = req.body;
+
+    if (!agentName || !title || !urgency || !category) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: agentName, title, urgency, category',
+      });
+    }
+
+    const decision: Decision = {
+      id: `decision-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      agentName,
+      title,
+      description: description || '',
+      options,
+      urgency,
+      category,
+      createdAt: new Date().toISOString(),
+      expiresAt,
+      context,
+    };
+
+    decisions.set(decision.id, decision);
+
+    // Broadcast to WebSocket clients
+    broadcastData().catch(() => {});
+
+    res.json({ success: true, decision });
+  });
+
+  /**
+   * POST /api/decisions/:id/approve - Approve/resolve a decision
+   * Body: { optionId?: string, response?: string }
+   */
+  app.post('/api/decisions/:id/approve', async (req, res) => {
+    const { id } = req.params;
+    const { optionId, response } = req.body;
+
+    const decision = decisions.get(id);
+    if (!decision) {
+      return res.status(404).json({ success: false, error: 'Decision not found' });
+    }
+
+    // Send response to the agent via relay
+    const agentName = decision.agentName;
+    let responseMessage = `DECISION APPROVED: ${decision.title}`;
+    if (optionId && decision.options) {
+      const option = decision.options.find(o => o.id === optionId);
+      if (option) {
+        responseMessage += `\nSelected: ${option.label}`;
+      }
+    }
+    if (response) {
+      responseMessage += `\nResponse: ${response}`;
+    }
+
+    // Try to send message to agent
+    try {
+      const client = await getRelayClient('Dashboard');
+      if (client) {
+        await client.sendMessage(agentName, responseMessage, 'message');
+      }
+    } catch (err) {
+      console.warn('[api] Could not send decision response to agent:', err);
+    }
+
+    decisions.delete(id);
+    broadcastData().catch(() => {});
+
+    res.json({ success: true, message: 'Decision approved' });
+  });
+
+  /**
+   * POST /api/decisions/:id/reject - Reject a decision
+   * Body: { reason?: string }
+   */
+  app.post('/api/decisions/:id/reject', async (req, res) => {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const decision = decisions.get(id);
+    if (!decision) {
+      return res.status(404).json({ success: false, error: 'Decision not found' });
+    }
+
+    // Send rejection to the agent
+    const agentName = decision.agentName;
+    let responseMessage = `DECISION REJECTED: ${decision.title}`;
+    if (reason) {
+      responseMessage += `\nReason: ${reason}`;
+    }
+
+    try {
+      const client = await getRelayClient('Dashboard');
+      if (client) {
+        await client.sendMessage(agentName, responseMessage, 'message');
+      }
+    } catch (err) {
+      console.warn('[api] Could not send decision rejection to agent:', err);
+    }
+
+    decisions.delete(id);
+    broadcastData().catch(() => {});
+
+    res.json({ success: true, message: 'Decision rejected' });
+  });
+
+  /**
+   * DELETE /api/decisions/:id - Delete/dismiss a decision
+   */
+  app.delete('/api/decisions/:id', (_req, res) => {
+    const { id } = _req.params;
+
+    if (!decisions.has(id)) {
+      return res.status(404).json({ success: false, error: 'Decision not found' });
+    }
+
+    decisions.delete(id);
+    broadcastData().catch(() => {});
+
+    res.json({ success: true, message: 'Decision dismissed' });
+  });
+
+  // ===== Fleet Overview API =====
+
+  interface FleetServer {
+    id: string;
+    name: string;
+    status: 'healthy' | 'degraded' | 'offline';
+    agents: { name: string; status: string }[];
+    cpuUsage: number;
+    memoryUsage: number;
+    activeConnections: number;
+    uptime: number;
+    lastHeartbeat: string;
+  }
+
+  /**
+   * GET /api/fleet/servers - Get fleet server overview
+   * Returns local daemon info + any connected bridge servers
+   */
+  app.get('/api/fleet/servers', async (_req, res) => {
+    const servers: FleetServer[] = [];
+
+    // Local server info
+    const localAgents = spawner?.getActiveWorkers() || [];
+    const agentStatuses = await loadAgentStatuses();
+
+    servers.push({
+      id: 'local',
+      name: 'Local Daemon',
+      status: 'healthy',
+      agents: localAgents.map(a => ({
+        name: a.name,
+        status: agentStatuses[a.name]?.status || 'unknown',
+      })),
+      cpuUsage: Math.random() * 30, // Mock - would come from actual metrics
+      memoryUsage: Math.random() * 50,
+      activeConnections: wss.clients.size,
+      uptime: process.uptime(),
+      lastHeartbeat: new Date().toISOString(),
+    });
+
+    // Check for bridge connections
+    const bridgeStatePath = path.join(dataDir, 'bridge-state.json');
+    if (fs.existsSync(bridgeStatePath)) {
+      try {
+        const bridgeState = JSON.parse(fs.readFileSync(bridgeStatePath, 'utf-8'));
+        if (bridgeState.projects) {
+          for (const project of bridgeState.projects) {
+            servers.push({
+              id: project.id,
+              name: project.name || project.path.split('/').pop() || project.id,
+              status: project.connected ? 'healthy' : 'offline',
+              agents: project.agents || [],
+              cpuUsage: 0,
+              memoryUsage: 0,
+              activeConnections: project.connected ? 1 : 0,
+              uptime: 0,
+              lastHeartbeat: project.lastSeen || new Date().toISOString(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[api] Failed to read bridge state:', err);
+      }
+    }
+
+    res.json({ success: true, servers });
+  });
+
+  /**
+   * GET /api/fleet/stats - Get aggregate fleet statistics
+   */
+  app.get('/api/fleet/stats', async (_req, res) => {
+    const localAgents = spawner?.getActiveWorkers() || [];
+    const agentStatuses = await loadAgentStatuses();
+
+    let totalAgents = localAgents.length;
+    let onlineAgents = 0;
+    let busyAgents = 0;
+
+    for (const agent of localAgents) {
+      const status = agentStatuses[agent.name]?.status;
+      if (status === 'online') onlineAgents++;
+      if (status === 'busy') busyAgents++;
+    }
+
+    res.json({
+      success: true,
+      stats: {
+        totalAgents,
+        onlineAgents,
+        busyAgents,
+        pendingDecisions: decisions.size,
+        activeTasks: Array.from(tasks.values()).filter(t =>
+          t.status === 'assigned' || t.status === 'in_progress'
+        ).length,
+      },
+    });
+  });
+
+  // ===== Task Assignment API =====
+
+  interface TaskAssignment {
+    id: string;
+    agentName: string;
+    title: string;
+    description: string;
+    priority: 'low' | 'medium' | 'high' | 'critical';
+    status: 'pending' | 'assigned' | 'in_progress' | 'completed' | 'failed';
+    createdAt: string;
+    assignedAt?: string;
+    completedAt?: string;
+    result?: string;
+  }
+
+  const tasks = new Map<string, TaskAssignment>();
+
+  /**
+   * GET /api/tasks - List all tasks
+   */
+  app.get('/api/tasks', (req, res) => {
+    const status = req.query.status as string | undefined;
+    const agentName = req.query.agent as string | undefined;
+
+    let allTasks = Array.from(tasks.values());
+
+    if (status) {
+      allTasks = allTasks.filter(t => t.status === status);
+    }
+    if (agentName) {
+      allTasks = allTasks.filter(t => t.agentName === agentName);
+    }
+
+    // Sort by priority and creation time
+    allTasks.sort((a, b) => {
+      const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+      const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+      if (priorityDiff !== 0) return priorityDiff;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    res.json({ success: true, tasks: allTasks });
+  });
+
+  /**
+   * POST /api/tasks - Create and assign a task
+   * Body: { agentName, title, description, priority }
+   */
+  app.post('/api/tasks', async (req, res) => {
+    const { agentName, title, description, priority } = req.body;
+
+    if (!agentName || !title || !priority) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: agentName, title, priority',
+      });
+    }
+
+    const task: TaskAssignment = {
+      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      agentName,
+      title,
+      description: description || '',
+      priority,
+      status: 'assigned',
+      createdAt: new Date().toISOString(),
+      assignedAt: new Date().toISOString(),
+    };
+
+    tasks.set(task.id, task);
+
+    // Send task to agent via relay
+    try {
+      const client = await getRelayClient('Dashboard');
+      if (client) {
+        const taskMessage = `TASK ASSIGNED [${priority.toUpperCase()}]: ${title}\n\n${description || 'No additional details.'}`;
+        await client.sendMessage(agentName, taskMessage, 'message');
+      }
+    } catch (err) {
+      console.warn('[api] Could not send task to agent:', err);
+    }
+
+    broadcastData().catch(() => {});
+
+    res.json({ success: true, task });
+  });
+
+  /**
+   * PATCH /api/tasks/:id - Update task status
+   * Body: { status, result? }
+   */
+  app.patch('/api/tasks/:id', (req, res) => {
+    const { id } = req.params;
+    const { status, result } = req.body;
+
+    const task = tasks.get(id);
+    if (!task) {
+      return res.status(404).json({ success: false, error: 'Task not found' });
+    }
+
+    if (status) {
+      task.status = status;
+      if (status === 'completed' || status === 'failed') {
+        task.completedAt = new Date().toISOString();
+      }
+    }
+    if (result !== undefined) {
+      task.result = result;
+    }
+
+    tasks.set(id, task);
+    broadcastData().catch(() => {});
+
+    res.json({ success: true, task });
+  });
+
+  /**
+   * DELETE /api/tasks/:id - Cancel/delete a task
+   */
+  app.delete('/api/tasks/:id', async (req, res) => {
+    const { id } = req.params;
+
+    const task = tasks.get(id);
+    if (!task) {
+      return res.status(404).json({ success: false, error: 'Task not found' });
+    }
+
+    // Notify agent of cancellation if task is still active
+    if (task.status === 'pending' || task.status === 'assigned' || task.status === 'in_progress') {
+      try {
+        const client = await getRelayClient('Dashboard');
+        if (client) {
+          await client.sendMessage(task.agentName, `TASK CANCELLED: ${task.title}`, 'message');
+        }
+      } catch (err) {
+        console.warn('[api] Could not send task cancellation to agent:', err);
+      }
+    }
+
+    tasks.delete(id);
+    broadcastData().catch(() => {});
+
+    res.json({ success: true, message: 'Task cancelled' });
+  });
+
+  // Helper to load agent statuses
+  async function loadAgentStatuses(): Promise<Record<string, { status: string }>> {
+    const agentsFile = path.join(dataDir, 'agents.json');
+    try {
+      if (fs.existsSync(agentsFile)) {
+        const data = JSON.parse(fs.readFileSync(agentsFile, 'utf-8'));
+        const result: Record<string, { status: string }> = {};
+        for (const agent of data.agents || []) {
+          result[agent.name] = { status: agent.status || 'offline' };
+        }
+        return result;
+      }
+    } catch (err) {
+      console.warn('[api] Failed to load agent statuses:', err);
+    }
+    return {};
+  }
+
   // Watch for changes
   if (storage) {
     setInterval(() => {
