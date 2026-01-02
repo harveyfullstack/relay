@@ -103,3 +103,24 @@ export {
   type ClaudeHooksConfig,
   type CodexContextConfig,
 } from './provider-context.js';
+
+export {
+  AgentMemoryMonitor,
+  getMemoryMonitor,
+  formatBytes,
+  type MemorySnapshot,
+  type AgentMemoryMetrics,
+  type MemoryThresholds,
+  type MemoryMonitorConfig,
+  type MemoryAlert,
+  type CrashMemoryContext,
+} from './memory-monitor.js';
+
+export {
+  CrashInsightsService,
+  getCrashInsights,
+  type CrashRecord,
+  type CrashAnalysis,
+  type CrashPattern,
+  type CrashStats,
+} from './crash-insights.js';

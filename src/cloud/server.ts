@@ -33,6 +33,8 @@ import { teamsRouter } from './api/teams.js';
 import { billingRouter } from './api/billing.js';
 import { usageRouter } from './api/usage.js';
 import { coordinatorsRouter } from './api/coordinators.js';
+import { daemonsRouter } from './api/daemons.js';
+import { monitoringRouter } from './api/monitoring.js';
 
 export interface CloudServer {
   app: Express;
@@ -177,7 +179,8 @@ export async function createServer(): Promise<CloudServer> {
   app.use('/api/billing', billingRouter);
   app.use('/api/usage', usageRouter);
   app.use('/api/project-groups', coordinatorsRouter);
-  // TODO: Add authenticated agent/daemon channels when remote sockets are supported
+  app.use('/api/daemons', daemonsRouter);
+  app.use('/api/monitoring', monitoringRouter);
 
   // Serve static dashboard files (Next.js static export)
   // Path: dist/cloud/server.js -> ../../src/dashboard/out
