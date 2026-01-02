@@ -75,6 +75,10 @@ export function MessageList({
       });
     }
   }
+
+  // Build a map of recipient -> latest message ID from current user
+  // This is used to only show the thinking indicator on the most recent message
+  const latestMessageToAgent = new Map<string, string>();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const prevFilteredLengthRef = useRef<number>(0);
@@ -94,6 +98,16 @@ export function MessageList({
     }
     return msg.from === currentChannel || msg.to === currentChannel;
   });
+
+  // Populate latestMessageToAgent with the latest message from current user to each agent
+  // Iterate in order (oldest to newest) so the last one wins
+  for (const msg of filteredMessages) {
+    const isFromCurrentUser = msg.from === 'Dashboard' ||
+      (currentUser && msg.from === currentUser.displayName);
+    if (isFromCurrentUser && msg.to !== '*') {
+      latestMessageToAgent.set(msg.to, msg.id);
+    }
+  }
 
   // Check if we need to scroll BEFORE the DOM updates
   // This runs during render, before useLayoutEffect
@@ -204,9 +218,14 @@ export function MessageList({
         const isFromCurrentUser = message.from === 'Dashboard' ||
           (currentUser && message.from === currentUser.displayName);
 
+        // Check if this is the latest message from current user to this recipient
+        // Only the latest message should show the thinking indicator
+        const isLatestToRecipient = isFromCurrentUser && message.to !== '*' &&
+          latestMessageToAgent.get(message.to) === message.id;
+
         // Check if the recipient is currently processing
-        // Only show thinking indicator for messages from current user to a specific agent
-        const recipientProcessing = isFromCurrentUser && message.to !== '*'
+        // Only show thinking indicator for the LATEST message from current user to an agent
+        const recipientProcessing = isLatestToRecipient
           ? processingAgents.get(message.to)
           : undefined;
 

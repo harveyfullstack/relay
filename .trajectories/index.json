@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-01-02T10:22:32.478Z",
+  "trajectories": {
+    "traj_ozd98si6a7ns": {
+      "title": "Fix thinking indicator showing on all messages",
+      "status": "abandoned",
+      "startedAt": "2026-01-02T10:19:46.895Z",
+      "completedAt": "2026-01-02T10:22:28.822Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_ozd98si6a7ns.json"
+    },
+    "traj_gtlyqtta3x8l": {
+      "title": "Implement optimistic message delivery",
+      "status": "active",
+      "startedAt": "2026-01-02T10:22:32.477Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/active/traj_gtlyqtta3x8l.json"
+    }
+  }
+}
