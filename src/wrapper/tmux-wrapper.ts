@@ -410,7 +410,7 @@ export class TmuxWrapper {
   }
 
   /**
-   * Inject usage instructions for the agent
+   * Inject usage instructions for the agent including persistence protocol
    */
   private async injectInstructions(): Promise<void> {
     if (!this.running) return;
@@ -421,7 +421,8 @@ export class TmuxWrapper {
       `[Agent Relay] You are "${this.config.name}" - connected for real-time messaging.`,
       `SEND: ${escapedPrefix}AgentName message`,
       `MULTI-LINE: ${escapedPrefix}AgentName <<<(newline)content(newline)>>> - ALWAYS end with >>> on its own line!`,
-      `RECEIVE: Messages appear as "Relay message from X [id]: content" - use "agent-relay read <id>" for long messages`,
+      `PERSIST: Output [[SUMMARY]]{"currentTask":"...","context":"..."}[[/SUMMARY]] after major work.`,
+      `END: Output [[SESSION_END]]{"summary":"..."}[[/SESSION_END]] when session complete.`,
     ].join(' | ');
 
     try {

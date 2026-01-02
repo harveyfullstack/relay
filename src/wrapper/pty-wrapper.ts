@@ -826,13 +826,19 @@ export class PtyWrapper extends EventEmitter {
   }
 
   /**
-   * Inject usage instructions
+   * Inject usage instructions including persistence protocol
    */
   private injectInstructions(): void {
     if (!this.running || !this.ptyProcess) return;
 
     const escapedPrefix = '\\' + this.relayPrefix;
-    const instructions = `[Agent Relay] You are "${this.config.name}" - connected for real-time messaging. SEND: ${escapedPrefix}AgentName message. PROTOCOL: (1) Wait for task via relay. (2) ACK receipt before starting. (3) Send "DONE: <summary>" when complete, then wait for next task.`;
+    const instructions = [
+      `[Agent Relay] You are "${this.config.name}" - connected for real-time messaging.`,
+      `SEND: ${escapedPrefix}AgentName message`,
+      `PROTOCOL: (1) ACK receipt (2) Work (3) Send "DONE: summary"`,
+      `PERSIST: Output [[SUMMARY]]{"currentTask":"...","context":"..."}[[/SUMMARY]] after major work.`,
+      `END: Output [[SESSION_END]]{"summary":"..."}[[/SESSION_END]] when session complete.`,
+    ].join(' | ');
 
     try {
       this.ptyProcess.write(instructions + '\r');
