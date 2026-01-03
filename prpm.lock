@@ -159,7 +159,17 @@
           "position": "append"
         }
       }
+    },
+    "@my-senior-dev/browser-testing-with-screenshots#claude": {
+      "version": "1.0.0",
+      "resolved": "https://registry.prpm.dev/api/v1/packages/%40my-senior-dev%2Fbrowser-testing-with-screenshots/1.0.0.tar.gz",
+      "integrity": "sha256-d0443e43bc37284cbe81003649536ffa961bc672cb38c83696d6786c75d5a334",
+      "format": "claude",
+      "subtype": "skill",
+      "sourceFormat": "claude",
+      "sourceSubtype": "skill",
+      "installedPath": ".claude/skills/browser-testing-with-screenshots/SKILL.md"
     }
   },
-  "generated": "2026-01-02T21:13:52.149Z"
+  "generated": "2026-01-03T11:31:14.503Z"
 }

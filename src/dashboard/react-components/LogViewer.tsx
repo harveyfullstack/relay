@@ -78,6 +78,28 @@ export function LogViewer({
       );
     }
 
+    // Filter out empty, whitespace-only, and spinner-fragment lines
+    result = result.filter((log) => {
+      // Strip ANSI codes and check if there's actual content
+      const stripped = log.content
+        .replace(/\x1b\[[0-9;]*m/g, '')  // Strip color codes
+        .replace(/\x1b\][^\x07]*\x07/g, '')  // Strip OSC sequences
+        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')  // Strip CSI sequences
+        .replace(/\r/g, '')  // Remove carriage returns
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')  // Remove other control chars
+        .trim();
+
+      // Filter out empty lines
+      if (stripped.length === 0) return false;
+
+      // Filter out likely spinner fragments (single char or very short non-word content)
+      // Common spinner chars: ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ | - \ / * . etc.
+      const spinnerPattern = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷◐◓◑◒●○◉◎|\\\/\-*.\u2800-\u28FF]+$/;
+      if (stripped.length <= 2 && spinnerPattern.test(stripped)) return false;
+
+      return true;
+    });
+
     return result;
   }, [logs, filterType, searchQuery]);
 
@@ -513,7 +535,7 @@ function LogLineItem({
 
   return (
     <div
-      className={`group flex gap-2 py-1 px-2 -mx-2 rounded-md transition-all duration-150 ${
+      className={`group flex gap-2 py-0.5 px-2 -mx-2 rounded-md transition-all duration-150 ${
         isHighlighted
           ? 'bg-[#634d00]/30 border-l-2 border-[#ffdf5d]'
           : 'hover:bg-[#161b22]/80 border-l-2 border-transparent'
@@ -602,6 +624,9 @@ function stripNonColorAnsi(text: string): string {
   // Remove OSC sequences (like window title): \x1b]...(\x07|\x1b\\)
   let result = text.replace(/\x1b\].*?(?:\x07|\x1b\\)/g, '');
 
+  // Remove DCS (Device Control String) sequences: \x1bP...\x1b\\
+  result = result.replace(/\x1bP.*?\x1b\\/gs, '');
+
   // Remove CSI sequences that are NOT color codes (don't end in 'm')
   // This includes: cursor movement, clear screen, scroll, etc.
   result = result.replace(/\x1b\[[0-9;?]*[A-LNS-Zsu]/gi, '');
@@ -609,13 +634,22 @@ function stripNonColorAnsi(text: string): string {
   // Remove other escape sequences
   // - \x1b followed by single char (like \x1b7, \x1b8 for save/restore cursor)
   // - \x1b( and \x1b) for charset switching
-  result = result.replace(/\x1b[78()]/g, '');
+  // - \x1b= and \x1b> for keypad mode
+  result = result.replace(/\x1b[78()=>]/g, '');
 
-  // Remove carriage returns (often used with escape sequences for cursor control)
+  // Remove carriage returns and backspaces (often used for spinners/progress)
   result = result.replace(/\r/g, '');
+  result = result.replace(/.\x08/g, '');  // Char followed by backspace (overwrite)
+  result = result.replace(/\x08+/g, '');  // Remaining backspaces
 
   // Remove orphaned CSI sequences that lost their escape byte (common in PTY output)
   result = result.replace(/^\[\??\d+[hlKJHfABCDGPXsu]/gm, '');
+
+  // Remove bell character
+  result = result.replace(/\x07/g, '');
+
+  // Remove other control characters except newline and tab
+  result = result.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 
   return result;
 }
