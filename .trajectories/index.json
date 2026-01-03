@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-03T16:38:36.822Z",
+  "lastUpdated": "2026-01-03T19:22:22.783Z",
   "trajectories": {
     "traj_ozd98si6a7ns": {
       "title": "Fix thinking indicator showing on all messages",
@@ -235,9 +235,24 @@
     },
     "traj_cvtqhlwcq9s0": {
       "title": "Fix trajectory viewer navigation - add back to list",
-      "status": "active",
+      "status": "completed",
       "startedAt": "2026-01-03T16:37:49.153Z",
-      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/active/traj_cvtqhlwcq9s0.json"
+      "completedAt": "2026-01-03T18:43:48.687Z",
+      "path": "/home/user/relay/.trajectories/completed/2026-01/traj_cvtqhlwcq9s0.json"
+    },
+    "traj_st8j35b0hrlc": {
+      "title": "Fix cloud provisioning for GitHub cloning and agent credentials",
+      "status": "completed",
+      "startedAt": "2026-01-03T19:04:57.338Z",
+      "completedAt": "2026-01-03T19:09:05.597Z",
+      "path": "/home/user/relay/.trajectories/completed/2026-01/traj_st8j35b0hrlc.json"
+    },
+    "traj_yvdadtvdgnz3": {
+      "title": "Full cloud e2e flow review",
+      "status": "completed",
+      "startedAt": "2026-01-03T19:17:32.797Z",
+      "completedAt": "2026-01-03T19:22:22.762Z",
+      "path": "/home/user/relay/.trajectories/completed/2026-01/traj_yvdadtvdgnz3.json"
     }
   }
 }
