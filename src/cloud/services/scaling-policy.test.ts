@@ -177,8 +177,7 @@ describe('ScalingPolicyService', () => {
       expect(decision.metrics.memory_usage).toBeGreaterThan(0.8);
     });
 
-    it('triggers scale up on high agent count', () => {
-      const thresholds = service.getThresholds('pro');
+    it('triggers agent limit increase on high agent count (single workspace)', () => {
       const context = createContext({
         workspaceMetrics: [
           {
@@ -196,7 +195,43 @@ describe('ScalingPolicyService', () => {
       });
 
       const decision = service.evaluate(context);
-      // Agent count policy doesn't require duration
+      // In-workspace scaling has higher priority than horizontal scaling
+      expect(decision.shouldScale).toBe(true);
+      expect(decision.action?.type).toBe('increase_agent_limit');
+      expect(decision.triggeredPolicy).toBe('agent-limit-increase');
+    });
+
+    it('triggers scale up on high agent count (multiple workspaces)', () => {
+      const context = createContext({
+        currentWorkspaceCount: 2,
+        workspaceMetrics: [
+          {
+            workspaceId: 'ws-1',
+            totalMemoryBytes: 300 * 1024 * 1024,
+            averageMemoryBytes: 300 * 1024 * 1024,
+            peakMemoryBytes: 400 * 1024 * 1024,
+            memoryTrendPerMinute: 2 * 1024 * 1024,
+            agentCount: 14, // 14/15 = 93% > 90% threshold
+            healthyAgentCount: 14,
+            cpuPercent: 40,
+            uptimeMs: 3600000,
+          },
+          {
+            workspaceId: 'ws-2',
+            totalMemoryBytes: 300 * 1024 * 1024,
+            averageMemoryBytes: 300 * 1024 * 1024,
+            peakMemoryBytes: 400 * 1024 * 1024,
+            memoryTrendPerMinute: 2 * 1024 * 1024,
+            agentCount: 14,
+            healthyAgentCount: 14,
+            cpuPercent: 40,
+            uptimeMs: 3600000,
+          },
+        ],
+      });
+
+      const decision = service.evaluate(context);
+      // With multiple workspaces, agent-count-scale-up policy triggers
       expect(decision.shouldScale).toBe(true);
       expect(decision.action?.type).toBe('scale_up');
       expect(decision.triggeredPolicy).toBe('agent-count-scale-up');
@@ -258,10 +293,11 @@ describe('ScalingPolicyService', () => {
 
       service.evaluate(context);
 
+      // With single workspace, agent-limit-increase has higher priority
       expect(listener).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: 'user-1',
-          policy: 'agent-count-scale-up',
+          policy: 'agent-limit-increase',
         })
       );
     });

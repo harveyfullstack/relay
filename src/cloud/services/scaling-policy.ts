@@ -61,9 +61,20 @@ export interface ScalingCondition {
 }
 
 export interface ScalingAction {
-  type: 'scale_up' | 'scale_down' | 'rebalance' | 'alert_only';
+  type:
+    | 'scale_up' // Add new workspace
+    | 'scale_down' // Remove workspace
+    | 'resize_up' // Vertical scale: increase workspace resources (memory/CPU)
+    | 'resize_down' // Vertical scale: decrease workspace resources
+    | 'increase_agent_limit' // Increase max agents in workspace
+    | 'migrate_agents' // Move agents between workspaces
+    | 'rebalance' // Redistribute agents across workspaces
+    | 'alert_only'; // Just notify, don't take action
   targetCount?: number; // For scale_up/down: how many instances
-  percentage?: number; // For scale_up/down: percentage increase
+  percentage?: number; // For scale_up/down or resize: percentage increase
+  targetWorkspaceId?: string; // For in-workspace scaling
+  resourceTier?: 'small' | 'medium' | 'large' | 'xlarge'; // For resize actions
+  newAgentLimit?: number; // For increase_agent_limit
 }
 
 export interface ScalingDecision {
@@ -152,16 +163,75 @@ const DEFAULT_THRESHOLDS: Record<string, ScalingThresholds> = {
   },
 };
 
-// Default policies
+// Default policies - ordered by priority (higher = evaluated first)
+// In-workspace scaling is preferred over adding new workspaces (more efficient)
 const DEFAULT_POLICIES: ScalingPolicy[] = [
+  // === In-Workspace Scaling (Higher Priority) ===
+  {
+    id: 'agent-limit-increase',
+    name: 'Increase Agent Limit',
+    description: 'Increase max agents when approaching limit within single workspace',
+    enabled: true,
+    priority: 150, // Higher priority - try this before adding workspaces
+    conditions: [
+      { metric: 'agent_count', operator: 'gte', value: 0.85 }, // 85% of max agents
+      { metric: 'workspace_count', operator: 'eq', value: 1 }, // Only 1 workspace
+    ],
+    action: { type: 'increase_agent_limit', percentage: 50 }, // Increase limit by 50%
+    maxInstances: 10,
+    minInstances: 1,
+  },
+  {
+    id: 'workspace-resize-up',
+    name: 'Resize Workspace Up',
+    description: 'Vertically scale workspace when memory is high',
+    enabled: true,
+    priority: 140, // Higher priority than horizontal scaling
+    conditions: [
+      { metric: 'memory_usage', operator: 'gte', value: 0.75, duration: 120000 }, // 75% for 2min
+      { metric: 'workspace_count', operator: 'eq', value: 1 }, // Only 1 workspace
+    ],
+    action: { type: 'resize_up', percentage: 100 }, // Double resources
+    maxInstances: 10,
+    minInstances: 1,
+  },
+  {
+    id: 'cpu-pressure-resize',
+    name: 'CPU Pressure Resize',
+    description: 'Resize workspace when CPU is consistently high',
+    enabled: true,
+    priority: 135,
+    conditions: [
+      { metric: 'cpu_usage', operator: 'gte', value: 0.85, duration: 180000 }, // 85% for 3min
+    ],
+    action: { type: 'resize_up', percentage: 50 }, // 50% more resources
+    maxInstances: 10,
+    minInstances: 1,
+  },
+  {
+    id: 'workspace-resize-down',
+    name: 'Resize Workspace Down',
+    description: 'Reduce workspace resources when underutilized',
+    enabled: true,
+    priority: 45, // Lower priority
+    conditions: [
+      { metric: 'memory_usage', operator: 'lt', value: 0.15, duration: 900000 }, // Under 15% for 15min
+      { metric: 'cpu_usage', operator: 'lt', value: 0.1, duration: 900000 }, // Under 10% CPU
+    ],
+    action: { type: 'resize_down', percentage: 50 }, // Halve resources
+    maxInstances: 10,
+    minInstances: 1,
+  },
+
+  // === Horizontal Scaling (Add/Remove Workspaces) ===
   {
     id: 'memory-pressure-scale-up',
     name: 'Memory Pressure Scale Up',
-    description: 'Scale up when average memory exceeds threshold',
+    description: 'Add workspace when memory exceeds threshold across all workspaces',
     enabled: true,
     priority: 100,
     conditions: [
-      { metric: 'memory_usage', operator: 'gte', value: 0.8, duration: 60000 }, // 80% of threshold for 1min
+      { metric: 'memory_usage', operator: 'gte', value: 0.8, duration: 60000 }, // 80% for 1min
     ],
     action: { type: 'scale_up', targetCount: 1 },
     maxInstances: 10,
@@ -170,7 +240,7 @@ const DEFAULT_POLICIES: ScalingPolicy[] = [
   {
     id: 'memory-trend-scale-up',
     name: 'Memory Trend Scale Up',
-    description: 'Scale up when memory growth rate is high',
+    description: 'Add workspace when memory growth rate is high',
     enabled: true,
     priority: 90,
     conditions: [
@@ -183,20 +253,38 @@ const DEFAULT_POLICIES: ScalingPolicy[] = [
   {
     id: 'agent-count-scale-up',
     name: 'Agent Count Scale Up',
-    description: 'Scale up when agent count approaches limit',
+    description: 'Add workspace when agent count is high across all workspaces',
     enabled: true,
     priority: 80,
     conditions: [
       { metric: 'agent_count', operator: 'gte', value: 0.9 }, // 90% of max agents
+      { metric: 'workspace_count', operator: 'gte', value: 1 }, // Already tried in-workspace scaling
     ],
     action: { type: 'scale_up', targetCount: 1 },
     maxInstances: 10,
     minInstances: 1,
   },
+
+  // === Rebalancing ===
+  {
+    id: 'agent-rebalance',
+    name: 'Agent Rebalance',
+    description: 'Redistribute agents when load is uneven across workspaces',
+    enabled: true,
+    priority: 60,
+    conditions: [
+      { metric: 'workspace_count', operator: 'gte', value: 2 }, // Multiple workspaces
+    ],
+    action: { type: 'rebalance' },
+    maxInstances: 10,
+    minInstances: 1,
+  },
+
+  // === Scale Down ===
   {
     id: 'low-usage-scale-down',
     name: 'Low Usage Scale Down',
-    description: 'Scale down when memory usage is low',
+    description: 'Remove workspace when usage is low',
     enabled: true,
     priority: 50,
     conditions: [

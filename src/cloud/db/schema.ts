@@ -82,6 +82,7 @@ export interface WorkspaceConfig {
   repositories?: string[];
   supervisorEnabled?: boolean;
   maxAgents?: number;
+  resourceTier?: 'small' | 'medium' | 'large' | 'xlarge';
 }
 
 export const workspaces = pgTable('workspaces', {

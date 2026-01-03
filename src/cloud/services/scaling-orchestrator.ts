@@ -19,16 +19,35 @@ import { EventEmitter } from 'events';
 import { AutoScaler, createAutoScaler, ScalingOperation } from './auto-scaler.js';
 import { CapacityManager, createCapacityManager, CapacityForecast } from './capacity-manager.js';
 import { ScalingDecision, WorkspaceMetrics, getScalingPolicyService } from './scaling-policy.js';
-import { WorkspaceProvisioner, getProvisioner, ProvisionConfig, ProvisionResult } from '../provisioner/index.js';
+import {
+  WorkspaceProvisioner,
+  getProvisioner,
+  ProvisionConfig,
+  ProvisionResult,
+  ResourceTier,
+  RESOURCE_TIERS,
+} from '../provisioner/index.js';
 import { db } from '../db/index.js';
 
 export interface ScalingEvent {
-  type: 'scale_up' | 'scale_down' | 'rebalance' | 'alert';
+  type:
+    | 'scale_up' // Horizontal: add new workspace
+    | 'scale_down' // Horizontal: remove workspace
+    | 'resize_up' // Vertical: increase workspace resources
+    | 'resize_down' // Vertical: decrease workspace resources
+    | 'increase_agent_limit' // Increase max agents in workspace
+    | 'migrate_agents' // Move agents between workspaces
+    | 'rebalance' // Redistribute agents
+    | 'alert';
   userId: string;
   workspaceId?: string;
   decision?: ScalingDecision;
   operation?: ScalingOperation;
   result?: ProvisionResult;
+  previousTier?: string;
+  newTier?: string;
+  previousAgentLimit?: number;
+  newAgentLimit?: number;
   error?: string;
   timestamp: Date;
 }
@@ -172,11 +191,23 @@ export class ScalingOrchestrator extends EventEmitter {
 
     try {
       switch (operation.action) {
+        // Horizontal scaling
         case 'scale_up':
           await this.handleScaleUp(operation, decision, event);
           break;
         case 'scale_down':
           await this.handleScaleDown(operation, decision, event);
+          break;
+        // Vertical scaling (in-workspace)
+        case 'resize_up':
+        case 'resize_down':
+          await this.handleResize(operation, decision, event);
+          break;
+        case 'increase_agent_limit':
+          await this.handleAgentLimitIncrease(operation, decision, event);
+          break;
+        case 'migrate_agents':
+          await this.handleMigrateAgents(operation, decision, event);
           break;
         case 'rebalance':
           await this.handleRebalance(operation, decision, event);
@@ -326,6 +357,146 @@ export class ScalingOrchestrator extends EventEmitter {
   }
 
   /**
+   * Handle resize - vertical scaling (increase/decrease workspace resources)
+   */
+  private async handleResize(
+    operation: ScalingOperation,
+    decision: ScalingDecision,
+    event: ScalingEvent
+  ): Promise<void> {
+    // Get target workspace
+    const targetWorkspaceId = operation.targetWorkspaceId;
+    if (!targetWorkspaceId) {
+      // Find the workspace that triggered the scaling
+      const workspaces = await db.workspaces.findByUserId(operation.userId);
+      if (workspaces.length === 0) {
+        throw new Error('No workspace found to resize');
+      }
+      // For now, resize the first workspace (could use metrics to pick the right one)
+      operation.targetWorkspaceId = workspaces[0].id;
+    }
+
+    const workspace = await db.workspaces.findById(operation.targetWorkspaceId!);
+    if (!workspace) {
+      throw new Error('Workspace not found');
+    }
+
+    // Determine the target tier
+    let targetTier: ResourceTier;
+    if (operation.targetResourceTier) {
+      targetTier = RESOURCE_TIERS[operation.targetResourceTier];
+    } else {
+      // Calculate next tier up/down
+      const currentTier = await this.provisioner.getCurrentTier(workspace.id);
+      const tierOrder: Array<'small' | 'medium' | 'large' | 'xlarge'> = ['small', 'medium', 'large', 'xlarge'];
+      const currentIndex = tierOrder.indexOf(currentTier.name);
+
+      if (operation.action === 'resize_up') {
+        const nextIndex = Math.min(currentIndex + 1, tierOrder.length - 1);
+        targetTier = RESOURCE_TIERS[tierOrder[nextIndex]];
+      } else {
+        const nextIndex = Math.max(currentIndex - 1, 0);
+        targetTier = RESOURCE_TIERS[tierOrder[nextIndex]];
+      }
+
+      event.previousTier = currentTier.name;
+    }
+
+    // Perform the resize
+    await this.provisioner.resize(workspace.id, targetTier);
+
+    event.workspaceId = workspace.id;
+    event.newTier = targetTier.name;
+
+    this.emit('workspace_resized', {
+      userId: operation.userId,
+      workspaceId: workspace.id,
+      previousTier: event.previousTier,
+      newTier: targetTier.name,
+      triggeredBy: operation.triggeredBy,
+    });
+  }
+
+  /**
+   * Handle agent limit increase within a workspace
+   */
+  private async handleAgentLimitIncrease(
+    operation: ScalingOperation,
+    decision: ScalingDecision,
+    event: ScalingEvent
+  ): Promise<void> {
+    // Get target workspace
+    const targetWorkspaceId = operation.targetWorkspaceId;
+    const workspaces = await db.workspaces.findByUserId(operation.userId);
+
+    if (!targetWorkspaceId && workspaces.length === 0) {
+      throw new Error('No workspace found to update agent limit');
+    }
+
+    const workspace = await db.workspaces.findById(targetWorkspaceId || workspaces[0].id);
+    if (!workspace) {
+      throw new Error('Workspace not found');
+    }
+
+    const currentLimit = workspace.config.maxAgents || 10;
+    let newLimit: number;
+
+    if (operation.targetAgentLimit) {
+      newLimit = operation.targetAgentLimit;
+    } else if (decision.action?.percentage) {
+      // Increase by percentage
+      newLimit = Math.ceil(currentLimit * (1 + decision.action.percentage / 100));
+    } else {
+      // Default: increase by 50%
+      newLimit = Math.ceil(currentLimit * 1.5);
+    }
+
+    // Cap at plan maximum
+    const policyService = getScalingPolicyService();
+    const userPlan = 'pro'; // Would get from user context
+    const thresholds = policyService.getThresholds(userPlan);
+    newLimit = Math.min(newLimit, thresholds.agentsPerWorkspaceMax);
+
+    // Update the agent limit
+    await this.provisioner.updateAgentLimit(workspace.id, newLimit);
+
+    event.workspaceId = workspace.id;
+    event.previousAgentLimit = currentLimit;
+    event.newAgentLimit = newLimit;
+
+    this.emit('agent_limit_updated', {
+      userId: operation.userId,
+      workspaceId: workspace.id,
+      previousLimit: currentLimit,
+      newLimit,
+      triggeredBy: operation.triggeredBy,
+    });
+  }
+
+  /**
+   * Handle agent migration between workspaces
+   */
+  private async handleMigrateAgents(
+    operation: ScalingOperation,
+    _decision: ScalingDecision,
+    _event: ScalingEvent
+  ): Promise<void> {
+    // Agent migration would involve:
+    // 1. Identifying agents to migrate
+    // 2. Selecting target workspace(s)
+    // 3. Coordinating graceful migration via coordinator service
+    // 4. Updating capacity tracking
+
+    this.emit('migration_requested', {
+      userId: operation.userId,
+      fromWorkspaceId: operation.targetWorkspaceId,
+      // Would include specific migration plan
+    });
+
+    // Actual implementation would coordinate with the agent coordinator
+  }
+
+  /**
    * Record a scaling event in history
    */
   private recordEvent(event: ScalingEvent): void {
@@ -337,7 +508,14 @@ export class ScalingOrchestrator extends EventEmitter {
     }
 
     // Persist to database if significant
-    if (event.type === 'scale_up' || event.type === 'scale_down') {
+    const significantEvents: ScalingEvent['type'][] = [
+      'scale_up',
+      'scale_down',
+      'resize_up',
+      'resize_down',
+      'increase_agent_limit',
+    ];
+    if (significantEvents.includes(event.type)) {
       this.persistScalingEvent(event).catch((err) => {
         console.error('[ScalingOrchestrator] Failed to persist event:', err);
       });

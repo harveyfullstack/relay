@@ -26,8 +26,17 @@ import {
 export interface ScalingOperation {
   id: string;
   userId: string;
-  action: 'scale_up' | 'scale_down' | 'rebalance';
+  action:
+    | 'scale_up' // Horizontal: add new workspace
+    | 'scale_down' // Horizontal: remove workspace
+    | 'resize_up' // Vertical: increase workspace resources (CPU/memory)
+    | 'resize_down' // Vertical: decrease workspace resources
+    | 'increase_agent_limit' // Increase max agents in workspace
+    | 'migrate_agents' // Move agents between workspaces
+    | 'rebalance'; // Redistribute agents across workspaces
   targetWorkspaceId?: string;
+  targetResourceTier?: 'small' | 'medium' | 'large' | 'xlarge';
+  targetAgentLimit?: number;
   status: 'pending' | 'in_progress' | 'completed' | 'failed';
   startedAt: Date;
   completedAt?: Date;
@@ -367,6 +376,9 @@ export class AutoScaler extends EventEmitter {
       id: `scale-${userId}-${Date.now()}`,
       userId,
       action: decision.action.type as ScalingOperation['action'],
+      targetWorkspaceId: decision.action.targetWorkspaceId,
+      targetResourceTier: decision.action.resourceTier,
+      targetAgentLimit: decision.action.newAgentLimit,
       status: 'pending',
       startedAt: new Date(),
       triggeredBy: decision.triggeredPolicy || 'manual',
