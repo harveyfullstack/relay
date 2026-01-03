@@ -69,6 +69,50 @@ if [[ -n "${REPO_LIST}" ]]; then
   done
 fi
 
+# ============================================================================
+# Configure AI provider credentials
+# Create credential files that CLIs expect from ENV vars passed by provisioner
+# ============================================================================
+
+# Claude CLI expects ~/.claude/credentials.json
+if [[ -n "${ANTHROPIC_TOKEN:-}" ]]; then
+  log "Configuring Claude credentials..."
+  mkdir -p "${HOME}/.claude"
+  cat > "${HOME}/.claude/credentials.json" <<EOF
+{
+  "oauth_token": "${ANTHROPIC_TOKEN}",
+  "expires_at": null
+}
+EOF
+  chmod 600 "${HOME}/.claude/credentials.json"
+fi
+
+# Codex CLI expects ~/.codex/credentials.json
+if [[ -n "${OPENAI_TOKEN:-}" ]]; then
+  log "Configuring Codex credentials..."
+  mkdir -p "${HOME}/.codex"
+  cat > "${HOME}/.codex/credentials.json" <<EOF
+{
+  "token": "${OPENAI_TOKEN}",
+  "expires_at": null
+}
+EOF
+  chmod 600 "${HOME}/.codex/credentials.json"
+fi
+
+# Google/Gemini - uses application default credentials
+if [[ -n "${GOOGLE_TOKEN:-}" ]]; then
+  log "Configuring Google credentials..."
+  mkdir -p "${HOME}/.config/gcloud"
+  cat > "${HOME}/.config/gcloud/application_default_credentials.json" <<EOF
+{
+  "type": "authorized_user",
+  "access_token": "${GOOGLE_TOKEN}"
+}
+EOF
+  chmod 600 "${HOME}/.config/gcloud/application_default_credentials.json"
+fi
+
 log "Starting agent-relay daemon on port ${PORT}"
 args=(/app/dist/cli/index.js up --port "${PORT}")
 

@@ -7,9 +7,34 @@
 import { getConfig } from '../config.js';
 import { db, Workspace } from '../db/index.js';
 import { vault } from '../vault/index.js';
+import { nangoService } from '../services/nango.js';
 
 const WORKSPACE_PORT = 3888;
 const FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Get a fresh GitHub App installation token from Nango.
+ * Looks up the user's connected repositories to find a valid Nango connection.
+ */
+async function getGithubAppTokenForUser(userId: string): Promise<string | null> {
+  try {
+    // Find any repository with a Nango connection for this user
+    const repos = await db.repositories.findByUserId(userId);
+    const repoWithConnection = repos.find(r => r.nangoConnectionId);
+
+    if (!repoWithConnection?.nangoConnectionId) {
+      console.warn(`[provisioner] No Nango GitHub App connection found for user ${userId}`);
+      return null;
+    }
+
+    // Get fresh installation token from Nango (handles refresh automatically)
+    const token = await nangoService.getGithubAppToken(repoWithConnection.nangoConnectionId);
+    return token;
+  } catch (error) {
+    console.error(`[provisioner] Failed to get GitHub App token for user ${userId}:`, error);
+    return null;
+  }
+}
 
 async function loadCredentialToken(userId: string, provider: string): Promise<string | null> {
   try {
@@ -838,12 +863,13 @@ export class WorkspaceProvisioner {
     }
 
     // GitHub token is required for cloning repositories
+    // Use Nango GitHub App token (fresh installation token, not from vault)
     if (config.repositories.length > 0) {
-      const githubToken = await loadCredentialToken(config.userId, 'github');
+      const githubToken = await getGithubAppTokenForUser(config.userId);
       if (githubToken) {
         credentials.set('github', githubToken);
       } else {
-        console.warn(`No GitHub token found for user ${config.userId}; repository cloning may fail.`);
+        console.warn(`[provisioner] No GitHub App token for user ${config.userId}; repository cloning may fail.`);
       }
     }
 
