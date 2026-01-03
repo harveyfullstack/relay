@@ -883,6 +883,18 @@ Let me know if that works.
       const result = customParser.parse(input);
       expect(result.commands).toHaveLength(0);
     });
+
+    it('preserves text starting with [Letter like [Agent Relay]', () => {
+      // Regression test: The orphaned CSI pattern should NOT strip [A from [Agent
+      // because [A without digits is not a valid orphaned CSI sequence
+      const input = '[Agent Relay] It\'s been 15 minutes. Please output a [[SUMMARY]] block\n';
+      const result = parser.parse(input);
+
+      expect(result.commands).toHaveLength(0);
+      expect(result.output).toBe(input);
+      // Specifically verify [Agent is preserved, not stripped to 'gent'
+      expect(result.output).toContain('[Agent');
+    });
   });
 
   describe('Complex scenarios', () => {

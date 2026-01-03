@@ -125,7 +125,41 @@
       "sourceFormat": "claude",
       "sourceSubtype": "skill",
       "installedPath": ".claude/skills/github-oauth-nango-integration/SKILL.md"
+    },
+    "@agent-relay/agent-relay-snippet#agents.md:AGENTS.md": {
+      "version": "1.0.4",
+      "resolved": "https://registry.prpm.dev/api/v1/packages/%40agent-relay%2Fagent-relay-snippet/1.0.4.tar.gz",
+      "integrity": "sha256-dfc3d7e649be8ee6bbf9f2749429c92d5735abc2e978062f37eb144339658fbc",
+      "format": "agents.md",
+      "subtype": "snippet",
+      "sourceFormat": "generic",
+      "sourceSubtype": "snippet",
+      "installedPath": "AGENTS.md",
+      "snippetMetadata": {
+        "targetPath": "AGENTS.md",
+        "config": {
+          "target": "AGENTS.md",
+          "position": "append"
+        }
+      }
+    },
+    "@agent-relay/agent-relay-protocol#agents.md:AGENTS.md": {
+      "version": "1.0.0",
+      "resolved": "https://registry.prpm.dev/api/v1/packages/%40agent-relay%2Fagent-relay-protocol/1.0.0.tar.gz",
+      "integrity": "sha256-e304a52e77a51e8e9eb58d65afc3ddb3398512ed14cb0b5119acb221d7775376",
+      "format": "agents.md",
+      "subtype": "snippet",
+      "sourceFormat": "generic",
+      "sourceSubtype": "snippet",
+      "installedPath": "AGENTS.md",
+      "snippetMetadata": {
+        "targetPath": "AGENTS.md",
+        "config": {
+          "target": "AGENTS.md",
+          "position": "append"
+        }
+      }
     }
   },
-  "generated": "2026-01-02T19:13:05.911Z"
+  "generated": "2026-01-02T21:13:52.149Z"
 }

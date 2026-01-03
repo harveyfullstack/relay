@@ -18,6 +18,20 @@ Broadcast to all agents.>>>
 
 **CRITICAL:** Always close multi-line messages with `>>>` on its own line!
 
+**WARNING:** Do NOT put blank lines before `>>>` - it must immediately follow your content:
+
+```
+# CORRECT - >>> immediately after content
+->relay:Agent <<<
+Your message here.>>>
+
+# WRONG - blank line before >>> breaks parsing
+->relay:Agent <<<
+Your message here.
+
+>>>
+```
+
 ## Communication Protocol
 
 **ACK immediately** - When you receive a task, acknowledge it before starting work:
@@ -70,9 +84,22 @@ agent-relay read abc123
 Spawn workers to delegate tasks:
 
 ```
-->relay:spawn WorkerName claude "task description"
+# Short tasks - single line with quotes
+->relay:spawn WorkerName claude "short task description"
+
+# Long tasks - use fenced format (recommended)
+->relay:spawn WorkerName claude <<<
+Implement the authentication module.
+Requirements:
+- JWT tokens with refresh
+- Password hashing with bcrypt
+- Rate limiting on login endpoint>>>
+
+# Release when done
 ->relay:release WorkerName
 ```
+
+**Use fenced format for tasks longer than ~50 characters** to avoid truncation from terminal line wrapping.
 
 ## Threads
 

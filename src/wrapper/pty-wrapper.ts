@@ -124,6 +124,7 @@ export class PtyWrapper extends EventEmitter {
   private sentMessageHashes: Set<string> = new Set();
   private processedSpawnCommands: Set<string> = new Set();
   private processedReleaseCommands: Set<string> = new Set();
+  private pendingFencedSpawn: { name: string; cli: string; taskLines: string[] } | null = null;
   private messageQueue: QueuedMessage[] = [];
   private isInjecting = false;
   private readyForMessages = false;
@@ -798,6 +799,11 @@ export class PtyWrapper extends EventEmitter {
   /**
    * Parse spawn/release commands from output
    * Uses string-based parsing for robustness with PTY output.
+   * Supports two formats:
+   *   Single-line: ->relay:spawn WorkerName cli "task description"
+   *   Multi-line (fenced): ->relay:spawn WorkerName cli <<<
+   *                        task description here
+   *                        can span multiple lines>>>
    * Delegates to dashboard API if dashboardPort is set (for nested spawns).
    */
   private parseSpawnReleaseCommands(content: string): void {
@@ -811,11 +817,78 @@ export class PtyWrapper extends EventEmitter {
     const releasePrefix = '->relay:release';
 
     for (const line of lines) {
-      // Check for spawn command
+      const trimmed = line.trim();
+
+      // If we're in fenced spawn mode, accumulate lines until we see >>>
+      if (this.pendingFencedSpawn) {
+        const closeIdx = trimmed.indexOf('>>>');
+        if (closeIdx !== -1) {
+          // Add content before >>> to task
+          const contentBeforeClose = trimmed.substring(0, closeIdx);
+          if (contentBeforeClose) {
+            this.pendingFencedSpawn.taskLines.push(contentBeforeClose);
+          }
+
+          // Execute the spawn with accumulated task
+          const { name, cli, taskLines } = this.pendingFencedSpawn;
+          const taskStr = taskLines.join('\n').trim();
+          const spawnKey = `${name}:${cli}`;
+
+          if (!this.processedSpawnCommands.has(spawnKey)) {
+            this.processedSpawnCommands.add(spawnKey);
+            console.log(`[pty:${this.config.name}] Spawn command (fenced): ${name} (${cli}) - "${taskStr.substring(0, 50)}..."`);
+            this.executeSpawn(name, cli, taskStr);
+          }
+
+          this.pendingFencedSpawn = null;
+        } else {
+          // Accumulate line as part of task
+          this.pendingFencedSpawn.taskLines.push(line);
+        }
+        continue;
+      }
+
+      // Check for fenced spawn start: ->relay:spawn Name cli <<<
       const spawnIdx = line.indexOf(spawnPrefix);
       if (spawnIdx !== -1 && canSpawn) {
         const afterSpawn = line.substring(spawnIdx + spawnPrefix.length).trim();
-        // Parse: WorkerName cli OR WorkerName cli "task" (task is optional)
+
+        // Check for fenced format: Name cli <<<
+        const fencedMatch = afterSpawn.match(/^(\S+)\s+(\S+)\s+<<<(.*)$/);
+        if (fencedMatch) {
+          const [, name, cli, inlineContent] = fencedMatch;
+
+          // Validate name and cli
+          if (name.length < 2 || cli.length < 2) {
+            console.warn(`[pty:${this.config.name}] Fenced spawn has invalid name/cli, skipping: name=${name}, cli=${cli}`);
+            continue;
+          }
+
+          // Check if fence closes on same line
+          const inlineCloseIdx = inlineContent.indexOf('>>>');
+          if (inlineCloseIdx !== -1) {
+            // Single line fenced: extract task between <<< and >>>
+            const taskStr = inlineContent.substring(0, inlineCloseIdx).trim();
+            const spawnKey = `${name}:${cli}`;
+
+            if (!this.processedSpawnCommands.has(spawnKey)) {
+              this.processedSpawnCommands.add(spawnKey);
+              console.log(`[pty:${this.config.name}] Spawn command: ${name} (${cli}) - "${taskStr.substring(0, 50)}..."`);
+              this.executeSpawn(name, cli, taskStr);
+            }
+          } else {
+            // Start multi-line fenced mode
+            this.pendingFencedSpawn = {
+              name,
+              cli,
+              taskLines: inlineContent.trim() ? [inlineContent.trim()] : [],
+            };
+            console.log(`[pty:${this.config.name}] Starting fenced spawn capture: ${name} (${cli})`);
+          }
+          continue;
+        }
+
+        // Parse single-line format: WorkerName cli OR WorkerName cli "task"
         const parts = afterSpawn.split(/\s+/);
         if (parts.length >= 2) {
           const name = parts[0];
@@ -830,23 +903,15 @@ export class PtyWrapper extends EventEmitter {
           }
 
           if (name && cli) {
-            // Validate the parsed values are not fence markers or corrupted
-            // This handles cases where agents use fenced format: ->relay:spawn Worker cli <<<
+            // Validate the parsed values
             if (cli === '<<<' || cli === '>>>' || name === '<<<' || name === '>>>') {
               console.warn(`[pty:${this.config.name}] Invalid spawn command (fence markers in name/cli), skipping: name=${name}, cli=${cli}`);
               continue;
             }
-            // Reject if task starts with <<< (fenced format not supported for spawn)
-            if (task.startsWith('<<<')) {
-              console.warn(`[pty:${this.config.name}] Spawn command uses fenced format (not supported), using empty task: name=${name}, cli=${cli}`);
-              task = ''; // Use empty task instead of "<<<..."
-            }
-            // Reject suspiciously short agent names (likely parsing corruption)
             if (name.length < 2) {
               console.warn(`[pty:${this.config.name}] Spawn command has suspiciously short name, skipping: name=${name}`);
               continue;
             }
-            // Reject suspiciously short CLI names (likely parsing corruption)
             if (cli.length < 2) {
               console.warn(`[pty:${this.config.name}] Spawn command has suspiciously short CLI, skipping: cli=${cli}`);
               continue;

@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
+import { exec } from 'child_process';
 import { fileURLToPath } from 'url';
 import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
 import type { StorageAdapter, StoredMessage } from '../storage/adapter.js';
@@ -3104,6 +3105,102 @@ Start by greeting the project leads and asking for status updates.`;
     broadcastData().catch(() => {});
 
     res.json({ success: true, message: 'Task cancelled' });
+  });
+
+  // ===== Beads Integration API =====
+
+  /**
+   * POST /api/beads - Create a bead (task/issue) via the bd CLI
+   */
+  app.post('/api/beads', async (req, res) => {
+    const { title, assignee, priority, type, description } = req.body;
+
+    if (!title || typeof title !== 'string') {
+      return res.status(400).json({ success: false, error: 'Title is required' });
+    }
+
+    // Build bd create command
+    const args: string[] = ['create', `--title="${title.replace(/"/g, '\\"')}"`];
+
+    if (assignee) {
+      args.push(`--assignee=${assignee}`);
+    }
+    if (priority !== undefined && priority !== null) {
+      args.push(`--priority=${priority}`);
+    }
+    if (type && ['task', 'bug', 'feature'].includes(type)) {
+      args.push(`--type=${type}`);
+    }
+
+    const cmd = `bd ${args.join(' ')}`;
+    console.log('[api/beads] Creating bead:', cmd);
+
+    // Execute bd create command
+    exec(cmd, { cwd: dataDir }, (error, stdout, stderr) => {
+      if (error) {
+        console.error('[api/beads] bd create failed:', stderr || error.message);
+        return res.status(500).json({
+          success: false,
+          error: stderr || error.message || 'Failed to create bead',
+        });
+      }
+
+      // Parse bead ID from output (bd create outputs the ID)
+      const output = stdout.trim();
+      // bd create typically outputs: "Created beads-xxx: title"
+      const idMatch = output.match(/Created\s+(beads-\w+)/i) || output.match(/(beads-\w+)/);
+      const beadId = idMatch ? idMatch[1] : `beads-${Date.now()}`;
+
+      console.log('[api/beads] Created bead:', beadId);
+      res.json({
+        success: true,
+        bead: {
+          id: beadId,
+          title,
+          assignee,
+          priority,
+          type: type || 'task',
+        },
+      });
+    });
+  });
+
+  /**
+   * POST /api/relay/send - Send a relay message to an agent
+   */
+  app.post('/api/relay/send', async (req, res) => {
+    const { to, content, thread } = req.body;
+
+    if (!to || typeof to !== 'string') {
+      return res.status(400).json({ success: false, error: 'Recipient (to) is required' });
+    }
+    if (!content || typeof content !== 'string') {
+      return res.status(400).json({ success: false, error: 'Message content is required' });
+    }
+
+    try {
+      const client = await getRelayClient('Dashboard');
+      if (!client) {
+        return res.status(503).json({
+          success: false,
+          error: 'Relay client not available',
+        });
+      }
+
+      const messageId = await client.sendMessage(to, content, thread ? 'message' : 'message');
+      console.log('[api/relay/send] Sent message to', to, ':', messageId);
+
+      res.json({
+        success: true,
+        messageId: messageId || `msg-${Date.now()}`,
+      });
+    } catch (err) {
+      console.error('[api/relay/send] Failed to send message:', err);
+      res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to send message',
+      });
+    }
   });
 
   // Helper to load agent statuses

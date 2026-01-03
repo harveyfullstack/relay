@@ -31,6 +31,7 @@ import {
   getTrailEnvVars,
   type PDEROPhase,
 } from '../trajectory/integration.js';
+import { escapeForShell } from '../bridge/utils.js';
 import {
   getContinuityManager,
   parseContinuityCommand,
@@ -160,6 +161,7 @@ export class TmuxWrapper {
   private readonly MAX_PENDING_RELAY_COMMANDS = 50;
   private processedSpawnCommands: Set<string> = new Set(); // Dedup spawn commands
   private processedReleaseCommands: Set<string> = new Set(); // Dedup release commands
+  private pendingFencedSpawn: { name: string; cli: string; taskLines: string[] } | null = null; // Track multi-line spawn task
   private receivedMessageIdSet: Set<string> = new Set();
   private receivedMessageIdOrder: string[] = [];
   private readonly MAX_RECEIVED_MESSAGES = 2000;
@@ -439,7 +441,8 @@ export class TmuxWrapper {
         AGENT_RELAY_NAME: this.config.name,
         TERM: 'xterm-256color',
       })) {
-        const escaped = value.replace(/"/g, '\\"');
+        // Use proper shell escaping to prevent command injection via env var values
+        const escaped = escapeForShell(value);
         execSync(`"${this.tmuxPath}" setenv -t ${this.sessionName} ${key} "${escaped}"`);
       }
 
@@ -1103,8 +1106,11 @@ export class TmuxWrapper {
 
   /**
    * Parse ->relay:spawn and ->relay:release commands from output.
-   * Format:
-   *   ->relay:spawn WorkerName cli "task description"
+   * Supports two formats:
+   *   Single-line: ->relay:spawn WorkerName cli "task description"
+   *   Multi-line (fenced): ->relay:spawn WorkerName cli <<<
+   *                        task description here
+   *                        can span multiple lines>>>
    *   ->relay:release WorkerName
    */
   private parseSpawnReleaseCommands(content: string): void {
@@ -1116,39 +1122,106 @@ export class TmuxWrapper {
     for (const line of lines) {
       const trimmed = line.trim();
 
-      // Match ->relay:spawn WorkerName cli OR ->relay:spawn WorkerName cli "task"
-      // Task is now optional - agents can be spawned without immediate task injection
-      // Pattern: ->relay:spawn <name> <cli> [optional: "<task>" or '<task>']
-      // Allow trailing whitespace and optional bullet prefixes that TUIs might add
+      // If we're in fenced spawn mode, accumulate lines until we see >>>
+      if (this.pendingFencedSpawn) {
+        // Check for fence close (>>> at end of line or on its own line)
+        const closeIdx = trimmed.indexOf('>>>');
+        if (closeIdx !== -1) {
+          // Add content before >>> to task
+          const contentBeforeClose = trimmed.substring(0, closeIdx);
+          if (contentBeforeClose) {
+            this.pendingFencedSpawn.taskLines.push(contentBeforeClose);
+          }
+
+          // Execute the spawn with accumulated task
+          const { name, cli, taskLines } = this.pendingFencedSpawn;
+          const taskStr = taskLines.join('\n').trim();
+          const spawnKey = `${name}:${cli}`;
+
+          if (!this.processedSpawnCommands.has(spawnKey)) {
+            this.processedSpawnCommands.add(spawnKey);
+            if (taskStr) {
+              this.logStderr(`Spawn command (fenced): ${name} (${cli}) - "${taskStr.substring(0, 50)}..."`);
+            } else {
+              this.logStderr(`Spawn command (fenced): ${name} (${cli}) - no task`);
+            }
+            this.config.onSpawn?.(name, cli, taskStr).catch(err => {
+              this.logStderr(`Spawn failed: ${err.message}`, true);
+            });
+          }
+
+          this.pendingFencedSpawn = null;
+        } else {
+          // Accumulate line as part of task
+          this.pendingFencedSpawn.taskLines.push(line);
+        }
+        continue;
+      }
+
+      // Check for fenced spawn start: ->relay:spawn Name cli <<<
+      const fencedSpawnMatch = trimmed.match(/^(?:[•\-*]\s*)?->relay:spawn\s+(\S+)\s+(\S+)\s+<<<(.*)$/);
+      if (fencedSpawnMatch && this.config.onSpawn) {
+        const [, name, cli, inlineContent] = fencedSpawnMatch;
+
+        // Validate name and cli
+        if (name.length < 2 || cli.length < 2) {
+          this.logStderr(`Fenced spawn has invalid name/cli, skipping: name=${name}, cli=${cli}`);
+          continue;
+        }
+
+        // Check if fence closes on same line (e.g., ->relay:spawn Worker cli <<<task>>>)
+        const inlineCloseIdx = inlineContent.indexOf('>>>');
+        if (inlineCloseIdx !== -1) {
+          // Single line fenced: extract task between <<< and >>>
+          const taskStr = inlineContent.substring(0, inlineCloseIdx).trim();
+          const spawnKey = `${name}:${cli}`;
+
+          if (!this.processedSpawnCommands.has(spawnKey)) {
+            this.processedSpawnCommands.add(spawnKey);
+            if (taskStr) {
+              this.logStderr(`Spawn command: ${name} (${cli}) - "${taskStr.substring(0, 50)}..."`);
+            } else {
+              this.logStderr(`Spawn command: ${name} (${cli}) - no task`);
+            }
+            this.config.onSpawn(name, cli, taskStr).catch(err => {
+              this.logStderr(`Spawn failed: ${err.message}`, true);
+            });
+          }
+        } else {
+          // Start multi-line fenced mode
+          this.pendingFencedSpawn = {
+            name,
+            cli,
+            taskLines: inlineContent.trim() ? [inlineContent.trim()] : [],
+          };
+          this.logStderr(`Starting fenced spawn capture: ${name} (${cli})`);
+        }
+        continue;
+      }
+
+      // Match single-line spawn: ->relay:spawn WorkerName cli "task"
+      // Task is optional - agents can be spawned without immediate task injection
       const spawnMatch = trimmed.match(/^(?:[•\-*]\s*)?->relay:spawn\s+(\S+)\s+(\S+)(?:\s+["'](.+?)["'])?\s*$/);
       if (spawnMatch && this.config.onSpawn) {
         const [, name, cli, task] = spawnMatch;
 
-        // Validate the parsed values are not fence markers or corrupted
+        // Validate the parsed values
         if (cli === '<<<' || cli === '>>>' || name === '<<<' || name === '>>>') {
           this.logStderr(`Invalid spawn command (fence markers), skipping: name=${name}, cli=${cli}`);
           continue;
         }
-        // Reject suspiciously short agent names (likely parsing corruption)
         if (name.length < 2) {
           this.logStderr(`Spawn command has suspiciously short name, skipping: name=${name}`);
           continue;
         }
-        // Reject suspiciously short CLI names (likely parsing corruption)
         if (cli.length < 2) {
           this.logStderr(`Spawn command has suspiciously short CLI, skipping: cli=${cli}`);
           continue;
         }
 
-        let taskStr = task || ''; // Task is optional, default to empty string
-        // Reject if task starts with <<< (fenced format not supported for spawn)
-        if (taskStr.startsWith('<<<')) {
-          this.logStderr(`Spawn command uses fenced format (not supported), using empty task: name=${name}, cli=${cli}`);
-          taskStr = ''; // Use empty task instead of "<<<..."
-        }
+        const taskStr = task || '';
         const spawnKey = `${name}:${cli}`;
 
-        // Dedup - only process each spawn once (keyed by name:cli, not including task)
         if (!this.processedSpawnCommands.has(spawnKey)) {
           this.processedSpawnCommands.add(spawnKey);
           if (taskStr) {
@@ -1164,12 +1237,10 @@ export class TmuxWrapper {
       }
 
       // Match ->relay:release WorkerName
-      // Allow trailing whitespace and optional bullet prefixes
       const releaseMatch = trimmed.match(/^(?:[•\-*]\s*)?->relay:release\s+(\S+)\s*$/);
       if (releaseMatch && this.config.onRelease) {
         const [, name] = releaseMatch;
 
-        // Dedup - only process each release once
         if (!this.processedReleaseCommands.has(name)) {
           this.processedReleaseCommands.add(name);
           this.logStderr(`Release command: ${name}`);

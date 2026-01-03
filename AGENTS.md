@@ -1,41 +1,3 @@
-* Use the `bd` tool instead of markdown to coordinate all work and tasks.
-
-# Using bv as an AI sidecar
-
-bv is a fast terminal UI for Beads projects (.beads/beads.jsonl). It renders lists/details and precomputes dependency metrics (PageRank, critical path, cycles, etc.) so you instantly see blockers and execution order. For agents, it's a graph sidecar: instead of parsing JSONL or risking hallucinated traversal, call the robot flags to get deterministic, dependency-aware outputs.
-
-*IMPORTANT: As an agent, you must ONLY use bv with the robot flags, otherwise you'll get stuck in the interactive TUI that's intended for human usage only!*
-
-- bv --robot-help — shows all AI-facing commands.
-- bv --robot-insights — JSON graph metrics (PageRank, betweenness, HITS, critical path, cycles) with top-N summaries for quick triage.
-- bv --robot-plan — JSON execution plan: parallel tracks, items per track, and unblocks lists showing what each item frees up.
-- bv --robot-priority — JSON priority recommendations with reasoning and confidence.
-- bv --robot-recipes — list recipes (default, actionable, blocked, etc.); apply via bv --recipe <name> to pre-filter/sort before other flags.
-- bv --robot-diff --diff-since <commit|date> — JSON diff of issue changes, new/closed items, and cycles introduced/resolved.
-
-Use these commands instead of hand-rolling graph logic; bv already computes the hard parts so agents can act safely and quickly.
-
-## Integrating with Beads (dependency-aware task planning)
-
-Beads provides a lightweight, dependency-aware issue database and a CLI (`bd`) for selecting "ready work," setting priorities, and tracking status. Project: [steveyegge/beads](https://github.com/steveyegge/beads)
-
-Recommended conventions
-- **Single source of truth**: Use **Beads** for task status/priority/dependencies.
-- **Shared identifiers**: Use the Beads issue id (e.g., `bd-123`) as identifiers and prefix message subjects with `[bd-123]`.
-
-Typical flow (agents)
-1) **Pick ready work** (Beads)
-   - `bd ready --json` → choose one item (highest priority, no blockers)
-2) **Announce start**
-   - Update status: `bd update <id> --status=in_progress`
-3) **Work and update**
-   - Make progress on the task
-4) **Complete**
-   - `bd close <id> --reason "Completed"` (Beads is status authority)
-
-Pitfalls to avoid
-- Don't create or manage tasks in markdown; treat Beads as the single task queue.
-- Always include `bd-###` in commit messages for traceability.
 <!-- PRPM_MANIFEST_START -->
 
 <skills_system priority="1">
@@ -66,7 +28,85 @@ Usage notes:
 
 <!-- PRPM_MANIFEST_END -->
 
-<!-- prpm:snippet:start @agent-relay/agent-relay-snippet@1.0.3 -->
+
+<!-- prpm:snippet:start @agent-workforce/trail-snippet@1.0.0 -->
+# Trail
+
+Record your work as a trajectory for future agents and humans to follow.
+
+## When Starting Work
+
+Start a trajectory when beginning a task:
+
+```bash
+trail start "Implement user authentication"
+```
+
+With external task reference:
+```bash
+trail start "Fix login bug" --task "ENG-123"
+```
+
+## Recording Decisions
+
+Record key decisions as you work:
+
+```bash
+trail decision "Chose JWT over sessions" \
+  --reasoning "Stateless scaling requirements"
+```
+
+For minor decisions, reasoning is optional:
+```bash
+trail decision "Used existing auth middleware"
+```
+
+**Record decisions when you:**
+- Choose between alternatives
+- Make architectural trade-offs
+- Decide on an approach after investigation
+
+## Completing Work
+
+When done, complete with a retrospective:
+
+```bash
+trail complete --summary "Added JWT auth with refresh tokens" --confidence 0.85
+```
+
+**Confidence levels:**
+- 0.9+ : High confidence, well-tested
+- 0.7-0.9 : Good confidence, standard implementation
+- 0.5-0.7 : Some uncertainty, edge cases possible
+- <0.5 : Significant uncertainty, needs review
+
+## Abandoning Work
+
+If you need to stop without completing:
+
+```bash
+trail abandon --reason "Blocked by missing API credentials"
+```
+
+## Checking Status
+
+View current trajectory:
+```bash
+trail status
+```
+
+## Why Trail?
+
+Your trajectory helps others understand:
+- **What** you built (commits show this)
+- **Why** you built it this way (trajectory shows this)
+- **What alternatives** you considered
+- **What challenges** you faced
+
+Future agents can query past trajectories to learn from your decisions.
+<!-- prpm:snippet:end @agent-workforce/trail-snippet@1.0.0 -->
+
+<!-- prpm:snippet:start @agent-relay/agent-relay-snippet@1.0.4 -->
 # Agent Relay
 
 Real-time agent-to-agent messaging. Output `->relay:` patterns to communicate.
@@ -95,8 +135,6 @@ Broadcast to all agents.>>>
 ->relay:Sender <<<
 ACK: Brief description of task received>>>
 ```
-
-Then proceed with your work. This confirms message delivery and lets the sender know you're on it.
 
 **Report completion** - When done, send a completion message:
 
@@ -131,8 +169,6 @@ Response to the group message.>>>
 Response to the group message.>>>
 ```
 
-This ensures your response appears in the same channel as the original message.
-
 If truncated, read full message:
 ```bash
 agent-relay read abc123
@@ -149,7 +185,7 @@ Spawn workers to delegate tasks:
 
 ## Threads
 
-Use threads to group related messages together. Thread syntax:
+Use threads to group related messages together:
 
 ```
 ->relay:AgentName [thread:topic-name] <<<
@@ -160,25 +196,20 @@ Your message here.>>>
 - Working on a specific issue (e.g., `[thread:agent-relay-299]`)
 - Back-and-forth discussions with another agent
 - Code review conversations
-- Any multi-message topic you want grouped
 
-**Examples:**
+## Status Updates
+
+**Send status updates to your lead, NOT broadcast:**
 
 ```
-->relay:Protocol [thread:auth-feature] <<<
-How should we handle token refresh?>>>
+# Correct - status to lead only
+->relay:Lead <<<
+STATUS: Working on auth module>>>
 
-->relay:Frontend [thread:auth-feature] <<<
-Use a 401 interceptor that auto-refreshes.>>>
-
-->relay:Reviewer [thread:pr-123] <<<
-Please review src/auth/*.ts>>>
-
-->relay:Developer [thread:pr-123] <<<
-LGTM, approved!>>>
+# Wrong - don't broadcast status to everyone
+->relay:* <<<
+STATUS: Working on auth module>>>
 ```
-
-Thread messages appear grouped in the dashboard with reply counts.
 
 ## Common Patterns
 
@@ -186,7 +217,7 @@ Thread messages appear grouped in the dashboard with reply counts.
 ->relay:Lead <<<
 ACK: Starting /api/register implementation>>>
 
-->relay:* <<<
+->relay:Lead <<<
 STATUS: Working on auth module>>>
 
 ->relay:Lead <<<
@@ -202,39 +233,17 @@ REVIEW: Please check src/auth/*.ts>>>
 QUESTION: JWT or sessions?>>>
 ```
 
-## Cross-Project Messaging
-
-When running in bridge mode (multiple projects connected), use `project:agent` format:
-
-```
-->relay:frontend:Designer <<<
-Please update the login UI for the new auth flow>>>
-
-->relay:backend:lead <<<
-API question - should we use REST or GraphQL?>>>
-
-->relay:shared-lib:* <<<
-New utility functions available, please pull latest>>>
-```
-
-**Format:** `->relay:project-id:agent-name`
-
-**Special targets:**
-- `->relay:project:lead` - Message the lead agent of that project
-- `->relay:project:*` - Broadcast to all agents in that project
-- `->relay:*:*` - Broadcast to ALL agents in ALL projects
-
-**Cross-project threads:**
-```
-->relay:frontend:Designer [thread:auth-feature] <<<
-UI mockups ready for review>>>
-```
-
 ## Rules
 
 - Pattern must be at line start (whitespace OK)
 - Escape with `\->relay:` to output literally
 - Check daemon status: `agent-relay status`
+<!-- prpm:snippet:end @agent-relay/agent-relay-snippet@1.0.4 -->
+
+<!-- prpm:snippet:start @agent-relay/agent-relay-protocol@1.0.0 -->
+# Agent Relay Protocol (Internal)
+
+Advanced agent-relay features for dashboard integration, session persistence, and trajectory tracking.
 
 ## Session Persistence (Required)
 
@@ -348,27 +357,35 @@ Flag items that need verification in future sessions:
 - Save progress every 15-20 minutes of active work
 - Use `--handoff` flag for major milestones
 - Mark uncertainties as you encounter them
-<!-- prpm:snippet:end @agent-relay/agent-relay-snippet@1.0.3 -->
 
-<!-- prpm:snippet:start @agent-workforce/trail-snippet@1.0.0 -->
-# Trail
+## Work Trajectories (Required)
 
-Record your work as a trajectory for future agents and humans to follow.
+**Trajectory recording is MANDATORY for all agent work sessions.** Use Trail to record your work as a trajectory for future agents and humans to follow.
 
-## When Starting Work
+### Enforcement
 
-Start a trajectory when beginning a task:
+Trajectories are enforced via hooks:
+- **onSessionStart** → Automatically calls `trail start` with task context
+- **onSessionEnd** → Prompts for `trail complete` if trajectory is open
+
+If hooks are not configured, you MUST manually call trail commands. Failure to record trajectories results in lost context for future agents.
+
+### When Starting Work
+
+**REQUIRED: Call `trail start` BEFORE diving into implementation** - this captures your full journey, not just the end result.
+
+Start a trajectory immediately when picking up a task:
 
 ```bash
 trail start "Implement user authentication"
 ```
 
-With external task reference:
+With external task reference (beads ID, ticket number):
 ```bash
-trail start "Fix login bug" --task "ENG-123"
+trail start "Fix login bug" --task "agent-relay-123"
 ```
 
-## Recording Decisions
+### Recording Decisions
 
 Record key decisions as you work:
 
@@ -387,9 +404,9 @@ trail decision "Used existing auth middleware"
 - Make architectural trade-offs
 - Decide on an approach after investigation
 
-## Completing Work
+### Completing Work
 
-When done, complete with a retrospective:
+**REQUIRED: Always close your trajectory before ending a session.** When done, complete with a retrospective:
 
 ```bash
 trail complete --summary "Added JWT auth with refresh tokens" --confidence 0.85
@@ -401,7 +418,7 @@ trail complete --summary "Added JWT auth with refresh tokens" --confidence 0.85
 - 0.5-0.7 : Some uncertainty, edge cases possible
 - <0.5 : Significant uncertainty, needs review
 
-## Abandoning Work
+### Abandoning Work
 
 If you need to stop without completing:
 
@@ -409,14 +426,14 @@ If you need to stop without completing:
 trail abandon --reason "Blocked by missing API credentials"
 ```
 
-## Checking Status
+### Checking Status
 
 View current trajectory:
 ```bash
 trail status
 ```
 
-## Why Trail?
+### Why Trail?
 
 Your trajectory helps others understand:
 - **What** you built (commits show this)
@@ -425,4 +442,43 @@ Your trajectory helps others understand:
 - **What challenges** you faced
 
 Future agents can query past trajectories to learn from your decisions.
-<!-- prpm:snippet:end @agent-workforce/trail-snippet@1.0.0 -->
+
+## Cross-Project Messaging
+
+When running in bridge mode (multiple projects connected), use `project:agent` format:
+
+```
+->relay:frontend:Designer <<<
+Please update the login UI for the new auth flow>>>
+
+->relay:backend:lead <<<
+API question - should we use REST or GraphQL?>>>
+
+->relay:shared-lib:* <<<
+New utility functions available, please pull latest>>>
+```
+
+**Format:** `->relay:project-id:agent-name`
+
+**Special targets:**
+- `->relay:project:lead` - Message the lead agent of that project
+- `->relay:project:*` - Broadcast to all agents in that project
+- `->relay:*:*` - Broadcast to ALL agents in ALL projects
+
+**Cross-project threads:**
+```
+->relay:frontend:Designer [thread:auth-feature] <<<
+UI mockups ready for review>>>
+```
+
+## Dashboard Integration
+
+The dashboard automatically tracks:
+- Agent presence and online status
+- Message history and threads
+- Session summaries from `[[SUMMARY]]` blocks
+- Trajectory status from trail commands
+- Coordinator panel for multi-agent orchestration
+
+Agents can view their status at the dashboard URL provided at startup.
+<!-- prpm:snippet:end @agent-relay/agent-relay-protocol@1.0.0 -->

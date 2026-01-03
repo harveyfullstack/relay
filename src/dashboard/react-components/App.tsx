@@ -11,7 +11,7 @@ import { Sidebar } from './layout/Sidebar';
 import { Header } from './layout/Header';
 import { MessageList } from './MessageList';
 import { ThreadPanel } from './ThreadPanel';
-import { CommandPalette } from './CommandPalette';
+import { CommandPalette, type TaskCreateRequest, PRIORITY_CONFIG } from './CommandPalette';
 import { SpawnModal, type SpawnConfig } from './SpawnModal';
 import { NewConversationModal } from './NewConversationModal';
 import { SettingsPanel, defaultSettings, type Settings } from './SettingsPanel';
@@ -25,7 +25,6 @@ import { TrajectoryViewer } from './TrajectoryViewer';
 import { DecisionQueue, type Decision } from './DecisionQueue';
 import { FleetOverview } from './FleetOverview';
 import type { ServerInfo } from './ServerCard';
-import { TaskAssignmentUI, type TaskAssignment } from './TaskAssignmentUI';
 import { TypingIndicator } from './TypingIndicator';
 import { OnlineUsersIndicator } from './OnlineUsersIndicator';
 import { UserProfilePanel } from './UserProfilePanel';
@@ -149,10 +148,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const [fleetServers, setFleetServers] = useState<ServerInfo[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | undefined>();
 
-  // Task assignment state
-  const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
-  const [assignedTasks, setAssignedTasks] = useState<TaskAssignment[]>([]);
-  const [isAssigning, setIsAssigning] = useState(false);
+  // Task creation state (tasks are stored in beads, not local state)
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
 
   // Mobile sidebar state
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -643,49 +640,37 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     }
   }, []);
 
-  // Fetch tasks periodically when panel is open
-  useEffect(() => {
-    if (!isTaskPanelOpen) return;
-
-    const fetchTasks = async () => {
-      const result = await api.getTasks();
-      if (result.success && result.data) {
-        setAssignedTasks(result.data.tasks);
-      }
-    };
-
-    fetchTasks();
-    const interval = setInterval(fetchTasks, 5000);
-    return () => clearInterval(interval);
-  }, [isTaskPanelOpen]);
-
-  // Task assignment handlers
-  const handleTaskAssign = useCallback(async (
-    agentName: string,
-    title: string,
-    description: string,
-    priority: TaskAssignment['priority']
-  ) => {
-    setIsAssigning(true);
+  // Task creation handler - creates bead and sends relay notification
+  const handleTaskCreate = useCallback(async (task: TaskCreateRequest) => {
+    setIsCreatingTask(true);
     try {
-      const result = await api.createTask({ agentName, title, description, priority });
-      if (result.success && result.data?.task) {
-        const newTask = result.data.task;
-        setAssignedTasks((prev) => [newTask, ...prev]);
+      // Map UI priority to beads priority number
+      const beadsPriority = PRIORITY_CONFIG[task.priority].beadsPriority;
+
+      // Create bead via API
+      const result = await api.createBead({
+        title: task.title,
+        assignee: task.agentName,
+        priority: beadsPriority,
+        type: 'task',
+      });
+
+      if (result.success && result.data?.bead) {
+        // Send relay notification to agent (non-interrupting)
+        await api.sendRelayMessage({
+          to: task.agentName,
+          content: `📋 New task assigned: "${task.title}" (P${beadsPriority})\nCheck \`bd ready\` for details.`,
+        });
+        console.log('Task created:', result.data.bead.id);
       } else {
-        console.error('Failed to assign task:', result.error);
+        console.error('Failed to create task bead:', result.error);
+        throw new Error(result.error || 'Failed to create task');
       }
     } catch (err) {
-      console.error('Failed to assign task:', err);
+      console.error('Failed to create task:', err);
+      throw err;
     } finally {
-      setIsAssigning(false);
-    }
-  }, []);
-
-  const handleTaskCancel = useCallback(async (taskId: string) => {
-    const result = await api.cancelTask(taskId);
-    if (result.success) {
-      setAssignedTasks((prev) => prev.filter((t) => t.id !== taskId));
+      setIsCreatingTask(false);
     }
   }, []);
 
@@ -957,7 +942,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         onAgentSelect={handleAgentSelect}
         onProjectSelect={handleProjectSelect}
         onSpawnClick={handleSpawnClick}
-        onTaskAssignClick={() => setIsTaskPanelOpen(true)}
+        onTaskCreate={handleTaskCreate}
         onGeneralClick={() => {
           selectAgent(null);
           setCurrentChannel('general');
@@ -1101,27 +1086,6 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
             </span>
           )}
         </button>
-      )}
-
-      {/* Task Assignment Modal */}
-      {isTaskPanelOpen && (
-        <div
-          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000] animate-fade-in"
-          onClick={() => setIsTaskPanelOpen(false)}
-        >
-          <div
-            className="w-[500px] max-w-[90vw] max-h-[80vh] overflow-y-auto animate-slide-down"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <TaskAssignmentUI
-              agents={agents}
-              tasks={assignedTasks}
-              onAssign={handleTaskAssign}
-              onCancel={handleTaskCancel}
-              isAssigning={isAssigning}
-            />
-          </div>
-        </div>
       )}
 
       {/* User Profile Panel */}

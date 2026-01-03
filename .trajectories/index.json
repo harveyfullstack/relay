@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-02T10:22:32.478Z",
+  "lastUpdated": "2026-01-02T22:29:20.765Z",
   "trajectories": {
     "traj_ozd98si6a7ns": {
       "title": "Fix thinking indicator showing on all messages",
@@ -11,9 +11,31 @@
     },
     "traj_gtlyqtta3x8l": {
       "title": "Implement optimistic message delivery",
-      "status": "active",
+      "status": "completed",
       "startedAt": "2026-01-02T10:22:32.477Z",
-      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/active/traj_gtlyqtta3x8l.json"
+      "completedAt": "2026-01-02T21:18:48.601Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_gtlyqtta3x8l.json"
+    },
+    "traj_v87hypnongqx": {
+      "title": "Switch from GitHub OAuth to GitHub App for repo access",
+      "status": "completed",
+      "startedAt": "2026-01-02T21:18:58.532Z",
+      "completedAt": "2026-01-02T21:55:20.552Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_v87hypnongqx.json"
+    },
+    "traj_dfuvww9pege5": {
+      "title": "Implement Nango OAuth integration for GitHub",
+      "status": "completed",
+      "startedAt": "2026-01-02T21:56:04.202Z",
+      "completedAt": "2026-01-02T21:59:41.222Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_dfuvww9pege5.json"
+    },
+    "traj_qx9uhf8whhxo": {
+      "title": "Comprehensive codebase review and hardening",
+      "status": "completed",
+      "startedAt": "2026-01-02T22:19:15.313Z",
+      "completedAt": "2026-01-02T22:29:20.753Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_qx9uhf8whhxo.json"
     }
   }
 }

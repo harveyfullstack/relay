@@ -194,7 +194,8 @@ const ANSI_PATTERN = /\x1b\[[0-9;?]*[a-zA-Z]|\x1b\].*?(?:\x07|\x1b\\)|\r/g;
 
 // Pattern for orphaned CSI sequences that lost their escape byte
 // These look like [?25h, [?2026l, [0m, etc. at the start of content
-const ORPHANED_CSI_PATTERN = /^\s*(\[\??\d*[A-Za-z])+\s*/g;
+// Requires at least one digit or question mark to avoid stripping legitimate text like [Agent
+const ORPHANED_CSI_PATTERN = /^\s*(\[(?:\?|\d)\d*[A-Za-z])+\s*/g;
 
 /**
  * Parse a target string that may contain cross-project syntax.

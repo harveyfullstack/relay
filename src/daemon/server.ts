@@ -9,7 +9,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { Connection, type ConnectionConfig, DEFAULT_CONFIG } from './connection.js';
 import { Router } from './router.js';
-import type { Envelope, SendPayload, ShadowBindPayload, ShadowUnbindPayload, LogPayload } from '../protocol/types.js';
+import type { Envelope, SendPayload, ShadowBindPayload, ShadowUnbindPayload, LogPayload, SendEnvelope } from '../protocol/types.js';
 import { createStorageAdapter, type StorageAdapter, type StorageConfig } from '../storage/adapter.js';
 import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
 import { getProjectPaths } from '../utils/project-namespace.js';
@@ -277,7 +277,7 @@ export class Daemon {
     }
 
     // Inject message to local agent
-    const envelope: Envelope<SendPayload> = {
+    const envelope: SendEnvelope = {
       v: 1,
       type: 'SEND',
       id: `cross-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -296,7 +296,7 @@ export class Daemon {
       },
     };
 
-    this.router.route(targetConnection as any, envelope as any);
+    this.router.route(targetConnection, envelope);
   }
 
   /**

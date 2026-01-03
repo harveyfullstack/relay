@@ -723,6 +723,64 @@ export const api = {
       return { success: false, error: 'Network error' };
     }
   },
+
+  // ===== Beads Integration API =====
+
+  /**
+   * Create a bead (task/issue) via the beads CLI
+   */
+  async createBead(request: {
+    title: string;
+    assignee?: string;
+    priority?: number;
+    type?: 'task' | 'bug' | 'feature';
+    description?: string;
+  }): Promise<ApiResponse<{ bead: { id: string; title: string } }>> {
+    try {
+      const response = await fetch(`${API_BASE}/api/beads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return { success: true, data: { bead: data.bead } };
+      }
+
+      return { success: false, error: data.error || 'Failed to create bead' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
+
+  /**
+   * Send a relay message to an agent (non-interrupting notification)
+   */
+  async sendRelayMessage(request: {
+    to: string;
+    content: string;
+    thread?: string;
+  }): Promise<ApiResponse<{ messageId: string }>> {
+    try {
+      const response = await fetch(`${API_BASE}/api/relay/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return { success: true, data: { messageId: data.messageId } };
+      }
+
+      return { success: false, error: data.error || 'Failed to send message' };
+    } catch (_error) {
+      return { success: false, error: 'Network error' };
+    }
+  },
 };
 
 // History API types

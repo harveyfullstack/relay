@@ -86,7 +86,8 @@ export function stripAnsi(str: string): string {
   result = result.replace(/\x1B(?:\[[0-9;?]*[A-Za-z]|\].*?(?:\x07|\x1B\\)|[@-Z\\-_])/g, '');
 
   // Strip orphaned CSI sequences that lost their escape byte
-  result = result.replace(/^\s*(\[\??\d*[A-Za-z])+\s*/g, '');
+  // Requires at least one digit or question mark to avoid stripping legitimate text like [Agent
+  result = result.replace(/^\s*(\[(?:\?|\d)\d*[A-Za-z])+\s*/g, '');
 
   return result;
 }
