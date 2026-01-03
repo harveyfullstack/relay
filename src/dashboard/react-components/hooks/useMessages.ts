@@ -63,6 +63,9 @@ export function useMessages({
   // This allows us to show new messages that arrive after viewing
   const [seenThreads, setSeenThreads] = useState<Map<string, number>>(new Map());
 
+  // Effective sender name for the current user (used for filtering own messages)
+  const effectiveSenderName = senderName || 'Dashboard';
+
   // Optimistic messages: shown immediately before server confirms
   // These have status='sending' and a temp ID prefixed with 'optimistic-'
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
@@ -153,10 +156,10 @@ export function useMessages({
 
       // Count unread messages in thread
       // Consider messages as "read" if they arrived before we last viewed this thread
-      // Exclude messages from "Dashboard" - users shouldn't get notifications for their own messages
+      // Exclude messages from current user - users shouldn't get notifications for their own messages
       const seenTimestamp = seenThreads.get(threadId);
       const unreadCount = threadMsgs.filter((m) => {
-        if (m.from === 'Dashboard') return false; // Don't count own messages as unread
+        if (m.from === effectiveSenderName) return false; // Don't count own messages as unread
         if (m.isRead) return false; // Already marked as read
         if (seenTimestamp) {
           // If we've seen this thread, only count messages after that time
@@ -229,7 +232,7 @@ export function useMessages({
       setSendError(null);
 
       // Create optimistic message and add it immediately for snappy UX
-      const from = senderName || 'Dashboard';
+      const from = effectiveSenderName;
       const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       const optimisticMsg: Message = {
         id: optimisticId,
@@ -285,7 +288,7 @@ export function useMessages({
         setIsSending(false);
       }
     },
-    [senderName]
+    [effectiveSenderName, senderName]
   );
 
   return {
