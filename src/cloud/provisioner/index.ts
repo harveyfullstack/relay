@@ -158,7 +158,7 @@ class FlyProvisioner implements ComputeProvisioner {
     const appName = `ar-${workspace.id.substring(0, 8)}`;
 
     // Create Fly app
-    const createResponse = await fetchWithRetry('https://api.machines.dev/v1/apps', {
+    await fetchWithRetry('https://api.machines.dev/v1/apps', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.apiToken}`,
@@ -438,7 +438,7 @@ class FlyProvisioner implements ComputeProvisioner {
       config?: { guest?: { cpus?: number; memory_mb?: number } };
     };
 
-    const cpus = machine.config?.guest?.cpus || 1;
+    const _cpus = machine.config?.guest?.cpus || 1;
     const memoryMb = machine.config?.guest?.memory_mb || 512;
 
     // Map to nearest tier

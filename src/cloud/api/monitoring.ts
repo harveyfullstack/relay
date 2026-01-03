@@ -489,7 +489,7 @@ monitoringRouter.get('/alerts', requireAuth, async (req: Request, res: Response)
     const daemons = await dbModule.linkedDaemons.findByUserId(userId);
     const daemonIds = daemonId ? [daemonId] : daemons.map(d => d.id);
 
-    let whereConditions = [
+    const whereConditions = [
       sql`${memoryAlerts.daemonId} IN (${sql.join(daemonIds.map(id => sql`${id}`), sql`, `)})`
     ];
 

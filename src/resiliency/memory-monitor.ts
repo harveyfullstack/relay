@@ -596,8 +596,8 @@ export class AgentMemoryMonitor extends EventEmitter {
 
       // Try to get more detailed memory from /proc on Linux
       let heapUsed = 0;
-      let heapTotal = 0;
-      let external = 0;
+      const heapTotal = 0;
+      const external = 0;
 
       try {
         const smaps = execSync(`cat /proc/${pid}/smaps_rollup 2>/dev/null || echo ""`, {

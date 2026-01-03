@@ -6,9 +6,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   ScalingPolicyService,
   getScalingPolicyService,
-  ScalingThresholds,
   UserScalingContext,
-  WorkspaceMetrics,
 } from './scaling-policy.js';
 
 describe('ScalingPolicyService', () => {

@@ -2201,7 +2201,7 @@ export async function startDashboard(
       }> = [];
 
       let agentCount = 0;
-      let totalCrashes24h = 0;
+      const totalCrashes24h = 0;
       let totalAlerts24h = 0;
 
       // Get spawned agent count

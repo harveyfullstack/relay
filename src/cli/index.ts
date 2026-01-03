@@ -2486,7 +2486,7 @@ program
       inboxDir: paths.dataDir,
     });
 
-    let snapshotCount = 0;
+    const snapshotCount = 0;
 
     // Start memory sampling
     const sampleInterval = setInterval(() => {
