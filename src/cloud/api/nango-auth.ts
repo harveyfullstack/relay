@@ -24,7 +24,7 @@ nangoAuthRouter.get('/status', (req: Request, res: Response) => {
       configured: true,
       integrations: NANGO_INTEGRATIONS,
     });
-  } catch (error) {
+  } catch (_error) {
     res.json({
       configured: false,
       message: 'Nango not configured',
@@ -120,7 +120,7 @@ nangoAuthRouter.get('/repo-session', requireAuth, async (req: Request, res: Resp
  */
 nangoAuthRouter.get('/repo-status/:connectionId', requireAuth, async (req: Request, res: Response) => {
   const userId = req.session.userId!;
-  const { connectionId } = req.params;
+  const { connectionId: _connectionId } = req.params;
 
   try {
     const user = await db.users.findById(userId);
@@ -227,7 +227,7 @@ async function handleAuthWebhook(payload: {
  */
 async function handleLoginWebhook(
   connectionId: string,
-  endUser?: { id?: string; email?: string }
+  _endUser?: { id?: string; email?: string }
 ): Promise<void> {
   // Get GitHub user info via Nango proxy
   const githubUser = await nangoService.getGithubUser(connectionId);

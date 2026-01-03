@@ -2144,7 +2144,7 @@ cloudCommand
   .command('daemons')
   .description('List all linked daemon instances')
   .option('--json', 'Output as JSON')
-  .action(async (options) => {
+  .action(async (_options) => {
     const os = await import('node:os');
 
     const dataDir = process.env.AGENT_RELAY_DATA_DIR ||

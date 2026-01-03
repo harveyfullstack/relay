@@ -576,7 +576,7 @@ export async function startDashboard(
             await fs.promises.unlink(filePath);
             evictedCount++;
           }
-        } catch (err) {
+        } catch (_err) {
           // Ignore errors for individual files (may have been deleted)
         }
       }
@@ -2938,7 +2938,7 @@ Start by greeting the project leads and asking for status updates.`;
     const localAgents = spawner?.getActiveWorkers() || [];
     const agentStatuses = await loadAgentStatuses();
 
-    let totalAgents = localAgents.length;
+    const totalAgents = localAgents.length;
     let onlineAgents = 0;
     let busyAgents = 0;
 
@@ -3113,7 +3113,7 @@ Start by greeting the project leads and asking for status updates.`;
    * POST /api/beads - Create a bead (task/issue) via the bd CLI
    */
   app.post('/api/beads', async (req, res) => {
-    const { title, assignee, priority, type, description } = req.body;
+    const { title, assignee, priority, type, description: _description } = req.body;
 
     if (!title || typeof title !== 'string') {
       return res.status(400).json({ success: false, error: 'Title is required' });

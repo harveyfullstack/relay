@@ -304,7 +304,7 @@ export async function listTrajectorySteps(trajectoryId?: string): Promise<{
         status: mapEventStatus(e.status),
       }));
       return { success: true, steps };
-    } catch (err) {
+    } catch (_err) {
       // If trail list doesn't work, return empty
       return { success: true, steps: [] };
     }

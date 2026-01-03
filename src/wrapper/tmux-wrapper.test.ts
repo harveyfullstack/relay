@@ -6,7 +6,6 @@ import { describe, it, expect } from 'vitest';
 import { getDefaultPrefix } from './tmux-wrapper.js';
 import {
   type InjectionResult,
-  type InjectionMetrics,
   INJECTION_CONSTANTS,
   createInjectionMetrics,
 } from './shared.js';
