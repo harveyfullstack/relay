@@ -13,6 +13,7 @@ import { createClient } from 'redis';
 import { RedisStore } from 'connect-redis';
 import { getConfig } from './config.js';
 import { runMigrations } from './db/index.js';
+import { getScalingOrchestrator, ScalingOrchestrator } from './services/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -226,6 +227,7 @@ export async function createServer(): Promise<CloudServer> {
 
   // Server lifecycle
   let server: ReturnType<Express['listen']> | null = null;
+  let scalingOrchestrator: ScalingOrchestrator | null = null;
 
   return {
     app,
@@ -234,6 +236,32 @@ export async function createServer(): Promise<CloudServer> {
       // Run database migrations before accepting connections
       console.log('[cloud] Running database migrations...');
       await runMigrations();
+
+      // Initialize scaling orchestrator for auto-scaling
+      if (process.env.RELAY_CLOUD_ENABLED === 'true') {
+        try {
+          scalingOrchestrator = getScalingOrchestrator();
+          await scalingOrchestrator.initialize(config.redisUrl);
+          console.log('[cloud] Scaling orchestrator initialized');
+
+          // Log scaling events
+          scalingOrchestrator.on('scaling_started', (op) => {
+            console.log(`[scaling] Started: ${op.action} for user ${op.userId}`);
+          });
+          scalingOrchestrator.on('scaling_completed', (op) => {
+            console.log(`[scaling] Completed: ${op.action} for user ${op.userId}`);
+          });
+          scalingOrchestrator.on('scaling_error', ({ operation, error }) => {
+            console.error(`[scaling] Error: ${operation.action} for ${operation.userId}:`, error);
+          });
+          scalingOrchestrator.on('workspace_provisioned', (data) => {
+            console.log(`[scaling] Provisioned workspace ${data.workspaceId} for user ${data.userId}`);
+          });
+        } catch (error) {
+          console.warn('[cloud] Failed to initialize scaling orchestrator:', error);
+          // Non-fatal - server can run without auto-scaling
+        }
+      }
 
       return new Promise((resolve) => {
         server = app.listen(config.port, () => {
@@ -245,6 +273,11 @@ export async function createServer(): Promise<CloudServer> {
     },
 
     async stop() {
+      // Shutdown scaling orchestrator
+      if (scalingOrchestrator) {
+        await scalingOrchestrator.shutdown();
+      }
+
       if (server) {
         await new Promise<void>((resolve) => server!.close(() => resolve()));
       }
