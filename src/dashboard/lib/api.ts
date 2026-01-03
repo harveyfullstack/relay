@@ -126,7 +126,7 @@ export class DashboardWebSocket {
     } catch {
       // Ignore - not in browser
     }
-    return 'ws://localhost:4280/ws';
+    return 'ws://localhost:3888/ws';
   }
 
   private notifyListeners(data: DashboardData): void {

@@ -569,7 +569,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         const servers: ServerInfo[] = result.data.servers.map((s) => ({
           id: s.id,
           name: s.name,
-          url: `http://localhost:4280`, // Default URL for local daemon
+          url: s.id === 'local' ? window.location.origin : `http://${s.id}`,
           status: s.status === 'healthy' ? 'online' : s.status === 'degraded' ? 'degraded' : 'offline',
           agentCount: s.agents.length,
           uptime: s.uptime,
