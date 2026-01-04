@@ -77,6 +77,22 @@ export interface SettingsPanelProps {
   csrfToken?: string; // For cloud mode API calls
 }
 
+// Trajectory settings state
+interface TrajectorySettings {
+  storeInRepo: boolean;
+  storageLocation: string;
+  loading: boolean;
+  error: string | null;
+  documentation?: {
+    title: string;
+    description: string;
+    whatIsIt: string;
+    benefits: string[];
+    storeInRepoExplanation: string;
+    learnMore: string;
+  };
+}
+
 export function SettingsPanel({
   isOpen,
   onClose,
@@ -86,11 +102,81 @@ export function SettingsPanel({
   workspaceId,
   csrfToken,
 }: SettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState<'appearance' | 'notifications' | 'connection' | 'providers'>('appearance');
+  const [activeTab, setActiveTab] = useState<'appearance' | 'notifications' | 'connection' | 'providers' | 'trajectories'>('appearance');
   const [providerStatus, setProviderStatus] = useState<Record<string, boolean>>({});
   const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [providerError, setProviderError] = useState<string | null>(null);
+  const [trajectorySettings, setTrajectorySettings] = useState<TrajectorySettings>({
+    storeInRepo: false,
+    storageLocation: '',
+    loading: true,
+    error: null,
+  });
+
+  // Load trajectory settings on mount
+  React.useEffect(() => {
+    if (isOpen && activeTab === 'trajectories') {
+      fetchTrajectorySettings();
+    }
+  }, [isOpen, activeTab]);
+
+  const fetchTrajectorySettings = async () => {
+    try {
+      setTrajectorySettings(prev => ({ ...prev, loading: true, error: null }));
+      const res = await fetch('/api/settings/trajectory');
+      if (!res.ok) throw new Error('Failed to load settings');
+      const data = await res.json();
+      setTrajectorySettings({
+        storeInRepo: data.settings.storeInRepo,
+        storageLocation: data.settings.storageLocation,
+        loading: false,
+        error: null,
+        documentation: data.documentation,
+      });
+    } catch (err) {
+      setTrajectorySettings(prev => ({
+        ...prev,
+        loading: false,
+        error: err instanceof Error ? err.message : 'Failed to load settings',
+      }));
+    }
+  };
+
+  const updateTrajectorySettings = async (storeInRepo: boolean) => {
+    try {
+      setTrajectorySettings(prev => ({ ...prev, loading: true, error: null }));
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+      const res = await fetch('/api/settings/trajectory', {
+        method: 'PUT',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ storeInRepo }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update settings');
+      }
+
+      const data = await res.json();
+      setTrajectorySettings(prev => ({
+        ...prev,
+        storeInRepo: data.settings.storeInRepo,
+        storageLocation: data.settings.storageLocation,
+        loading: false,
+        error: null,
+      }));
+    } catch (err) {
+      setTrajectorySettings(prev => ({
+        ...prev,
+        loading: false,
+        error: err instanceof Error ? err.message : 'Failed to update settings',
+      }));
+    }
+  };
 
   const updateSetting = useCallback(
     (
@@ -182,6 +268,17 @@ export function SettingsPanel({
           >
             <ProviderIcon />
             Providers
+          </button>
+          <button
+            className={`flex items-center gap-1.5 py-2 px-3.5 bg-transparent border-none rounded-md text-[13px] cursor-pointer font-[inherit] transition-all duration-150 ${
+              activeTab === 'trajectories'
+                ? 'bg-accent text-white'
+                : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+            }`}
+            onClick={() => setActiveTab('trajectories')}
+          >
+            <TrajectoryIcon />
+            Trajectories
           </button>
         </div>
 
@@ -417,6 +514,99 @@ export function SettingsPanel({
               </div>
             </div>
           )}
+
+          {activeTab === 'trajectories' && (
+            <div className="flex flex-col gap-6">
+              {trajectorySettings.loading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="text-text-muted">Loading settings...</div>
+                </div>
+              ) : trajectorySettings.error ? (
+                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+                  <p className="text-red-400 text-sm">{trajectorySettings.error}</p>
+                  <button
+                    className="mt-2 text-sm text-accent hover:underline"
+                    onClick={fetchTrajectorySettings}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Documentation section */}
+                  <div className="p-4 bg-gradient-to-r from-accent/10 to-accent/5 border border-accent/20 rounded-lg">
+                    <h3 className="text-base font-semibold text-text-primary mb-2 flex items-center gap-2">
+                      <TrajectoryIcon />
+                      What are Trajectories?
+                    </h3>
+                    <p className="text-sm text-text-secondary mb-3">
+                      {trajectorySettings.documentation?.description ||
+                        'Trajectories record the journey of agent work using the PDERO paradigm (Plan, Design, Execute, Review, Observe). They capture decisions, phase transitions, and retrospectives.'}
+                    </p>
+                    <div className="mb-3">
+                      <h4 className="text-xs font-semibold text-text-muted uppercase mb-2">Benefits</h4>
+                      <ul className="list-none p-0 m-0 space-y-1.5">
+                        {(trajectorySettings.documentation?.benefits || [
+                          'Track why decisions were made, not just what was built',
+                          'Enable session recovery when agents crash',
+                          'Provide learning data for future agents',
+                          'Create audit trails of AI work',
+                        ]).map((benefit, i) => (
+                          <li key={i} className="flex items-start gap-2 text-sm text-text-secondary">
+                            <span className="text-accent">✓</span>
+                            {benefit}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <a
+                      href={trajectorySettings.documentation?.learnMore || 'https://pdero.com'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-sm text-accent hover:underline"
+                    >
+                      Learn more about PDERO
+                      <ExternalLinkIcon />
+                    </a>
+                  </div>
+
+                  {/* Settings */}
+                  <div className="flex flex-col gap-3">
+                    <label className="text-xs font-semibold text-text-muted uppercase tracking-[0.5px]">
+                      Storage Settings
+                    </label>
+
+                    <ToggleOption
+                      label="Store trajectories in repository"
+                      description={trajectorySettings.documentation?.storeInRepoExplanation ||
+                        'When enabled, trajectories are saved to .trajectories/ in your repo and can be committed to source control.'}
+                      checked={trajectorySettings.storeInRepo}
+                      onChange={(v) => updateTrajectorySettings(v)}
+                    />
+
+                    <div className="p-3 bg-bg-hover rounded-lg">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium text-text-primary">Current storage location</span>
+                      </div>
+                      <code className="text-xs text-text-muted bg-bg-tertiary px-2 py-1 rounded">
+                        {trajectorySettings.storageLocation || 'user (~/.config/agent-relay/trajectories/)'}
+                      </code>
+                    </div>
+                  </div>
+
+                  {/* Why opt-in info */}
+                  <div className="p-3 bg-bg-hover rounded-lg border border-border">
+                    <h4 className="text-sm font-medium text-text-primary mb-1">Why opt-in to repo storage?</h4>
+                    <p className="text-xs text-text-muted">
+                      Teams who want to review agent decision-making processes can store trajectories
+                      in the repo to version control them alongside code. This makes it easy to understand
+                      why agents made specific choices during code review.
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between py-4 px-6 border-t border-border">
@@ -556,6 +746,24 @@ function ProviderIcon() {
       <path d="M12 2L2 7l10 5 10-5-10-5z" />
       <path d="M2 17l10 5 10-5" />
       <path d="M2 12l10 5 10-5" />
+    </svg>
+  );
+}
+
+function TrajectoryIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
     </svg>
   );
 }
