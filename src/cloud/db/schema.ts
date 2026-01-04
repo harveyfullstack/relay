@@ -595,3 +595,111 @@ export type AgentCrash = typeof agentCrashes.$inferSelect;
 export type NewAgentCrash = typeof agentCrashes.$inferInsert;
 export type MemoryAlert = typeof memoryAlerts.$inferSelect;
 export type NewMemoryAlert = typeof memoryAlerts.$inferInsert;
+
+// ============================================================================
+// CI Failure Events (GitHub CI check failures)
+// ============================================================================
+
+export interface CIAnnotation {
+  path: string;
+  startLine: number;
+  endLine: number;
+  annotationLevel: string;
+  message: string;
+}
+
+export const ciFailureEvents = pgTable('ci_failure_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  repositoryId: uuid('repository_id').references(() => repositories.id, { onDelete: 'cascade' }),
+  repository: varchar('repository', { length: 255 }).notNull(), // org/repo format
+  prNumber: bigint('pr_number', { mode: 'number' }),
+  branch: varchar('branch', { length: 255 }),
+  commitSha: varchar('commit_sha', { length: 40 }),
+  checkName: varchar('check_name', { length: 255 }).notNull(),
+  checkId: bigint('check_id', { mode: 'number' }).notNull(),
+  conclusion: varchar('conclusion', { length: 50 }).notNull(), // failure, cancelled, timed_out, etc.
+  failureTitle: text('failure_title'),
+  failureSummary: text('failure_summary'),
+  failureDetails: text('failure_details'),
+  annotations: jsonb('annotations').$type<CIAnnotation[]>().default([]),
+  workflowName: varchar('workflow_name', { length: 255 }),
+  workflowRunId: bigint('workflow_run_id', { mode: 'number' }),
+  // Processing state
+  processedAt: timestamp('processed_at'),
+  agentSpawned: boolean('agent_spawned').default(false),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  repositoryIdx: index('idx_ci_failure_events_repository').on(table.repository),
+  prNumberIdx: index('idx_ci_failure_events_pr_number').on(table.prNumber),
+  checkNameIdx: index('idx_ci_failure_events_check_name').on(table.checkName),
+  createdAtIdx: index('idx_ci_failure_events_created_at').on(table.createdAt),
+  repoPrIdx: index('idx_ci_failure_events_repo_pr').on(table.repository, table.prNumber),
+}));
+
+export const ciFailureEventsRelations = relations(ciFailureEvents, ({ one, many }) => ({
+  repositoryRef: one(repositories, {
+    fields: [ciFailureEvents.repositoryId],
+    references: [repositories.id],
+  }),
+  fixAttempts: many(ciFixAttempts),
+}));
+
+// ============================================================================
+// CI Fix Attempts (agent responses to failures)
+// ============================================================================
+
+export const ciFixAttempts = pgTable('ci_fix_attempts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  failureEventId: uuid('failure_event_id').notNull().references(() => ciFailureEvents.id, { onDelete: 'cascade' }),
+  agentId: varchar('agent_id', { length: 255 }).notNull(),
+  agentName: varchar('agent_name', { length: 255 }).notNull(),
+  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, in_progress, success, failed
+  commitSha: varchar('commit_sha', { length: 40 }),
+  errorMessage: text('error_message'),
+  // Timing
+  startedAt: timestamp('started_at').defaultNow().notNull(),
+  completedAt: timestamp('completed_at'),
+}, (table) => ({
+  failureEventIdx: index('idx_ci_fix_attempts_failure_event').on(table.failureEventId),
+  statusIdx: index('idx_ci_fix_attempts_status').on(table.status),
+  agentIdIdx: index('idx_ci_fix_attempts_agent_id').on(table.agentId),
+}));
+
+export const ciFixAttemptsRelations = relations(ciFixAttempts, ({ one }) => ({
+  failureEvent: one(ciFailureEvents, {
+    fields: [ciFixAttempts.failureEventId],
+    references: [ciFailureEvents.id],
+  }),
+}));
+
+// ============================================================================
+// CI Webhook Configuration (per-repository settings)
+// ============================================================================
+
+export interface CICheckStrategy {
+  autoFix: boolean;
+  command?: string;
+  agentProfile?: string;
+  notifyOnly?: boolean;
+}
+
+export interface CIWebhookConfig {
+  enabled: boolean;
+  autoFix?: {
+    lint?: boolean;
+    typecheck?: boolean;
+    test?: boolean;
+    build?: boolean;
+  };
+  notifyExistingAgent?: boolean;
+  spawnNewAgent?: boolean;
+  maxConcurrentAgents?: number;
+  cooldownMinutes?: number;
+  checkStrategies?: Record<string, CICheckStrategy>;
+}
+
+// Type exports for CI tables
+export type CIFailureEvent = typeof ciFailureEvents.$inferSelect;
+export type NewCIFailureEvent = typeof ciFailureEvents.$inferInsert;
+export type CIFixAttempt = typeof ciFixAttempts.$inferSelect;
+export type NewCIFixAttempt = typeof ciFixAttempts.$inferInsert;

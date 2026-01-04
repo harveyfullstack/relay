@@ -75,6 +75,14 @@ webhooksRouter.post('/github', async (req: Request, res: Response) => {
         console.log(`[webhook] Issue ${req.body.action} on ${req.body.repository?.full_name}`);
         break;
 
+      case 'check_run':
+        await handleCheckRunEvent(req.body);
+        break;
+
+      case 'workflow_run':
+        await handleWorkflowRunEvent(req.body);
+        break;
+
       default:
         console.log(`[webhook] Unhandled event: ${event}`);
     }
@@ -269,4 +277,191 @@ async function handleInstallationRepositoriesEvent(payload: {
     }
     console.log(`[webhook] Removed access to ${repositories_removed.length} repositories`);
   }
+}
+
+// ============================================================================
+// CI Failure Webhook Handlers
+// ============================================================================
+
+/**
+ * Check run payload from GitHub webhook
+ */
+interface CheckRunPayload {
+  action: string;
+  check_run: {
+    id: number;
+    name: string;
+    status: string;
+    conclusion: string | null;
+    output: {
+      title: string | null;
+      summary: string | null;
+      text?: string | null;
+      annotations?: Array<{
+        path: string;
+        start_line: number;
+        end_line: number;
+        annotation_level: string;
+        message: string;
+      }>;
+    };
+    pull_requests: Array<{
+      number: number;
+      head: { ref: string; sha: string };
+    }>;
+  };
+  repository: {
+    full_name: string;
+    clone_url: string;
+  };
+}
+
+/**
+ * Workflow run payload from GitHub webhook
+ */
+interface WorkflowRunPayload {
+  action: string;
+  workflow_run: {
+    id: number;
+    name: string;
+    status: string;
+    conclusion: string | null;
+    head_branch: string;
+    head_sha: string;
+    pull_requests: Array<{
+      number: number;
+    }>;
+  };
+  repository: {
+    full_name: string;
+  };
+}
+
+/**
+ * Handle check_run webhook events
+ *
+ * When a CI check fails on a PR, we:
+ * 1. Record the failure in our database
+ * 2. Check if an agent is already working on the PR
+ * 3. Either message the existing agent or spawn a new one
+ */
+async function handleCheckRunEvent(payload: CheckRunPayload): Promise<void> {
+  const { action, check_run, repository } = payload;
+
+  // Only handle completed checks
+  if (action !== 'completed') {
+    console.log(`[webhook] Ignoring check_run action: ${action}`);
+    return;
+  }
+
+  // Only handle failures
+  if (check_run.conclusion !== 'failure') {
+    console.log(`[webhook] Check ${check_run.name} conclusion: ${check_run.conclusion} (not a failure)`);
+    return;
+  }
+
+  // Only handle checks on PRs
+  if (check_run.pull_requests.length === 0) {
+    console.log(`[webhook] Check ${check_run.name} failed but not on a PR, skipping`);
+    return;
+  }
+
+  const pr = check_run.pull_requests[0];
+
+  console.log(
+    `[webhook] CI failure: ${check_run.name} on ${repository.full_name}#${pr.number}`
+  );
+
+  // Build failure context
+  const failureContext = {
+    repository: repository.full_name,
+    prNumber: pr.number,
+    branch: pr.head.ref,
+    commitSha: pr.head.sha,
+    checkName: check_run.name,
+    checkId: check_run.id,
+    conclusion: check_run.conclusion,
+    failureTitle: check_run.output.title,
+    failureSummary: check_run.output.summary,
+    failureDetails: check_run.output.text,
+    annotations: (check_run.output.annotations || []).map(a => ({
+      path: a.path,
+      startLine: a.start_line,
+      endLine: a.end_line,
+      annotationLevel: a.annotation_level,
+      message: a.message,
+    })),
+  };
+
+  // Record the failure in the database
+  try {
+    const failureEvent = await db.ciFailureEvents.create({
+      repository: failureContext.repository,
+      prNumber: failureContext.prNumber,
+      branch: failureContext.branch,
+      commitSha: failureContext.commitSha,
+      checkName: failureContext.checkName,
+      checkId: failureContext.checkId,
+      conclusion: failureContext.conclusion,
+      failureTitle: failureContext.failureTitle,
+      failureSummary: failureContext.failureSummary,
+      failureDetails: failureContext.failureDetails,
+      annotations: failureContext.annotations,
+    });
+
+    console.log(`[webhook] Recorded CI failure event: ${failureEvent.id}`);
+
+    // Check for existing active fix attempts on this repo
+    const activeAttempts = await db.ciFixAttempts.findActiveByRepository(repository.full_name);
+
+    if (activeAttempts.length > 0) {
+      console.log(`[webhook] ${activeAttempts.length} active fix attempt(s) already exist, skipping spawn`);
+      await db.ciFailureEvents.markProcessed(failureEvent.id, false);
+      return;
+    }
+
+    // Import and call the CI agent spawner (lazy import to avoid circular deps)
+    const { spawnCIFixAgent } = await import('../services/ci-agent-spawner.js');
+    await spawnCIFixAgent(failureEvent);
+
+    // Mark as processed with agent spawned
+    await db.ciFailureEvents.markProcessed(failureEvent.id, true);
+    console.log(`[webhook] Agent spawned for CI failure: ${failureEvent.id}`);
+  } catch (error) {
+    console.error(`[webhook] Failed to handle CI failure:`, error);
+    // Don't re-throw - we still want to return 200 to GitHub
+  }
+}
+
+/**
+ * Handle workflow_run webhook events
+ *
+ * This handles the entire workflow completion. Useful for:
+ * - Waiting for all checks to complete before acting
+ * - Getting workflow-level context
+ */
+async function handleWorkflowRunEvent(payload: WorkflowRunPayload): Promise<void> {
+  const { action, workflow_run, repository } = payload;
+
+  // Only handle completed workflows
+  if (action !== 'completed') {
+    console.log(`[webhook] Ignoring workflow_run action: ${action}`);
+    return;
+  }
+
+  // Only handle failures
+  if (workflow_run.conclusion !== 'failure') {
+    console.log(`[webhook] Workflow ${workflow_run.name} conclusion: ${workflow_run.conclusion}`);
+    return;
+  }
+
+  // Log for now - we primarily handle individual check_runs
+  // but workflow_run events can be used for aggregate failure handling
+  console.log(
+    `[webhook] Workflow failed: ${workflow_run.name} on ${repository.full_name} ` +
+    `(branch: ${workflow_run.head_branch}, PRs: ${workflow_run.pull_requests.map(p => p.number).join(', ')})`
+  );
+
+  // Future: Could use this to trigger workflow-level actions
+  // For now, individual check_run events handle the actual failure processing
 }

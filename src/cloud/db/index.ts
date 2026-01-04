@@ -35,6 +35,14 @@ export type {
   NewSubscription,
   UsageRecord,
   NewUsageRecord,
+  // CI failure types
+  CIAnnotation,
+  CIFailureEvent,
+  NewCIFailureEvent,
+  CIFixAttempt,
+  NewCIFixAttempt,
+  CICheckStrategy,
+  CIWebhookConfig,
 } from './schema.js';
 
 // Re-export schema tables for direct access if needed
@@ -49,6 +57,8 @@ export {
   linkedDaemons as linkedDaemonsTable,
   subscriptions as subscriptionsTable,
   usageRecords as usageRecordsTable,
+  ciFailureEvents as ciFailureEventsTable,
+  ciFixAttempts as ciFixAttemptsTable,
 } from './schema.js';
 
 // Import query modules
@@ -64,6 +74,8 @@ import {
   linkedDaemonQueries,
   projectGroupQueries,
   repositoryQueries,
+  ciFailureEventQueries,
+  ciFixAttemptQueries,
 } from './drizzle.js';
 
 // Legacy type aliases for backwards compatibility
@@ -88,6 +100,9 @@ export const db = {
   repositories: repositoryQueries,
   // Linked daemon operations (for local agent-relay instances)
   linkedDaemons: linkedDaemonQueries,
+  // CI failure tracking
+  ciFailureEvents: ciFailureEventQueries,
+  ciFixAttempts: ciFixAttemptQueries,
   // Database utilities
   getDb,
   close: closeDb,
@@ -104,6 +119,8 @@ export {
   projectGroupQueries,
   repositoryQueries,
   linkedDaemonQueries,
+  ciFailureEventQueries,
+  ciFixAttemptQueries,
 };
 
 // Export database utilities

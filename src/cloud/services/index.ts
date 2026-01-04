@@ -44,3 +44,12 @@ export {
   getScalingOrchestrator,
   createScalingOrchestrator,
 } from './scaling-orchestrator.js';
+
+// CI failure handling
+export {
+  spawnCIFixAgent,
+  notifyAgentOfCIFailure,
+  completeFixAttempt,
+  getFailureHistory,
+  getPRFailureHistory,
+} from './ci-agent-spawner.js';
