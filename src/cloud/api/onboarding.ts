@@ -414,11 +414,15 @@ onboardingRouter.post('/cli/:provider/code/:sessionId', async (req: Request, res
 
 /**
  * POST /api/onboarding/cli/:provider/complete/:sessionId
- * Complete auth by polling for credentials (for providers like Claude that don't need code input)
+ * Complete auth - for providers like Codex, accepts authCode (redirect URL with code)
+ * For providers like Claude, just polls for credentials
  */
 onboardingRouter.post('/cli/:provider/complete/:sessionId', async (req: Request, res: Response) => {
   const { provider, sessionId } = req.params;
+  const { authCode } = req.body || {};
   const userId = req.session.userId!;
+
+  console.log(`[onboarding] POST /cli/${provider}/complete/${sessionId} - authCode: ${authCode ? 'provided' : 'none'}`);
 
   const session = activeSessions.get(sessionId);
   if (!session) {
@@ -436,9 +440,11 @@ onboardingRouter.post('/cli/:provider/complete/:sessionId', async (req: Request,
       const targetUrl = `${session.workspaceUrl}/auth/cli/${backendProviderId}/complete/${session.workspaceSessionId}`;
       console.log('[onboarding] Forwarding complete request to workspace:', targetUrl);
 
+      // Forward the authCode if provided
       const completeResponse = await fetch(targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: authCode ? JSON.stringify({ authCode }) : undefined,
       });
 
       if (completeResponse.ok) {

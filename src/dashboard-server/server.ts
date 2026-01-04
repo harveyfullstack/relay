@@ -2089,12 +2089,42 @@ export async function startDashboard(
   });
 
   /**
-   * POST /auth/cli/:provider/complete/:sessionId - Complete auth by polling for credentials
-   * Used when user indicates they've completed auth in browser (no code paste needed)
+   * POST /auth/cli/:provider/complete/:sessionId - Complete auth
+   * For providers like Claude: just polls for credentials
+   * For providers like Codex: accepts authCode (redirect URL) and extracts the code
    */
   app.post('/auth/cli/:provider/complete/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
+    const { authCode } = req.body || {};
 
+    // If authCode provided, try to extract code and submit it
+    if (authCode && typeof authCode === 'string') {
+      let code = authCode;
+
+      // If it's a URL, extract the code parameter
+      if (authCode.startsWith('http')) {
+        try {
+          const url = new URL(authCode);
+          const codeParam = url.searchParams.get('code');
+          if (codeParam) {
+            code = codeParam;
+          }
+        } catch {
+          // Not a valid URL, use as-is
+        }
+      }
+
+      // Submit the code to the CLI process
+      const submitResult = submitAuthCode(sessionId, code);
+      if (!submitResult.success) {
+        return res.status(400).json({ error: submitResult.error });
+      }
+
+      // Wait a moment for credentials to be written
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
+    // Poll for credentials
     const result = await completeAuthSession(sessionId);
     if (!result.success) {
       return res.status(400).json({ error: result.error });
