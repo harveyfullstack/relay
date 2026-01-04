@@ -15,6 +15,7 @@ import { CommandPalette, type TaskCreateRequest, PRIORITY_CONFIG } from './Comma
 import { SpawnModal, type SpawnConfig } from './SpawnModal';
 import { NewConversationModal } from './NewConversationModal';
 import { SettingsPanel, defaultSettings, type Settings } from './SettingsPanel';
+import { SettingsPage } from './settings';
 import { ConversationHistory } from './ConversationHistory';
 import { MentionAutocomplete, getMentionQuery, completeMentionInValue, type HumanUser } from './MentionAutocomplete';
 import { FileAutocomplete, getFileQuery, completeFileInValue } from './FileAutocomplete';
@@ -120,6 +121,9 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   // Settings panel state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>(defaultSettings);
+
+  // Full settings page state
+  const [isFullSettingsOpen, setIsFullSettingsOpen] = useState(false);
 
   // Conversation history panel state
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -467,9 +471,9 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     setIsSpawnModalOpen(true);
   }, []);
 
-  // Handle settings click
+  // Handle settings click - opens full settings page
   const handleSettingsClick = useCallback(() => {
-    setIsSettingsOpen(true);
+    setIsFullSettingsOpen(true);
   }, []);
 
   // Handle history click
@@ -745,6 +749,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         setIsSpawnModalOpen(false);
         setIsNewConversationOpen(false);
         setIsTrajectoryOpen(false);
+        setIsFullSettingsOpen(false);
       }
     };
 
@@ -986,7 +991,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         settings={settings}
         onSettingsChange={setSettings}
         onResetSettings={() => setSettings(defaultSettings)}
-        csrfToken={cloudSession?.csrfToken}
+        csrfToken={cloudSession?.csrfToken ?? undefined}
       />
 
       {/* Add Workspace Modal */}
@@ -1147,6 +1152,14 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           setIsCoordinatorOpen(false);
         }}
       />
+
+      {/* Full Settings Page */}
+      {isFullSettingsOpen && (
+        <SettingsPage
+          currentUserId={cloudSession?.user?.id}
+          onClose={() => setIsFullSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -513,6 +513,279 @@ export const cloudApi = {
     );
   },
 
+  /**
+   * Update member role
+   */
+  async updateMemberRole(workspaceId: string, memberId: string, role: string) {
+    return cloudFetch<{ success: boolean; role: string }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      }
+    );
+  },
+
+  /**
+   * Remove member from workspace
+   */
+  async removeMember(workspaceId: string, memberId: string) {
+    return cloudFetch<{ success: boolean }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberId)}`,
+      { method: 'DELETE' }
+    );
+  },
+
+  // ===== Billing API =====
+
+  /**
+   * Get all billing plans
+   */
+  async getBillingPlans() {
+    return cloudFetch<{
+      plans: Array<{
+        tier: string;
+        name: string;
+        description: string;
+        price: { monthly: number; yearly: number };
+        features: string[];
+        limits: Record<string, number>;
+        recommended?: boolean;
+      }>;
+      publishableKey: string;
+    }>('/api/billing/plans');
+  },
+
+  /**
+   * Get current subscription status
+   */
+  async getSubscription() {
+    return cloudFetch<{
+      tier: string;
+      subscription: {
+        id: string;
+        tier: string;
+        status: string;
+        currentPeriodStart: string;
+        currentPeriodEnd: string;
+        cancelAtPeriodEnd: boolean;
+        interval: 'month' | 'year';
+      } | null;
+      customer: {
+        id: string;
+        email: string;
+        name?: string;
+        paymentMethods: Array<{
+          id: string;
+          type: string;
+          last4?: string;
+          brand?: string;
+          isDefault: boolean;
+        }>;
+        invoices: Array<{
+          id: string;
+          number: string;
+          amount: number;
+          status: string;
+          date: string;
+          pdfUrl?: string;
+        }>;
+      } | null;
+    }>('/api/billing/subscription');
+  },
+
+  /**
+   * Create checkout session for new subscription
+   */
+  async createCheckoutSession(tier: string, interval: 'month' | 'year' = 'month') {
+    return cloudFetch<{
+      sessionId: string;
+      checkoutUrl: string;
+    }>('/api/billing/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ tier, interval }),
+    });
+  },
+
+  /**
+   * Create billing portal session
+   */
+  async createBillingPortal() {
+    return cloudFetch<{
+      sessionId: string;
+      portalUrl: string;
+    }>('/api/billing/portal', {
+      method: 'POST',
+    });
+  },
+
+  /**
+   * Change subscription tier
+   */
+  async changeSubscription(tier: string, interval: 'month' | 'year' = 'month') {
+    return cloudFetch<{
+      subscription: {
+        tier: string;
+        status: string;
+      };
+    }>('/api/billing/change', {
+      method: 'POST',
+      body: JSON.stringify({ tier, interval }),
+    });
+  },
+
+  /**
+   * Cancel subscription at period end
+   */
+  async cancelSubscription() {
+    return cloudFetch<{
+      subscription: { cancelAtPeriodEnd: boolean; currentPeriodEnd: string };
+      message: string;
+    }>('/api/billing/cancel', {
+      method: 'POST',
+    });
+  },
+
+  /**
+   * Resume cancelled subscription
+   */
+  async resumeSubscription() {
+    return cloudFetch<{
+      subscription: { cancelAtPeriodEnd: boolean };
+      message: string;
+    }>('/api/billing/resume', {
+      method: 'POST',
+    });
+  },
+
+  /**
+   * Get invoices
+   */
+  async getInvoices() {
+    return cloudFetch<{
+      invoices: Array<{
+        id: string;
+        number: string;
+        amount: number;
+        status: string;
+        date: string;
+        pdfUrl?: string;
+      }>;
+    }>('/api/billing/invoices');
+  },
+
+  // ===== Workspace Management API =====
+
+  /**
+   * Stop workspace
+   */
+  async stopWorkspace(id: string) {
+    return cloudFetch<{ success: boolean; message: string }>(
+      `/api/workspaces/${encodeURIComponent(id)}/stop`,
+      { method: 'POST' }
+    );
+  },
+
+  /**
+   * Delete workspace
+   */
+  async deleteWorkspace(id: string) {
+    return cloudFetch<{ success: boolean; message: string }>(
+      `/api/workspaces/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    );
+  },
+
+  /**
+   * Add repositories to workspace
+   */
+  async addReposToWorkspace(workspaceId: string, repositoryIds: string[]) {
+    return cloudFetch<{ success: boolean; message: string }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/repos`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ repositoryIds }),
+      }
+    );
+  },
+
+  /**
+   * Set custom domain for workspace
+   */
+  async setCustomDomain(workspaceId: string, domain: string) {
+    return cloudFetch<{
+      success: boolean;
+      domain: string;
+      status: string;
+      instructions: {
+        type: string;
+        name: string;
+        value: string;
+        ttl: number;
+      };
+      verifyEndpoint: string;
+      message: string;
+    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/domain`, {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+  },
+
+  /**
+   * Verify custom domain
+   */
+  async verifyCustomDomain(workspaceId: string) {
+    return cloudFetch<{
+      success: boolean;
+      status: string;
+      domain?: string;
+      message?: string;
+      error?: string;
+    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/domain/verify`, {
+      method: 'POST',
+    });
+  },
+
+  /**
+   * Remove custom domain
+   */
+  async removeCustomDomain(workspaceId: string) {
+    return cloudFetch<{ success: boolean; message: string }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/domain`,
+      { method: 'DELETE' }
+    );
+  },
+
+  /**
+   * Get detailed workspace info
+   */
+  async getWorkspaceDetails(id: string) {
+    return cloudFetch<{
+      id: string;
+      name: string;
+      status: string;
+      publicUrl?: string;
+      computeProvider: string;
+      config: {
+        providers: string[];
+        repositories: string[];
+        supervisorEnabled?: boolean;
+        maxAgents?: number;
+      };
+      customDomain?: string;
+      customDomainStatus?: string;
+      errorMessage?: string;
+      repositories: Array<{
+        id: string;
+        fullName: string;
+        syncStatus: string;
+        lastSyncedAt?: string;
+      }>;
+      createdAt: string;
+      updatedAt: string;
+    }>(`/api/workspaces/${encodeURIComponent(id)}`);
+  },
+
   // ===== GitHub App API =====
 
   /**
