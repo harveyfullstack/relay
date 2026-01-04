@@ -62,6 +62,7 @@ interface AIProvider {
 const AI_PROVIDERS: AIProvider[] = [
   { id: 'anthropic', name: 'Anthropic', displayName: 'Claude', description: 'Claude Code - recommended for code tasks', color: '#D97757', cliCommand: 'claude' },
   { id: 'codex', name: 'OpenAI', displayName: 'Codex', description: 'Codex - OpenAI coding assistant', color: '#10A37F', cliCommand: 'codex login' },
+  { id: 'gemini', name: 'Google', displayName: 'Gemini', description: 'Gemini - Google AI coding assistant', color: '#4285F4', cliCommand: 'gemini' },
   { id: 'opencode', name: 'OpenCode', displayName: 'OpenCode', description: 'OpenCode - AI coding assistant', color: '#00D4AA', cliCommand: 'opencode' },
   { id: 'droid', name: 'Factory', displayName: 'Droid', description: 'Droid - Factory AI coding agent', color: '#6366F1', cliCommand: 'droid' },
 ];
@@ -82,8 +83,14 @@ export function SettingsPanel({
   settings,
   onSettingsChange,
   onResetSettings,
+  workspaceId,
+  csrfToken,
 }: SettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState<'appearance' | 'notifications' | 'connection'>('appearance');
+  const [activeTab, setActiveTab] = useState<'appearance' | 'notifications' | 'connection' | 'providers'>('appearance');
+  const [providerStatus, setProviderStatus] = useState<Record<string, boolean>>({});
+  const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [providerError, setProviderError] = useState<string | null>(null);
 
   const updateSetting = useCallback(
     (
@@ -164,6 +171,17 @@ export function SettingsPanel({
           >
             <WifiIcon />
             Connection
+          </button>
+          <button
+            className={`flex items-center gap-1.5 py-2 px-3.5 bg-transparent border-none rounded-md text-[13px] cursor-pointer font-[inherit] transition-all duration-150 ${
+              activeTab === 'providers'
+                ? 'bg-accent text-white'
+                : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+            }`}
+            onClick={() => setActiveTab('providers')}
+          >
+            <ProviderIcon />
+            Providers
           </button>
         </div>
 
@@ -301,6 +319,104 @@ export function SettingsPanel({
               </div>
             </div>
           )}
+
+          {activeTab === 'providers' && (
+            <div className="flex flex-col gap-6">
+              <div className="flex flex-col gap-3">
+                <label className="text-xs font-semibold text-text-muted uppercase tracking-[0.5px]">AI Providers</label>
+                <p className="text-sm text-text-secondary">
+                  Connect AI providers to spawn agents. API keys are stored securely.
+                </p>
+
+                {providerError && (
+                  <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-md text-red-400 text-sm">
+                    {providerError}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2">
+                  {AI_PROVIDERS.map((provider) => (
+                    <div key={provider.id} className="p-4 bg-bg-hover rounded-lg border border-border">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm"
+                            style={{ backgroundColor: provider.color }}
+                          >
+                            {provider.displayName[0]}
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-semibold text-text-primary">{provider.displayName}</h4>
+                            <p className="text-xs text-text-muted">{provider.description}</p>
+                          </div>
+                        </div>
+                        {providerStatus[provider.id] && (
+                          <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-full">
+                            Connected
+                          </span>
+                        )}
+                      </div>
+
+                      {!providerStatus[provider.id] && (
+                        <div className="flex gap-2 mt-3">
+                          <input
+                            type="password"
+                            placeholder={`Enter ${provider.displayName} API key`}
+                            value={connectingProvider === provider.id ? apiKeyInput : ''}
+                            onChange={(e) => {
+                              setConnectingProvider(provider.id);
+                              setApiKeyInput(e.target.value);
+                            }}
+                            onFocus={() => setConnectingProvider(provider.id)}
+                            className="flex-1 py-2 px-3 border border-border rounded-md text-sm bg-bg-tertiary text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                          />
+                          <button
+                            onClick={async () => {
+                              if (!apiKeyInput.trim()) {
+                                setProviderError('Please enter an API key');
+                                return;
+                              }
+                              setProviderError(null);
+                              try {
+                                const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                                if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+                                const res = await fetch(`/api/providers/${provider.id}/api-key`, {
+                                  method: 'POST',
+                                  credentials: 'include',
+                                  headers,
+                                  body: JSON.stringify({ apiKey: apiKeyInput.trim() }),
+                                });
+
+                                if (!res.ok) {
+                                  const data = await res.json();
+                                  throw new Error(data.error || 'Failed to connect');
+                                }
+
+                                setProviderStatus(prev => ({ ...prev, [provider.id]: true }));
+                                setApiKeyInput('');
+                                setConnectingProvider(null);
+                              } catch (err) {
+                                setProviderError(err instanceof Error ? err.message : 'Failed to connect');
+                              }
+                            }}
+                            disabled={connectingProvider !== provider.id || !apiKeyInput.trim()}
+                            className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-md hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            Connect
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="mt-2 text-xs text-text-dim">
+                        CLI: <code className="px-1 py-0.5 bg-bg-tertiary rounded">{provider.cliCommand}</code>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between py-4 px-6 border-t border-border">
@@ -430,6 +546,16 @@ function MonitorIcon() {
       <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
       <line x1="8" y1="21" x2="16" y2="21" />
       <line x1="12" y1="17" x2="12" y2="21" />
+    </svg>
+  );
+}
+
+function ProviderIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 2L2 7l10 5 10-5-10-5z" />
+      <path d="M2 17l10 5 10-5" />
+      <path d="M2 12l10 5 10-5" />
     </svg>
   );
 }

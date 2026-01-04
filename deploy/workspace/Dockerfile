@@ -67,6 +67,8 @@ RUN mkdir -p /home/workspace/.claude && \
 RUN curl -fsSL https://opencode.ai/install | bash
 # Droid
 RUN curl -fsSL https://app.factory.ai/cli | sh
+# Gemini
+RUN npm install -g @anthropic-ai/gemini-cli || curl -fsSL https://gemini.google.com/cli/install.sh | bash
 
 # Environment
 ENV NODE_ENV=production
