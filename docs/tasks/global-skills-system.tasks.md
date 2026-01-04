@@ -1,265 +1,230 @@
-# Agent Relay Global Skills System
+# Agent Relay Skills via PRPM
 
-A system for distributing opt-in skills that are installed globally, not in project repos.
+Leverage PRPM (Prompt Package Manager) to distribute agent-relay skills that users can opt into.
 
-## Problem Statement
+## Overview
 
-Skills that bloat project context:
-- Workspace capabilities (browser testing, containers)
-- Integration guides (Linear, Slack, GitHub)
-- Agent patterns (debugging, refactoring, testing)
-- Provider-specific knowledge (Claude, Codex, Gemini quirks)
+PRPM already provides:
+- Registry at `registry.prpm.dev`
+- `prpm install @org/package` CLI
+- Lockfile tracking (`prpm.lock`)
+- Format conversion (claude, cursor, agents.md)
+- Subtypes: skill, agent, rule, snippet
+- Lazy loading (`eager: false`)
 
-**We don't want these in every project's `.claude/` or `.openskills/`**
+**We should publish `@agent-relay/*` packages to PRPM instead of building custom infrastructure.**
 
-## Proposed Architecture
+## Current State
 
+Already using prpm in this repo (see `prpm.lock`):
+- `@agent-relay/agent-relay-snippet` - Relay messaging syntax
+- `@agent-relay/agent-relay-protocol` - Full protocol docs
+- Various skills from `@prpm/*`, `@anthropic/*`, `@my-senior-dev/*`
+
+## Problem: Global vs Project Skills
+
+PRPM installs to project directories (`.claude/skills/`). We need:
+- Skills NOT in project source control
+- Skills available across all projects
+- Per-user opt-in, not per-project
+
+### Potential Solutions
+
+**A. PRPM Global Flag (feature request)**
+```bash
+prpm install --global @agent-relay/browser-testing
+# Installs to ~/.prpm/skills/ or ~/.config/prpm/skills/
+```
+
+**B. User-level prpm.lock**
 ```
 ~/.agent-relay/
-├── skills/                          # Global skills directory
-│   ├── workspace-capabilities/
-│   │   └── SKILL.md
-│   ├── browser-testing/
-│   │   └── SKILL.md
-│   ├── linear-integration/
-│   │   └── SKILL.md
-│   └── debugging-patterns/
-│       └── SKILL.md
-├── skills.json                      # Installed skills manifest
-└── config.json                      # User preferences
+├── prpm.lock          # User's global skills
+└── .claude/skills/    # Installed skill content
 ```
+Agent reads both project and user prpm.lock.
 
-## Key Questions
+**C. Workspace Bundle**
+Cloud workspaces come with @agent-relay skills pre-installed.
+Users don't manage - just available in cloud.
 
-### 1. Installation & Distribution
-- [ ] How are skills installed? (`agent-relay skills install <name>`?)
-- [ ] Where do skills come from? (npm, git, registry?)
-- [ ] Version management?
-- [ ] Updates?
+## Proposed Skills to Publish
 
-### 2. Discovery by Agents
-- [ ] How do agents know global skills exist?
-- [ ] Merged with project skills in manifest?
-- [ ] Separate namespace? (`@relay/browser-testing` vs `browser-testing`)
-
-### 3. Activation
-- [ ] All installed skills available, or per-project activation?
-- [ ] `agent-relay.json` in project root to enable specific global skills?
-- [ ] Environment variable overrides?
-
-### 4. Context Loading
-- [ ] Lazy load (agent requests) vs eager load (always injected)?
-- [ ] How to hint at available skills without loading content?
-- [ ] Skill metadata (description, size, dependencies)?
-
-### 5. Cloud vs Local
-- [ ] Cloud workspaces: skills bundled in workspace image?
-- [ ] Cloud workspaces: fetched on demand?
-- [ ] User skill preferences synced to cloud?
-
-## Design Options
-
-### Option A: CLI-Managed Global Skills
-
-```bash
-# Install a skill
-agent-relay skills install @relay/browser-testing
-
-# List installed skills
-agent-relay skills list
-
-# Enable for current project
-agent-relay skills enable browser-testing
-
-# Skills available via same mechanism as project skills
-```
-
-**Pros:** Familiar pattern (npm-like), explicit control
-**Cons:** Another thing to manage
-
-### Option B: Skills Registry + Auto-Discovery
-
-Skills published to a registry. Daemon auto-discovers based on workspace capabilities.
+### @agent-relay/workspace-capabilities
+Documentation for browser testing + container spawning.
 
 ```json
-// ~/.agent-relay/skills.json
 {
-  "installed": ["@relay/browser-testing", "@relay/linear"],
-  "autoEnable": {
-    "browser-testing": { "when": "xvfb-available" },
-    "linear": { "when": "linear-token-set" }
-  }
+  "name": "@agent-relay/workspace-capabilities",
+  "version": "1.0.0",
+  "description": "Browser testing (Playwright, VNC) and container spawning (Docker) for agent-relay workspaces",
+  "format": "claude",
+  "subtype": "skill",
+  "eager": false,
+  "tags": ["agent-relay", "browser-testing", "docker", "workspace"],
+  "files": [".claude/skills/workspace-capabilities/SKILL.md"]
 }
 ```
 
-**Pros:** Smart activation, less manual work
-**Cons:** Magic, harder to debug
+### @agent-relay/browser-testing
+Focused Playwright/screenshot skill.
 
-### Option C: Bundled Skill Packs
+### @agent-relay/container-spawning
+Focused Docker/container skill.
 
-Curated skill packs installed together:
+### @agent-relay/linear-integration
+Linear webhook/API patterns.
 
-```bash
-agent-relay skills install @relay/workspace-pack  # browser, containers, etc.
-agent-relay skills install @relay/integrations-pack  # linear, slack, github
-```
+### @agent-relay/slack-integration
+Slack bot patterns.
 
-**Pros:** Simpler UX, curated combinations
-**Cons:** Less granular control
+### @agent-relay/workspace-pack (collection)
+Bundle of all workspace skills.
 
-### Option D: Git-Based Skills
-
-Skills are git repos, installed via URL:
-
-```bash
-agent-relay skills install https://github.com/agent-relay/skills-browser-testing
-```
-
-**Pros:** Easy to create/share custom skills
-**Cons:** No central discovery
-
-## Skill Manifest Schema
-
-```typescript
-interface GlobalSkill {
-  name: string;           // e.g., "@relay/browser-testing"
-  version: string;
-  description: string;    // Short description for listing
-
-  // Activation conditions
-  activation: {
-    mode: 'lazy' | 'eager' | 'conditional';
-    condition?: string;   // e.g., "env.DISPLAY" or "file:/var/run/docker.sock"
-  };
-
-  // Context cost
-  estimatedTokens: number;
-
-  // Dependencies
-  requires?: string[];    // Other skills or capabilities
-
-  // Content
-  skillPath: string;      // Path to SKILL.md
-  rulesPath?: string;     // Optional rules to inject
+```json
+{
+  "collections": [{
+    "id": "workspace-pack",
+    "name": "Agent Relay Workspace Pack",
+    "description": "All workspace capability skills",
+    "packages": [
+      { "packageId": "@agent-relay/workspace-capabilities" },
+      { "packageId": "@agent-relay/browser-testing" },
+      { "packageId": "@agent-relay/container-spawning" }
+    ]
+  }]
 }
-```
-
-## CLI Commands (Proposed)
-
-```bash
-# Installation
-agent-relay skills install <name>      # Install from registry
-agent-relay skills install <git-url>   # Install from git
-agent-relay skills uninstall <name>
-agent-relay skills update [name]
-
-# Discovery
-agent-relay skills list                # List installed
-agent-relay skills search <query>      # Search registry
-agent-relay skills info <name>         # Show details
-
-# Project-level
-agent-relay skills enable <name>       # Enable in current project
-agent-relay skills disable <name>
-agent-relay skills status              # Show what's active
-
-# For agents
-agent-relay skills manifest            # Output JSON for agent consumption
 ```
 
 ## Tasks
 
-### global-skills-architecture
-- [ ] Finalize directory structure
-- [ ] Define skill manifest schema
-- [ ] Define installation sources (registry, git, local)
-- [ ] Document in ADR
+### prpm-global-research
+- [ ] Check if prpm supports `--global` flag
+- [ ] If not, evaluate: feature request vs workaround
+- [ ] Document findings
 
 Dependencies: none
 Priority: high
 
-### global-skills-cli
-- [ ] Implement `skills install` command
-- [ ] Implement `skills list` command
-- [ ] Implement `skills enable/disable` for projects
-- [ ] Add to existing CLI
+### user-skills-directory
+- [ ] Define `~/.agent-relay/skills/` structure
+- [ ] Implement reading from user directory in daemon
+- [ ] Merge user + project skills in agent manifest
 
-Dependencies: global-skills-architecture
+Dependencies: prpm-global-research
 Priority: high
 
-### global-skills-registry
-- [ ] Decide on registry approach (npm? custom? github releases?)
-- [ ] Implement registry client
-- [ ] Create initial skill packages
+### publish-workspace-capabilities
+- [ ] Create skill content (SKILL.md)
+- [ ] Create prpm.json manifest
+- [ ] Test locally with `prpm install .`
+- [ ] Publish to registry.prpm.dev
 
-Dependencies: global-skills-architecture
+Dependencies: none (can do in parallel)
+Priority: high
+
+### publish-browser-testing
+- [ ] Extract browser-specific content from workspace-capabilities
+- [ ] Create focused SKILL.md
+- [ ] Publish to registry
+
+Dependencies: publish-workspace-capabilities
 Priority: medium
 
-### global-skills-agent-discovery
-- [ ] How agents see global skills in manifest
-- [ ] Namespace handling (@relay/ prefix?)
-- [ ] Integration with existing skills system
+### publish-container-spawning
+- [ ] Extract container-specific content
+- [ ] Create focused SKILL.md
+- [ ] Publish to registry
 
-Dependencies: global-skills-cli
+Dependencies: publish-workspace-capabilities
 Priority: medium
 
-### global-skills-cloud-sync
-- [ ] Sync user skill preferences to cloud
-- [ ] Cloud workspace skill provisioning
-- [ ] Per-workspace skill overrides
+### workspace-pack-collection
+- [ ] Create collection prpm.json
+- [ ] Bundle all workspace skills
+- [ ] Publish collection
 
-Dependencies: global-skills-agent-discovery
+Dependencies: publish-browser-testing, publish-container-spawning
 Priority: low
 
-### initial-skill-pack
-- [ ] Create @relay/workspace-capabilities skill
-- [ ] Create @relay/browser-testing skill
-- [ ] Create @relay/container-spawning skill
-- [ ] Create @relay/debugging-patterns skill
+### cloud-workspace-provisioning
+- [ ] Pre-install @agent-relay skills in cloud workspace images
+- [ ] Or: fetch on workspace creation
+- [ ] Make configurable per-workspace
 
-Dependencies: global-skills-cli
+Dependencies: publish-workspace-capabilities
 Priority: medium
 
-## Example User Flow
+## Example Skill Content
 
-```bash
-# User installs agent-relay
-npm install -g agent-relay
+```markdown
+---
+name: workspace-capabilities
+description: Browser testing and container spawning for agent-relay workspaces
+---
 
-# User wants browser testing capabilities
-agent-relay skills search browser
-# Found: @relay/browser-testing - Playwright, screenshots, VNC for browser automation
+# Workspace Capabilities
 
-agent-relay skills install @relay/browser-testing
-# Installed @relay/browser-testing v1.0.0 to ~/.agent-relay/skills/
+This workspace may have additional capabilities available.
 
-# In a project where they want it
-cd my-project
-agent-relay skills enable browser-testing
-# Enabled @relay/browser-testing for this project
+## Checking Availability
 
-# Agent now sees in skills manifest:
-# - Project skills (from .openskills/)
-# - Global skills (from ~/.agent-relay/skills/, filtered by enabled)
+Before using these features, verify they're available:
+
+\`\`\`typescript
+// Check for browser testing
+const hasBrowser = process.env.DISPLAY !== undefined;
+
+// Check for container spawning
+const hasDocker = existsSync('/var/run/docker.sock');
+\`\`\`
+
+## Browser Testing
+
+[Content about Playwright, screenshots, VNC...]
+
+## Container Spawning
+
+[Content about Docker, presets, resource limits...]
 ```
 
-## Relationship to Workspace Capabilities
+## User Flow
 
-This solves the "how do agents know" problem from workspace-capabilities.tasks.md:
+```bash
+# Option A: Global install (if prpm supports it)
+prpm install --global @agent-relay/workspace-pack
 
-1. **Skills are documentation** - they tell agents what's possible
-2. **Capabilities are runtime** - they're what's actually available
-3. **Skills can check capabilities** - `activation.condition: "env.DISPLAY"`
+# Option B: User directory workaround
+cd ~/.agent-relay
+prpm install @agent-relay/workspace-pack
 
-An agent loads the browser-testing skill → learns the APIs → calls MCP tools → tools check if Xvfb is running.
+# Option C: Cloud workspace (automatic)
+# Skills pre-installed, just use them
+```
 
-## Notes
+## Why PRPM Over Custom
 
-- Skills are NOT MCP tools (those are separate)
-- Skills are context/documentation that help agents use tools effectively
-- Skills can reference MCP tools in their content
-- Keep skills focused and small (estimate tokens)
+| Custom System | PRPM |
+|--------------|------|
+| Build registry | ✅ Already exists |
+| Build CLI | ✅ Already exists |
+| Build lockfile | ✅ Already exists |
+| Version management | ✅ Already exists |
+| Format conversion | ✅ Already exists |
 
-See also:
+**PRPM gives us distribution for free. We just publish packages.**
+
+## Open Questions for PRPM
+
+1. **Global installs** - `prpm install --global`?
+2. **Multiple lockfile locations** - project + user?
+3. **Conditional activation** - `activationCondition` field?
+
+May need to contribute these features or work around them.
+
+## References
+
+- `prpm.lock` - Current installed packages
+- `.claude/skills/prpm-json-best-practices-skill/` - How to create packages
 - `docs/tasks/workspace-capabilities.tasks.md` - Runtime capability discovery
-- `docs/design/e2b-sandbox-integration.md` - Alternative execution backends
+- Implementation: `src/daemon/services/browser-testing.ts`, `container-spawner.ts`
