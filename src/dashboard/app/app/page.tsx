@@ -43,7 +43,8 @@ interface ProviderInfo {
 interface ProviderAuthState {
   provider: ProviderInfo;
   authUrl?: string;
-  status: 'starting' | 'waiting' | 'success' | 'error';
+  sessionId?: string;
+  status: 'starting' | 'waiting' | 'submitting' | 'success' | 'error';
   error?: string;
 }
 
@@ -71,6 +72,7 @@ export default function DashboardPage() {
   const [_isCloudMode, setIsCloudMode] = useState(FORCE_CLOUD_MODE);
   const [csrfToken, setCsrfToken] = useState<string | null>(null);
   const [providerAuth, setProviderAuth] = useState<ProviderAuthState | null>(null);
+  const [authCode, setAuthCode] = useState<string>('');
 
   // Check if we're in cloud mode and fetch data
   useEffect(() => {
@@ -309,10 +311,11 @@ export default function DashboardPage() {
           `${provider.displayName} Login`,
           `width=${width},height=${height},left=${left},top=${top},popup=yes`
         );
-        setProviderAuth({ provider, authUrl: data.authUrl, status: 'waiting' });
+        setAuthCode(''); // Clear any previous code
+        setProviderAuth({ provider, authUrl: data.authUrl, sessionId: data.sessionId, status: 'waiting' });
       } else if (data.sessionId) {
         // Session started but no URL yet - poll for status
-        setProviderAuth({ provider, status: 'starting' });
+        setProviderAuth({ provider, sessionId: data.sessionId, status: 'starting' });
         // Start polling for auth URL
         const pollForAuthUrl = async (sessionId: string) => {
           const maxAttempts = 30; // 30 seconds
@@ -335,7 +338,8 @@ export default function DashboardPage() {
                   `${provider.displayName} Login`,
                   `width=${width},height=${height},left=${left},top=${top},popup=yes`
                 );
-                setProviderAuth({ provider, authUrl: statusData.authUrl, status: 'waiting' });
+                setAuthCode(''); // Clear any previous code
+                setProviderAuth({ provider, authUrl: statusData.authUrl, sessionId, status: 'waiting' });
                 return;
               } else if (statusData.status === 'success') {
                 setProviderAuth({ provider, status: 'success' });
@@ -380,9 +384,56 @@ export default function DashboardPage() {
   const handleSkipProvider = useCallback(() => {
     if (selectedWorkspace) {
       setProviderAuth(null);
+      setAuthCode('');
       connectToWorkspace(selectedWorkspace);
     }
   }, [selectedWorkspace, connectToWorkspace]);
+
+  // Submit auth code from OAuth popup
+  const handleSubmitAuthCode = useCallback(async () => {
+    if (!providerAuth?.sessionId || !authCode.trim()) return;
+
+    const backendProviderId = PROVIDER_ID_MAP[providerAuth.provider.id] || providerAuth.provider.id;
+
+    setProviderAuth(prev => prev ? { ...prev, status: 'submitting' } : null);
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+
+      const res = await fetch(`/api/onboarding/cli/${backendProviderId}/code/${providerAuth.sessionId}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ code: authCode.trim() }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to submit auth code');
+      }
+
+      // Success - show success state, then offer to connect another or continue
+      setProviderAuth(prev => prev ? { ...prev, status: 'success' } : null);
+      setAuthCode('');
+    } catch (err) {
+      setProviderAuth(prev => prev ? {
+        ...prev,
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Failed to submit auth code',
+      } : null);
+    }
+  }, [providerAuth, authCode, csrfToken]);
+
+  // Connect another provider after successful auth
+  const handleConnectAnother = useCallback(() => {
+    setProviderAuth(null);
+    setAuthCode('');
+    // Stay on connect-provider screen
+  }, []);
 
   const handleStartWorkspace = useCallback(async (workspace: Workspace) => {
     setState('loading');
@@ -537,52 +588,147 @@ export default function DashboardPage() {
           {/* Provider auth modal */}
           {providerAuth && (
             <div className="mb-6 bg-bg-primary/80 backdrop-blur-sm border border-border-subtle rounded-2xl p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div
-                  className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold"
-                  style={{ backgroundColor: providerAuth.provider.color }}
-                >
-                  {providerAuth.provider.displayName[0]}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold"
+                    style={{ backgroundColor: providerAuth.provider.color }}
+                  >
+                    {providerAuth.provider.displayName[0]}
+                  </div>
+                  <div>
+                    <h3 className="font-medium text-white">{providerAuth.provider.displayName}</h3>
+                    <p className="text-sm text-text-muted">
+                      {providerAuth.status === 'starting' && 'Starting login...'}
+                      {providerAuth.status === 'waiting' && 'Complete authentication below'}
+                      {providerAuth.status === 'success' && 'Connected!'}
+                      {providerAuth.status === 'error' && providerAuth.error}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-medium text-white">{providerAuth.provider.displayName}</h3>
-                  <p className="text-sm text-text-muted">
-                    {providerAuth.status === 'starting' && 'Starting login...'}
-                    {providerAuth.status === 'waiting' && 'Complete login in the popup'}
-                    {providerAuth.status === 'success' && 'Connected!'}
-                    {providerAuth.status === 'error' && providerAuth.error}
-                  </p>
-                </div>
+                {/* Close button for starting/waiting states */}
+                {(providerAuth.status === 'starting' || providerAuth.status === 'waiting') && (
+                  <button
+                    onClick={() => setProviderAuth(null)}
+                    className="p-2 text-text-muted hover:text-white transition-colors rounded-lg hover:bg-bg-tertiary"
+                    title="Cancel"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
               </div>
+
+              {/* Starting state - show spinner with cancel option */}
+              {providerAuth.status === 'starting' && (
+                <div className="flex items-center justify-center gap-3 py-4">
+                  <svg className="w-5 h-5 text-accent-cyan animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <span className="text-text-muted">Preparing authentication...</span>
+                </div>
+              )}
 
               {providerAuth.status === 'waiting' && providerAuth.authUrl && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-center gap-3 py-4">
-                    <svg className="w-5 h-5 text-accent-cyan animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    <span className="text-white">Complete login in the popup window</span>
+                  {/* Instructions */}
+                  <div className="p-4 bg-bg-tertiary rounded-lg border border-border-subtle">
+                    <h4 className="font-medium text-white mb-2">Complete authentication:</h4>
+                    <ol className="text-sm text-text-muted space-y-2 list-decimal list-inside">
+                      <li>Click the button below to open the login page</li>
+                      <li>Complete authentication and copy the code shown</li>
+                      <li>Paste the code below and click Submit</li>
+                    </ol>
                   </div>
-                  <p className="text-sm text-text-muted text-center">
-                    A popup window should have opened. If it didn't, click below:
-                  </p>
+
+                  {/* Auth URL button */}
                   <a
                     href={providerAuth.authUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block w-full py-2 px-4 bg-bg-tertiary border border-border-subtle text-white rounded-lg text-center hover:border-accent-cyan/50 transition-colors text-sm"
+                    className="block w-full py-3 px-4 bg-gradient-to-r from-accent-cyan to-[#00b8d9] text-bg-deep font-semibold rounded-xl text-center hover:shadow-glow-cyan transition-all"
                   >
-                    Open Login Page Manually
+                    Open {providerAuth.provider.displayName} Login Page
                   </a>
+
+                  {/* Auth code input */}
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-white">
+                      Paste your authentication code:
+                    </label>
+                    <input
+                      type="text"
+                      value={authCode}
+                      onChange={(e) => setAuthCode(e.target.value)}
+                      placeholder="Enter the code from the login page"
+                      className="w-full px-4 py-3 bg-bg-tertiary border border-border-subtle rounded-xl text-white placeholder-text-muted focus:outline-none focus:border-accent-cyan transition-colors"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && authCode.trim()) {
+                          handleSubmitAuthCode();
+                        }
+                      }}
+                    />
+                  </div>
+
+                  {/* Submit code button */}
+                  <button
+                    onClick={handleSubmitAuthCode}
+                    disabled={!authCode.trim()}
+                    className="w-full py-3 px-4 bg-bg-tertiary border border-border-subtle text-white rounded-xl text-center hover:border-accent-cyan/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Submit Code
+                  </button>
+
+                  {/* Cancel button */}
                   <button
                     onClick={() => {
                       setProviderAuth(null);
-                      connectToWorkspace(selectedWorkspace);
+                      setAuthCode('');
                     }}
+                    className="w-full py-2 text-text-muted hover:text-white transition-colors text-sm"
+                  >
+                    Cancel and try a different provider
+                  </button>
+                </div>
+              )}
+
+              {/* Submitting state */}
+              {providerAuth.status === 'submitting' && (
+                <div className="flex items-center justify-center gap-3 py-4">
+                  <svg className="w-5 h-5 text-accent-cyan animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <span className="text-text-muted">Verifying code...</span>
+                </div>
+              )}
+
+              {/* Success state - offer to connect another or continue */}
+              {providerAuth.status === 'success' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-center gap-3 py-4">
+                    <div className="w-10 h-10 bg-success/20 rounded-full flex items-center justify-center">
+                      <svg className="w-6 h-6 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                    <span className="text-white font-medium">{providerAuth.provider.displayName} connected successfully!</span>
+                  </div>
+
+                  <button
+                    onClick={handleConnectAnother}
+                    className="w-full py-3 px-4 bg-bg-tertiary border border-border-subtle text-white rounded-xl text-center hover:border-accent-cyan/50 transition-colors"
+                  >
+                    Connect Another Provider
+                  </button>
+
+                  <button
+                    onClick={handleSkipProvider}
                     className="w-full py-3 px-4 bg-gradient-to-r from-accent-cyan to-[#00b8d9] text-bg-deep font-semibold rounded-xl text-center hover:shadow-glow-cyan transition-all"
                   >
-                    I've completed login - Continue
+                    Continue to Dashboard
                   </button>
                 </div>
               )}
