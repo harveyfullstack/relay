@@ -23,6 +23,7 @@ import {
   startCLIAuth,
   getAuthSession,
   cancelAuthSession,
+  completeAuthSession,
   getSupportedProviders,
 } from './cli-auth.js';
 

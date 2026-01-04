@@ -413,6 +413,57 @@ onboardingRouter.post('/cli/:provider/code/:sessionId', async (req: Request, res
 });
 
 /**
+ * POST /api/onboarding/cli/:provider/complete/:sessionId
+ * Complete auth by polling for credentials (for providers like Claude that don't need code input)
+ */
+onboardingRouter.post('/cli/:provider/complete/:sessionId', async (req: Request, res: Response) => {
+  const { provider, sessionId } = req.params;
+  const userId = req.session.userId!;
+
+  const session = activeSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found or expired' });
+  }
+
+  if (session.userId !== userId) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+
+  // Forward to workspace daemon
+  if (session.workspaceUrl && session.workspaceSessionId) {
+    try {
+      const backendProviderId = provider === 'anthropic' ? 'anthropic' : provider;
+      const targetUrl = `${session.workspaceUrl}/auth/cli/${backendProviderId}/complete/${session.workspaceSessionId}`;
+      console.log('[onboarding] Forwarding complete request to workspace:', targetUrl);
+
+      const completeResponse = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (completeResponse.ok) {
+        session.status = 'success';
+        return res.json({ success: true, message: 'Authentication complete' });
+      }
+
+      const errorData = await completeResponse.json().catch(() => ({})) as { error?: string };
+      return res.status(completeResponse.status).json({
+        error: errorData.error || 'Failed to complete authentication',
+      });
+    } catch (err) {
+      console.error('[onboarding] Failed to complete auth via workspace:', err);
+      return res.status(500).json({
+        error: 'Failed to reach workspace. Please ensure your workspace is running.',
+      });
+    }
+  }
+
+  return res.status(400).json({
+    error: 'No workspace session available. Please try connecting again.',
+  });
+});
+
+/**
  * POST /api/onboarding/cli/:provider/cancel/:sessionId
  * Cancel a CLI auth session
  */

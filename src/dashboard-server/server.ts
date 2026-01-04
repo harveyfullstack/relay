@@ -23,6 +23,7 @@ import {
   getAuthSession,
   cancelAuthSession,
   submitAuthCode,
+  completeAuthSession,
   getSupportedProviders,
 } from '../daemon/cli-auth.js';
 
@@ -2085,6 +2086,21 @@ export async function startDashboard(
     }
 
     res.json({ success: true, message: 'Auth code submitted' });
+  });
+
+  /**
+   * POST /auth/cli/:provider/complete/:sessionId - Complete auth by polling for credentials
+   * Used when user indicates they've completed auth in browser (no code paste needed)
+   */
+  app.post('/auth/cli/:provider/complete/:sessionId', async (req, res) => {
+    const { sessionId } = req.params;
+
+    const result = await completeAuthSession(sessionId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ success: true, message: 'Authentication complete' });
   });
 
   /**

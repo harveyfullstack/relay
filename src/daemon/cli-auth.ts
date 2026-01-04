@@ -343,6 +343,60 @@ async function pollForCredentials(session: AuthSession, config: CLIAuthConfig): 
 }
 
 /**
+ * Complete auth session by polling for credentials
+ * Called when user indicates they've completed auth in browser
+ */
+export async function completeAuthSession(sessionId: string): Promise<{
+  success: boolean;
+  error?: string;
+  token?: string;
+}> {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return { success: false, error: 'Session not found or expired' };
+  }
+
+  // Already have credentials
+  if (session.token) {
+    return { success: true, token: session.token };
+  }
+
+  const config = CLI_AUTH_CONFIG[session.provider];
+  if (!config) {
+    return { success: false, error: 'Unknown provider' };
+  }
+
+  // Poll for credentials (user just completed auth in browser)
+  const maxAttempts = 15;
+  const pollInterval = 1000;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const creds = await extractCredentials(session.provider, config);
+      if (creds) {
+        session.token = creds.token;
+        session.refreshToken = creds.refreshToken;
+        session.tokenExpiresAt = creds.expiresAt;
+        session.status = 'success';
+        logger.info('Credentials found via complete polling', {
+          provider: session.provider,
+          attempt: i + 1,
+        });
+        return { success: true, token: creds.token };
+      }
+    } catch {
+      // File doesn't exist yet
+    }
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
+  }
+
+  return {
+    success: false,
+    error: 'Credentials not found. Please ensure you completed authentication in the browser.',
+  };
+}
+
+/**
  * Cancel auth session
  */
 export function cancelAuthSession(sessionId: string): boolean {
