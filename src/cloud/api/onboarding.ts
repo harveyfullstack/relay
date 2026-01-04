@@ -13,7 +13,7 @@
 import { Router, Request, Response } from 'express';
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { requireAuth } from './auth.js';
 import { db } from '../db/index.js';
 import { vault } from '../vault/index.js';
@@ -45,7 +45,7 @@ const activeSessions = new Map<string, CLIAuthSession>();
 // Clean up old sessions periodically
 setInterval(() => {
   const now = Date.now();
-  for (const [id, session] of activeSessions) {
+  activeSessions.forEach((session, id) => {
     // Remove sessions older than 10 minutes
     if (now - session.createdAt.getTime() > 10 * 60 * 1000) {
       if (session.process) {
@@ -57,7 +57,7 @@ setInterval(() => {
       }
       activeSessions.delete(id);
     }
-  }
+  });
 }, 60000);
 
 /**
