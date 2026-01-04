@@ -319,6 +319,145 @@ export function validateAllProviderConfigs(): void {
 }
 
 /**
+ * Result of running a CLI auth flow via PTY
+ */
+export interface PTYAuthResult {
+  authUrl: string | null;
+  success: boolean;
+  promptsHandled: string[];
+  output: string;
+  exitCode: number | null;
+  error?: string;
+}
+
+/**
+ * Options for running CLI auth via PTY
+ */
+export interface PTYAuthOptions {
+  /** Callback when auth URL is found */
+  onAuthUrl?: (url: string) => void;
+  /** Callback when a prompt is handled */
+  onPromptHandled?: (description: string) => void;
+  /** Callback for raw PTY output */
+  onOutput?: (data: string) => void;
+  /** Environment variables override */
+  env?: Record<string, string>;
+  /** Working directory */
+  cwd?: string;
+}
+
+/**
+ * Run CLI auth flow via PTY
+ *
+ * This is the core PTY runner used by both production and tests.
+ * It handles:
+ * - Spawning the CLI with proper TTY emulation
+ * - Auto-responding to interactive prompts
+ * - Extracting auth URLs from output
+ * - Detecting success patterns
+ *
+ * @param config - CLI auth configuration for the provider
+ * @param options - Optional callbacks and overrides
+ * @returns Promise resolving to auth result
+ */
+export async function runCLIAuthViaPTY(
+  config: CLIAuthConfig,
+  options: PTYAuthOptions = {}
+): Promise<PTYAuthResult> {
+  const result: PTYAuthResult = {
+    authUrl: null,
+    success: false,
+    promptsHandled: [],
+    output: '',
+    exitCode: null,
+  };
+
+  const respondedPrompts = new Set<string>();
+
+  return new Promise((resolve) => {
+    try {
+      const proc = pty.spawn(config.command, config.args, {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 30,
+        cwd: options.cwd || process.cwd(),
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          TERM: 'xterm-256color',
+          // Prevent CLIs from trying to open browsers
+          BROWSER: 'echo',
+          DISPLAY: '',
+          ...options.env,
+        } as Record<string, string>,
+      });
+
+      // Timeout handler
+      const timeout = setTimeout(() => {
+        proc.kill();
+        result.error = 'Timeout waiting for auth URL';
+        resolve(result);
+      }, config.waitTimeout + 5000);
+
+      proc.onData((data: string) => {
+        result.output += data;
+        options.onOutput?.(data);
+
+        // Check for matching prompts and auto-respond
+        const matchingPrompt = findMatchingPrompt(data, config.prompts, respondedPrompts);
+        if (matchingPrompt) {
+          respondedPrompts.add(matchingPrompt.description);
+          result.promptsHandled.push(matchingPrompt.description);
+          options.onPromptHandled?.(matchingPrompt.description);
+
+          const delay = matchingPrompt.delay ?? 100;
+          setTimeout(() => {
+            try {
+              proc.write(matchingPrompt.response);
+            } catch {
+              // Process may have exited
+            }
+          }, delay);
+        }
+
+        // Look for auth URL
+        const cleanText = stripAnsiCodes(data);
+        const match = cleanText.match(config.urlPattern);
+        if (match && match[1] && !result.authUrl) {
+          result.authUrl = match[1];
+          options.onAuthUrl?.(result.authUrl);
+        }
+
+        // Check for success indicators
+        if (matchesSuccessPattern(data, config.successPatterns)) {
+          result.success = true;
+        }
+      });
+
+      proc.onExit(({ exitCode }) => {
+        clearTimeout(timeout);
+        result.exitCode = exitCode;
+
+        // Consider it a success if we got a URL (main goal)
+        // or if exit code was 0 with success pattern
+        if (result.authUrl || (exitCode === 0 && result.success)) {
+          result.success = true;
+        }
+
+        if (!result.authUrl && !result.success && !result.error) {
+          result.error = 'Failed to extract auth URL from CLI output';
+        }
+
+        resolve(result);
+      });
+    } catch (err) {
+      result.error = err instanceof Error ? err.message : 'Unknown error';
+      resolve(result);
+    }
+  });
+}
+
+/**
  * Get list of supported providers for CLI auth
  */
 export function getSupportedProviders(): { id: string; displayName: string; command: string }[] {
@@ -357,70 +496,34 @@ onboardingRouter.post('/cli/:provider/start', async (req: Request, res: Response
   activeSessions.set(sessionId, session);
 
   try {
-    // Spawn CLI process via PTY for proper TTY emulation
-    // This ensures the CLI outputs auth URLs correctly
-    const proc = pty.spawn(config.command, config.args, {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 30,
-      cwd: process.cwd(),
-      env: { ...process.env, NO_COLOR: '1', TERM: 'xterm-256color' } as Record<string, string>,
-    });
-
-    session.process = proc;
-
-    // Track which prompts we've already responded to
-    const respondedPrompts = new Set<string>();
-
-    // Capture PTY output for auth URL and handle interactive prompts
-    proc.onData((data: string) => {
-      session.output += data;
-
-      // Check for matching prompts and auto-respond
-      const matchingPrompt = findMatchingPrompt(data, config.prompts, respondedPrompts);
-      if (matchingPrompt) {
-        respondedPrompts.add(matchingPrompt.description);
-        const delay = matchingPrompt.delay ?? 100;
-        setTimeout(() => {
-          try {
-            proc.write(matchingPrompt.response);
-            console.log(`[onboarding] Auto-responded to: ${matchingPrompt.description}`);
-          } catch {
-            // Process may have exited
-          }
-        }, delay);
-      }
-
-      // Look for auth URL
-      const cleanText = stripAnsiCodes(data);
-      const match = cleanText.match(config.urlPattern);
-      if (match && match[1]) {
-        session.authUrl = match[1];
+    // Use shared PTY runner for CLI auth
+    const ptyResult = await runCLIAuthViaPTY(config, {
+      onAuthUrl: (url) => {
+        session.authUrl = url;
         session.status = 'waiting_auth';
-      }
-
-      // Check for success indicators
-      if (matchesSuccessPattern(data, config.successPatterns)) {
-        session.status = 'success';
-      }
+      },
+      onPromptHandled: (description) => {
+        console.log(`[onboarding] Auto-responded to: ${description}`);
+      },
+      onOutput: (data) => {
+        session.output += data;
+        if (matchesSuccessPattern(data, config.successPatterns)) {
+          session.status = 'success';
+        }
+      },
     });
 
-    proc.onExit(async ({ exitCode }) => {
-      if (exitCode === 0 && session.status !== 'error') {
-        session.status = 'success';
-        // Try to read credentials from file
-        await extractCredentials(session, config);
-      } else if (session.status === 'starting') {
-        session.status = 'error';
-        session.error = `CLI exited with code ${exitCode}`;
-      }
-    });
-
-    // Wait for URL to appear using provider-specific timeout
-    await new Promise(resolve => setTimeout(resolve, config.waitTimeout));
+    // Update session with result
+    if (ptyResult.success && !session.authUrl) {
+      session.status = 'success';
+      await extractCredentials(session, config);
+    } else if (ptyResult.error && session.status === 'starting') {
+      session.status = 'error';
+      session.error = ptyResult.error;
+    }
 
     // Return session info based on current state
-    if (session.status === 'success') {
+    if (session.status === 'success' && !session.authUrl) {
       // Already authenticated - CLI exited successfully without auth URL
       activeSessions.delete(sessionId);
       res.json({

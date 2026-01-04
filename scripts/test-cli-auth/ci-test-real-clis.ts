@@ -12,19 +12,20 @@
  *   1 - One or more tests failed
  *
  * Note: CLIs that aren't installed are skipped, not failed.
+ *
+ * IMPORTANT: This test uses the same runCLIAuthViaPTY function as production
+ * to ensure the PTY handling logic is consistent.
  */
 
-import * as pty from 'node-pty';
 import { execSync } from 'child_process';
 import { writeFileSync } from 'fs';
 
-// Import the actual config from onboarding.ts
-// This ensures tests use the same patterns as production
+// Import the actual config and PTY runner from onboarding.ts
+// This ensures tests use the EXACT SAME logic as production
 import {
   CLI_AUTH_CONFIG,
-  stripAnsiCodes,
-  findMatchingPrompt,
-  matchesSuccessPattern,
+  runCLIAuthViaPTY,
+  type PTYAuthResult,
 } from '../../src/cloud/api/onboarding.js';
 
 interface TestResult {
@@ -56,7 +57,10 @@ function isCliInstalled(command: string): boolean {
 }
 
 /**
- * Test a real CLI's OAuth flow
+ * Test a real CLI's OAuth flow using the shared PTY runner
+ *
+ * Uses the EXACT SAME runCLIAuthViaPTY function as production to ensure
+ * the PTY handling logic is consistent between tests and production.
  */
 async function testRealCli(providerId: string): Promise<TestResult> {
   const config = CLI_AUTH_CONFIG[providerId];
@@ -101,98 +105,35 @@ async function testRealCli(providerId: string): Promise<TestResult> {
   }
 
   const startTime = Date.now();
-  const respondedPrompts = new Set<string>();
 
-  return new Promise((resolve) => {
-    try {
-      const proc = pty.spawn(config.command, config.args, {
-        name: 'xterm-256color',
-        cols: 120,
-        rows: 30,
-        env: {
-          ...process.env,
-          TERM: 'xterm-256color',
-          NO_COLOR: '1',
-          // Ensure CLIs don't try to open browsers
-          BROWSER: 'echo',
-          DISPLAY: '',
-        },
-      });
-
-      // Timeout after configured wait time + buffer
-      const timeout = setTimeout(() => {
-        proc.kill();
-        result.duration = Date.now() - startTime;
-
-        // Even if we timeout, check if we got a URL
-        if (result.urlExtracted) {
-          result.passed = true;
-        } else {
-          result.error = 'Timeout waiting for auth URL';
-        }
-
-        resolve(result);
-      }, config.waitTimeout + 10000); // Extra buffer for real CLIs
-
-      proc.onData((data: string) => {
-        result.rawOutput += data;
-        const cleanText = stripAnsiCodes(data);
-
-        // Check for prompts
-        const matchingPrompt = findMatchingPrompt(data, config.prompts, respondedPrompts);
-        if (matchingPrompt) {
-          result.promptsDetected.push(matchingPrompt.description);
-
-          // Respond to prompt
-          respondedPrompts.add(matchingPrompt.description);
-          result.promptsResponded.push(matchingPrompt.description);
-
-          const delay = matchingPrompt.delay ?? 100;
-          setTimeout(() => {
-            try {
-              proc.write(matchingPrompt.response);
-              console.log(`    [${providerId}] Responded to: ${matchingPrompt.description}`);
-            } catch {
-              // Process may have exited
-            }
-          }, delay);
-        }
-
-        // Check for URL
-        const match = cleanText.match(config.urlPattern);
-        if (match && match[1] && !result.urlExtracted) {
-          result.urlExtracted = match[1];
-          console.log(`    [${providerId}] URL found: ${result.urlExtracted.substring(0, 60)}...`);
-        }
-
-        // Check for success
-        if (matchesSuccessPattern(data, config.successPatterns)) {
-          result.successDetected = true;
-        }
-      });
-
-      proc.onExit(({ exitCode }) => {
-        clearTimeout(timeout);
-        result.exitCode = exitCode;
-        result.duration = Date.now() - startTime;
-
-        // Pass if we got a URL (main goal of OAuth flow)
-        // Success detection is secondary since we won't complete auth
-        result.passed = !!result.urlExtracted;
-
-        if (!result.passed && !result.error) {
-          result.error = 'Failed to extract auth URL from CLI output';
-        }
-
-        resolve(result);
-      });
-
-    } catch (err) {
-      result.error = err instanceof Error ? err.message : 'Unknown error';
-      result.duration = Date.now() - startTime;
-      resolve(result);
-    }
+  // Use the shared PTY runner - SAME code as production
+  const ptyResult: PTYAuthResult = await runCLIAuthViaPTY(config, {
+    onAuthUrl: (url) => {
+      result.urlExtracted = url;
+      console.log(`    [${providerId}] URL found: ${url.substring(0, 60)}...`);
+    },
+    onPromptHandled: (description) => {
+      result.promptsDetected.push(description);
+      result.promptsResponded.push(description);
+      console.log(`    [${providerId}] Responded to: ${description}`);
+    },
+    onOutput: (data) => {
+      result.rawOutput += data;
+    },
   });
+
+  result.duration = Date.now() - startTime;
+  result.exitCode = ptyResult.exitCode;
+  result.successDetected = ptyResult.success;
+
+  // Pass if we got a URL (main goal of OAuth flow)
+  result.passed = !!result.urlExtracted;
+
+  if (!result.passed) {
+    result.error = ptyResult.error || 'Failed to extract auth URL from CLI output';
+  }
+
+  return result;
 }
 
 /**
