@@ -986,6 +986,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         settings={settings}
         onSettingsChange={setSettings}
         onResetSettings={() => setSettings(defaultSettings)}
+        csrfToken={cloudSession?.csrfToken}
       />
 
       {/* Add Workspace Modal */}

@@ -47,6 +47,26 @@ export type SessionExpiredCallback = (error: SessionError) => void;
 // Global session expiration listeners
 const sessionExpiredListeners = new Set<SessionExpiredCallback>();
 
+// Global CSRF token storage
+let csrfToken: string | null = null;
+
+/**
+ * Get the current CSRF token
+ */
+export function getCsrfToken(): string | null {
+  return csrfToken;
+}
+
+/**
+ * Capture CSRF token from response headers
+ */
+function captureCsrfToken(response: Response): void {
+  const token = response.headers.get('X-CSRF-Token');
+  if (token) {
+    csrfToken = token;
+  }
+}
+
 /**
  * Register a callback for when session expires
  */
@@ -90,14 +110,25 @@ async function cloudFetch<T>(
   options: RequestInit = {}
 ): Promise<{ success: true; data: T } | { success: false; error: string; sessionExpired?: boolean }> {
   try {
+    // Build headers, including CSRF token for non-GET requests
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string>),
+    };
+
+    // Include CSRF token for state-changing requests
+    if (options.method && options.method !== 'GET' && csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
     const response = await fetch(endpoint, {
       ...options,
       credentials: 'include', // Include cookies for session
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+      headers,
     });
+
+    // Capture CSRF token from response
+    captureCsrfToken(response);
 
     const data = await response.json();
 
@@ -175,6 +206,8 @@ export const cloudApi = {
       const response = await fetch('/api/auth/nango/login-session', {
         credentials: 'include',
       });
+      // Capture CSRF token from response
+      captureCsrfToken(response);
       const data = await response.json();
       if (!response.ok) {
         return { success: false, error: data.error || 'Failed to create login session' };
@@ -193,6 +226,8 @@ export const cloudApi = {
       const response = await fetch(`/api/auth/nango/login-status/${encodeURIComponent(connectionId)}`, {
         credentials: 'include',
       });
+      // Capture CSRF token from response
+      captureCsrfToken(response);
       const data = await response.json();
       if (!response.ok) {
         return { success: false, error: data.error || 'Failed to check login status' };
@@ -225,6 +260,8 @@ export const cloudApi = {
       const response = await fetch('/api/auth/session', {
         credentials: 'include',
       });
+      // Capture CSRF token from response
+      captureCsrfToken(response);
       const data = await response.json();
       return data as SessionStatus;
     } catch {
@@ -248,9 +285,14 @@ export const cloudApi = {
    */
   async logout(): Promise<{ success: boolean; error?: string }> {
     try {
+      const headers: Record<string, string> = {};
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
       const response = await fetch('/api/auth/logout', {
         method: 'POST',
         credentials: 'include',
+        headers,
       });
       const data = await response.json();
       return data as { success: boolean; error?: string };
