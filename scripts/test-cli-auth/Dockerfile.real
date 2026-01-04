@@ -1,0 +1,56 @@
+# CLI OAuth Flow Test Container - Real CLIs
+#
+# This container installs the actual AI provider CLIs and tests
+# URL extraction from their OAuth flows.
+#
+# Usage:
+#   docker build -f Dockerfile.real -t cli-oauth-test-real scripts/test-cli-auth/
+#   docker run --rm cli-oauth-test-real
+#
+# For interactive testing:
+#   docker run --rm -it cli-oauth-test-real bash
+
+FROM node:20-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    bash \
+    curl \
+    git \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Claude Code CLI
+RUN npm install -g @anthropic-ai/claude-code || echo "Claude Code install skipped"
+
+# Install Codex CLI (OpenAI)
+RUN npm install -g @openai/codex || echo "Codex install skipped"
+
+# Install Gemini CLI (if available)
+RUN npm install -g @google/gemini-cli 2>/dev/null || echo "Gemini CLI not available yet"
+
+# Install OpenCode CLI (if available)
+RUN npm install -g opencode 2>/dev/null || echo "OpenCode CLI not available"
+
+# Install Droid CLI (if available)
+RUN npm install -g @factory/droid 2>/dev/null || echo "Droid CLI not available"
+
+# Copy test files
+COPY ci-test-real-clis.ts /app/
+COPY package.json /app/
+
+# Install test dependencies
+RUN npm install
+
+# Verify which CLIs are installed
+RUN echo "=== Installed CLIs ===" && \
+    which claude && claude --version || echo "claude: not found" && \
+    which codex && codex --version || echo "codex: not found" && \
+    which gemini || echo "gemini: not found" && \
+    which opencode || echo "opencode: not found" && \
+    which droid || echo "droid: not found"
+
+# Default command runs the CI tests
+CMD ["npx", "tsx", "/app/ci-test-real-clis.ts"]

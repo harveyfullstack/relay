@@ -225,16 +225,31 @@ The workflow `.github/workflows/cli-oauth-test.yml` runs:
 ### Running CI Tests Locally
 
 ```bash
-# Build the test container
-docker build -t cli-oauth-test scripts/test-cli-auth/
+# Build the test container with REAL CLIs (recommended)
+docker build -f scripts/test-cli-auth/Dockerfile.real \
+  -t cli-oauth-test-real scripts/test-cli-auth/
 
-# Run all tests
-docker run --rm cli-oauth-test
+# Run tests against real CLIs
+docker run --rm cli-oauth-test-real
 
 # Run with results output
-docker run --rm -v $(pwd)/test-results:/tmp cli-oauth-test
+docker run --rm -v $(pwd)/test-results:/tmp cli-oauth-test-real
 cat test-results/cli-oauth-test-results.json
+
+# Interactive debugging
+docker run --rm -it cli-oauth-test-real bash
+claude  # Test Claude CLI manually
 ```
+
+### Why Real CLIs?
+
+Using the actual CLIs instead of mocks:
+- **Catches real changes** in CLI behavior immediately
+- **No maintenance burden** of keeping mocks in sync
+- **Tests the actual code path** users will experience
+- **Detects new prompts** or changed output formats
+
+CLIs that aren't installed are skipped (not failed), so tests work even if some providers haven't published CLIs yet.
 
 ### Test Output Format
 

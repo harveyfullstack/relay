@@ -35,23 +35,25 @@ jobs:
       - name: Run onboarding unit tests
         run: npx vitest run src/cloud/api/onboarding.test.ts
 
-  docker-integration:
-    name: Docker Integration Tests
+  real-cli-tests:
+    name: Real CLI Integration Tests
     runs-on: ubuntu-latest
     needs: unit-tests
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build test container
+      - name: Build test container with real CLIs
         run: |
-          docker build -t cli-oauth-test scripts/test-cli-auth/
+          docker build -f scripts/test-cli-auth/Dockerfile.real \
+            -t cli-oauth-test-real scripts/test-cli-auth/
 
-      - name: Run CLI OAuth tests
+      - name: Run CLI OAuth tests against real CLIs
         id: test
         run: |
+          mkdir -p test-results
           docker run --rm \
             -v ${{ github.workspace }}/test-results:/tmp \
-            cli-oauth-test
+            cli-oauth-test-real
 
       - name: Upload test results
         if: always()
@@ -81,7 +83,7 @@ jobs:
   notify-on-failure:
     name: Notify on Failure
     runs-on: ubuntu-latest
-    needs: [unit-tests, docker-integration]
+    needs: [unit-tests, real-cli-tests]
     if: failure() && github.event_name == 'schedule'
     steps:
       - name: Create issue for CI failure
