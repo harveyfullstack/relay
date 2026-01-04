@@ -106,7 +106,7 @@ export function shouldStoreInRepo(projectRoot?: string): boolean {
  */
 export function getProjectHash(projectRoot?: string): string {
   const root = projectRoot ?? getProjectPaths().projectRoot;
-  return createHash('sha256').update(root).digest('hex').slice(0, 12);
+  return createHash('sha256').update(root).digest('hex').slice(0, 16);
 }
 
 /**
