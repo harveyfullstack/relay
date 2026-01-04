@@ -107,6 +107,30 @@
             "reasoning": "Users need to understand what trajectories are (PDERO paradigm), why they'd opt-in, and link to pdero.com for more info"
           },
           "significance": "high"
+        },
+        {
+          "ts": 1767510429532,
+          "type": "decision",
+          "content": "Investigate Claude OAuth login flow: Investigate Claude OAuth login flow",
+          "raw": {
+            "question": "Investigate Claude OAuth login flow",
+            "chosen": "Investigate Claude OAuth login flow",
+            "alternatives": [],
+            "reasoning": "Current provider setup uses API keys but Claude uses OAuth. Need to bypass interactive prompts and get login URL for popup-based auth."
+          },
+          "significance": "high"
+        },
+        {
+          "ts": 1767510693303,
+          "type": "decision",
+          "content": "Cloud provider auth strategy for Claude: Cloud provider auth strategy for Claude",
+          "raw": {
+            "question": "Cloud provider auth strategy for Claude",
+            "chosen": "Cloud provider auth strategy for Claude",
+            "alternatives": [],
+            "reasoning": "Claude uses OAuth in cloud environments. For users connecting accounts: 1) API key works (already supported), 2) CLI setup-token is interactive, 3) Need proper OAuth device flow from Anthropic. Recommend API key for now with improved UX."
+          },
+          "significance": "high"
         }
       ]
     }
