@@ -56,16 +56,74 @@ interface AIProvider {
   description: string;
   color: string;
   cliCommand: string;
+  apiKeyUrl?: string; // URL to get API key (fallback)
+  apiKeyName?: string; // How the API key is labeled on their site
+  supportsOAuth?: boolean; // Whether CLI-based OAuth is supported
   isConnected?: boolean;
 }
 
 const AI_PROVIDERS: AIProvider[] = [
-  { id: 'anthropic', name: 'Anthropic', displayName: 'Claude', description: 'Claude Code - recommended for code tasks', color: '#D97757', cliCommand: 'claude' },
-  { id: 'codex', name: 'OpenAI', displayName: 'Codex', description: 'Codex - OpenAI coding assistant', color: '#10A37F', cliCommand: 'codex login' },
-  { id: 'gemini', name: 'Google', displayName: 'Gemini', description: 'Gemini - Google AI coding assistant', color: '#4285F4', cliCommand: 'gemini' },
-  { id: 'opencode', name: 'OpenCode', displayName: 'OpenCode', description: 'OpenCode - AI coding assistant', color: '#00D4AA', cliCommand: 'opencode' },
-  { id: 'droid', name: 'Factory', displayName: 'Droid', description: 'Droid - Factory AI coding agent', color: '#6366F1', cliCommand: 'droid' },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    displayName: 'Claude',
+    description: 'Claude Code - recommended for code tasks',
+    color: '#D97757',
+    cliCommand: 'claude',
+    apiKeyUrl: 'https://console.anthropic.com/settings/keys',
+    apiKeyName: 'API key',
+    supportsOAuth: true,
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    displayName: 'Codex',
+    description: 'Codex - OpenAI coding assistant',
+    color: '#10A37F',
+    cliCommand: 'codex login',
+    apiKeyUrl: 'https://platform.openai.com/api-keys',
+    apiKeyName: 'API key',
+    supportsOAuth: true,
+  },
+  {
+    id: 'google',
+    name: 'Google',
+    displayName: 'Gemini',
+    description: 'Gemini - Google AI coding assistant',
+    color: '#4285F4',
+    cliCommand: 'gemini',
+    apiKeyUrl: 'https://aistudio.google.com/app/apikey',
+    apiKeyName: 'API key',
+    supportsOAuth: true,
+  },
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    displayName: 'OpenCode',
+    description: 'OpenCode - AI coding assistant',
+    color: '#00D4AA',
+    cliCommand: 'opencode',
+    supportsOAuth: true,
+  },
+  {
+    id: 'droid',
+    name: 'Factory',
+    displayName: 'Droid',
+    description: 'Droid - Factory AI coding agent',
+    color: '#6366F1',
+    cliCommand: 'droid',
+    supportsOAuth: true,
+  },
 ];
+
+// Auth session state for CLI-based OAuth
+interface OAuthSession {
+  providerId: string;
+  sessionId: string;
+  authUrl?: string;
+  status: 'starting' | 'waiting_auth' | 'success' | 'error';
+  error?: string;
+}
 
 export interface SettingsPanelProps {
   isOpen: boolean;
@@ -107,6 +165,8 @@ export function SettingsPanel({
   const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [providerError, setProviderError] = useState<string | null>(null);
+  const [oauthSession, setOauthSession] = useState<OAuthSession | null>(null);
+  const [showApiKeyFallback, setShowApiKeyFallback] = useState<Record<string, boolean>>({});
   const [trajectorySettings, setTrajectorySettings] = useState<TrajectorySettings>({
     storeInRepo: false,
     storageLocation: '',
@@ -175,6 +235,202 @@ export function SettingsPanel({
         loading: false,
         error: err instanceof Error ? err.message : 'Failed to update settings',
       }));
+    }
+  };
+
+  // Start CLI-based OAuth flow for a provider
+  const startOAuthFlow = async (provider: AIProvider) => {
+    setProviderError(null);
+    setConnectingProvider(provider.id);
+    setOauthSession({ providerId: provider.id, sessionId: '', status: 'starting' });
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+      const res = await fetch(`/api/onboarding/cli/${provider.id}/start`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to start authentication');
+      }
+
+      // Handle immediate success (already authenticated)
+      if (data.status === 'success' || data.alreadyAuthenticated) {
+        setProviderStatus(prev => ({ ...prev, [provider.id]: true }));
+        setOauthSession(null);
+        setConnectingProvider(null);
+        return;
+      }
+
+      const session: OAuthSession = {
+        providerId: provider.id,
+        sessionId: data.sessionId,
+        authUrl: data.authUrl,
+        status: data.status || 'starting',
+      };
+      setOauthSession(session);
+
+      // If we have an auth URL, open it in a popup
+      if (data.authUrl) {
+        openAuthPopup(data.authUrl, provider.displayName);
+        // Start polling for completion
+        pollAuthStatus(provider.id, data.sessionId);
+      } else if (data.status === 'starting') {
+        // Still starting, poll for URL
+        pollAuthStatus(provider.id, data.sessionId);
+      }
+    } catch (err) {
+      setProviderError(err instanceof Error ? err.message : 'Failed to start OAuth');
+      setOauthSession(null);
+      setConnectingProvider(null);
+    }
+  };
+
+  // Open auth URL in a popup window
+  const openAuthPopup = (url: string, providerName: string) => {
+    const width = 600;
+    const height = 700;
+    const left = window.screenX + (window.outerWidth - width) / 2;
+    const top = window.screenY + (window.outerHeight - height) / 2;
+    window.open(
+      url,
+      `${providerName} Login`,
+      `width=${width},height=${height},left=${left},top=${top},popup=yes`
+    );
+  };
+
+  // Poll for OAuth session status
+  const pollAuthStatus = async (providerId: string, sessionId: string) => {
+    const maxAttempts = 60; // 5 minutes with 5-second intervals
+    let attempts = 0;
+
+    const poll = async () => {
+      if (attempts >= maxAttempts) {
+        setProviderError('Authentication timed out. Please try again.');
+        setOauthSession(null);
+        setConnectingProvider(null);
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/onboarding/cli/${providerId}/status/${sessionId}`, {
+          credentials: 'include',
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to check status');
+        }
+
+        if (data.status === 'success') {
+          // Complete the auth flow
+          await completeAuthFlow(providerId, sessionId);
+          return;
+        } else if (data.status === 'error') {
+          throw new Error(data.error || 'Authentication failed');
+        } else if (data.status === 'waiting_auth' && data.authUrl && !oauthSession?.authUrl) {
+          // Got the auth URL, open popup
+          setOauthSession(prev => prev ? { ...prev, authUrl: data.authUrl, status: 'waiting_auth' } : null);
+          openAuthPopup(data.authUrl, AI_PROVIDERS.find(p => p.id === providerId)?.displayName || 'Provider');
+        }
+
+        // Continue polling
+        attempts++;
+        setTimeout(poll, 5000);
+      } catch (err) {
+        setProviderError(err instanceof Error ? err.message : 'Auth check failed');
+        setOauthSession(null);
+        setConnectingProvider(null);
+      }
+    };
+
+    poll();
+  };
+
+  // Complete OAuth flow
+  const completeAuthFlow = async (providerId: string, sessionId: string) => {
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+      const res = await fetch(`/api/onboarding/cli/${providerId}/complete/${sessionId}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to complete authentication');
+      }
+
+      // Success!
+      setProviderStatus(prev => ({ ...prev, [providerId]: true }));
+      setOauthSession(null);
+      setConnectingProvider(null);
+    } catch (err) {
+      setProviderError(err instanceof Error ? err.message : 'Failed to complete auth');
+      setOauthSession(null);
+      setConnectingProvider(null);
+    }
+  };
+
+  // Cancel OAuth flow
+  const cancelOAuthFlow = async () => {
+    if (oauthSession?.sessionId) {
+      try {
+        await fetch(`/api/onboarding/cli/${oauthSession.providerId}/cancel/${oauthSession.sessionId}`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+      } catch {
+        // Ignore cancel errors
+      }
+    }
+    setOauthSession(null);
+    setConnectingProvider(null);
+  };
+
+  // Submit API key (fallback flow)
+  const submitApiKey = async (provider: AIProvider) => {
+    if (!apiKeyInput.trim()) {
+      setProviderError('Please enter an API key');
+      return;
+    }
+
+    setProviderError(null);
+    setConnectingProvider(provider.id);
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+      const res = await fetch(`/api/onboarding/token/${provider.id}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ token: apiKeyInput.trim() }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to connect');
+      }
+
+      setProviderStatus(prev => ({ ...prev, [provider.id]: true }));
+      setApiKeyInput('');
+      setConnectingProvider(null);
+      setShowApiKeyFallback(prev => ({ ...prev, [provider.id]: false }));
+    } catch (err) {
+      setProviderError(err instanceof Error ? err.message : 'Failed to connect');
+      setConnectingProvider(null);
     }
   };
 
@@ -455,53 +711,106 @@ export function SettingsPanel({
                       </div>
 
                       {!providerStatus[provider.id] && (
-                        <div className="flex gap-2 mt-3">
-                          <input
-                            type="password"
-                            placeholder={`Enter ${provider.displayName} API key`}
-                            value={connectingProvider === provider.id ? apiKeyInput : ''}
-                            onChange={(e) => {
-                              setConnectingProvider(provider.id);
-                              setApiKeyInput(e.target.value);
-                            }}
-                            onFocus={() => setConnectingProvider(provider.id)}
-                            className="flex-1 py-2 px-3 border border-border rounded-md text-sm bg-bg-tertiary text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-                          />
-                          <button
-                            onClick={async () => {
-                              if (!apiKeyInput.trim()) {
-                                setProviderError('Please enter an API key');
-                                return;
-                              }
-                              setProviderError(null);
-                              try {
-                                const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-                                if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-
-                                const res = await fetch(`/api/providers/${provider.id}/api-key`, {
-                                  method: 'POST',
-                                  credentials: 'include',
-                                  headers,
-                                  body: JSON.stringify({ apiKey: apiKeyInput.trim() }),
-                                });
-
-                                if (!res.ok) {
-                                  const data = await res.json();
-                                  throw new Error(data.error || 'Failed to connect');
-                                }
-
-                                setProviderStatus(prev => ({ ...prev, [provider.id]: true }));
-                                setApiKeyInput('');
-                                setConnectingProvider(null);
-                              } catch (err) {
-                                setProviderError(err instanceof Error ? err.message : 'Failed to connect');
-                              }
-                            }}
-                            disabled={connectingProvider !== provider.id || !apiKeyInput.trim()}
-                            className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-md hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          >
-                            Connect
-                          </button>
+                        <div className="mt-3">
+                          {/* OAuth flow (primary) */}
+                          {oauthSession?.providerId === provider.id ? (
+                            <div className="space-y-3">
+                              {oauthSession.status === 'starting' && (
+                                <div className="flex items-center gap-2 text-sm text-text-secondary">
+                                  <span className="animate-spin">⏳</span>
+                                  Starting authentication...
+                                </div>
+                              )}
+                              {oauthSession.status === 'waiting_auth' && (
+                                <>
+                                  <div className="flex items-center gap-2 text-sm text-text-secondary">
+                                    <span className="animate-pulse">🔐</span>
+                                    Complete login in the popup window
+                                  </div>
+                                  {oauthSession.authUrl && (
+                                    <div className="text-xs text-text-muted">
+                                      Popup didn&apos;t open?{' '}
+                                      <button
+                                        onClick={() => openAuthPopup(oauthSession.authUrl!, provider.displayName)}
+                                        className="text-accent hover:underline"
+                                      >
+                                        Click here
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                              <button
+                                onClick={cancelOAuthFlow}
+                                className="text-sm text-text-muted hover:text-text-secondary"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : showApiKeyFallback[provider.id] ? (
+                            /* API key fallback */
+                            <div className="space-y-2">
+                              <div className="flex gap-2">
+                                <input
+                                  type="password"
+                                  placeholder={`Enter ${provider.displayName} ${provider.apiKeyName || 'API key'}`}
+                                  value={connectingProvider === provider.id ? apiKeyInput : ''}
+                                  onChange={(e) => {
+                                    setConnectingProvider(provider.id);
+                                    setApiKeyInput(e.target.value);
+                                  }}
+                                  onFocus={() => setConnectingProvider(provider.id)}
+                                  className="flex-1 py-2 px-3 border border-border rounded-md text-sm bg-bg-tertiary text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                                />
+                                <button
+                                  onClick={() => submitApiKey(provider)}
+                                  disabled={connectingProvider !== provider.id || !apiKeyInput.trim()}
+                                  className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-md hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  Connect
+                                </button>
+                              </div>
+                              {provider.apiKeyUrl && (
+                                <div className="text-xs text-text-muted">
+                                  Get your API key from{' '}
+                                  <a
+                                    href={provider.apiKeyUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-accent hover:underline"
+                                  >
+                                    {new URL(provider.apiKeyUrl).hostname}
+                                  </a>
+                                </div>
+                              )}
+                              <button
+                                onClick={() => setShowApiKeyFallback(prev => ({ ...prev, [provider.id]: false }))}
+                                className="text-xs text-text-muted hover:text-text-secondary"
+                              >
+                                ← Back to OAuth login
+                              </button>
+                            </div>
+                          ) : (
+                            /* Primary connect button */
+                            <div className="space-y-2">
+                              <button
+                                onClick={() => startOAuthFlow(provider)}
+                                disabled={connectingProvider !== null}
+                                className="w-full py-2.5 px-4 bg-accent text-white text-sm font-medium rounded-md hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                              >
+                                <span>🔐</span>
+                                Connect with {provider.displayName}
+                              </button>
+                              {provider.apiKeyUrl && (
+                                <button
+                                  onClick={() => setShowApiKeyFallback(prev => ({ ...prev, [provider.id]: true }))}
+                                  className="w-full text-xs text-text-muted hover:text-text-secondary"
+                                >
+                                  Or enter API key manually
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
 

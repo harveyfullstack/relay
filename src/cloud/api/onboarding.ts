@@ -2,11 +2,17 @@
  * Onboarding API Routes
  *
  * Handles CLI proxy authentication for Claude Code and other providers.
- * Spawns CLI tools to get auth URLs, captures tokens.
+ * Spawns CLI tools via PTY to get auth URLs, captures tokens.
+ *
+ * We use node-pty instead of child_process.spawn because:
+ * 1. Many CLIs detect if they're in a TTY and behave differently
+ * 2. Interactive OAuth flows often require TTY for proper output
+ * 3. PTY ensures the CLI outputs auth URLs correctly
  */
 
 import { Router, Request, Response } from 'express';
-import { spawn, ChildProcess } from 'child_process';
+import * as pty from 'node-pty';
+import type { IPty } from 'node-pty';
 import crypto from 'crypto';
 import { requireAuth } from './auth.js';
 import { db } from '../db/index.js';
@@ -24,13 +30,14 @@ onboardingRouter.use(requireAuth);
 interface CLIAuthSession {
   userId: string;
   provider: string;
-  process?: ChildProcess;
+  process?: IPty;
   authUrl?: string;
   callbackUrl?: string;
   status: 'starting' | 'waiting_auth' | 'success' | 'error' | 'timeout';
   token?: string;
   error?: string;
   createdAt: Date;
+  output: string; // Accumulated output for debugging
 }
 
 const activeSessions = new Map<string, CLIAuthSession>();
@@ -42,7 +49,11 @@ setInterval(() => {
     // Remove sessions older than 10 minutes
     if (now - session.createdAt.getTime() > 10 * 60 * 1000) {
       if (session.process) {
-        session.process.kill();
+        try {
+          session.process.kill();
+        } catch {
+          // Process may already be dead
+        }
       }
       activeSessions.delete(id);
     }
@@ -51,29 +62,58 @@ setInterval(() => {
 
 /**
  * CLI commands and URL patterns for each provider
+ *
+ * Each CLI tool outputs an OAuth URL when run without credentials.
+ * We capture stdout/stderr and extract the URL using a simple https:// pattern.
+ *
+ * IMPORTANT: These CLIs are interactive - they output the auth URL then wait
+ * for the user to complete OAuth in their browser. We capture the URL and
+ * display it in a popup for the user.
  */
 const CLI_AUTH_CONFIG: Record<string, {
   command: string;
   args: string[];
   urlPattern: RegExp;
-  tokenPattern?: RegExp;
   credentialPath?: string;
+  displayName: string;
 }> = {
   anthropic: {
-    // Claude Code CLI login
+    // Claude Code CLI - running without args triggers OAuth if not authenticated
     command: 'claude',
-    args: ['login', '--no-open'],
-    // Claude outputs: "Please open: https://..."
-    urlPattern: /(?:open|visit|go to)[:\s]+(\S+anthropic\S+)/i,
-    // Token might be in output or in credentials file
+    args: [], // No args needed - CLI auto-prompts for auth
+    // Generic URL pattern with capture group - Claude outputs auth URL to stdout
+    urlPattern: /(https:\/\/[^\s]+)/,
     credentialPath: '~/.claude/credentials.json',
+    displayName: 'Claude',
   },
   openai: {
-    // Codex CLI auth
+    // Codex CLI - uses 'login' subcommand
     command: 'codex',
-    args: ['auth', '--no-browser'],
-    urlPattern: /(?:open|visit|go to)[:\s]+(\S+openai\S+)/i,
+    args: ['login'],
+    urlPattern: /(https:\/\/[^\s]+)/,
     credentialPath: '~/.codex/credentials.json',
+    displayName: 'Codex',
+  },
+  google: {
+    // Gemini CLI
+    command: 'gemini',
+    args: [],
+    urlPattern: /(https:\/\/[^\s]+)/,
+    displayName: 'Gemini',
+  },
+  opencode: {
+    // OpenCode CLI
+    command: 'opencode',
+    args: [],
+    urlPattern: /(https:\/\/[^\s]+)/,
+    displayName: 'OpenCode',
+  },
+  droid: {
+    // Droid CLI
+    command: 'droid',
+    args: [],
+    urlPattern: /(https:\/\/[^\s]+)/,
+    displayName: 'Droid',
   },
 };
 
@@ -100,63 +140,99 @@ onboardingRouter.post('/cli/:provider/start', async (req: Request, res: Response
     provider,
     status: 'starting',
     createdAt: new Date(),
+    output: '',
   };
   activeSessions.set(sessionId, session);
 
   try {
-    // Spawn CLI process
-    const proc = spawn(config.command, config.args, {
-      env: { ...process.env, NO_COLOR: '1' },
-      stdio: ['pipe', 'pipe', 'pipe'],
+    // Spawn CLI process via PTY for proper TTY emulation
+    // This ensures the CLI outputs auth URLs correctly
+    const proc = pty.spawn(config.command, config.args, {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 30,
+      cwd: process.cwd(),
+      env: { ...process.env, NO_COLOR: '1', TERM: 'xterm-256color' } as Record<string, string>,
     });
 
     session.process = proc;
-    let _output = '';
 
-    // Capture stdout/stderr for auth URL
-    const handleOutput = (data: Buffer) => {
-      const text = data.toString();
-      _output += text;
+    // Track which prompts we've already responded to
+    let respondedDarkMode = false;
+    let respondedAuthChoice = false;
+
+    // Capture PTY output for auth URL and handle interactive prompts
+    proc.onData((data: string) => {
+      session.output += data;
+
+      // Strip ANSI escape codes for pattern matching
+      const cleanText = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+      const lowerText = cleanText.toLowerCase();
+
+      // Handle Claude's interactive setup prompts
+      if (provider === 'anthropic') {
+        // Dark mode prompt - just press enter to accept default (or 'n' for no)
+        if (!respondedDarkMode && (lowerText.includes('dark mode') || lowerText.includes('dark theme'))) {
+          respondedDarkMode = true;
+          // Press enter to accept default
+          setTimeout(() => proc.write('\r'), 100);
+        }
+
+        // Auth method prompt - choose subscription (press enter or '1')
+        // Claude asks: "Would you like to use your Claude subscription or an API key?"
+        if (!respondedAuthChoice && (
+          lowerText.includes('subscription') ||
+          lowerText.includes('api key') ||
+          lowerText.includes('how would you like to authenticate')
+        )) {
+          respondedAuthChoice = true;
+          // Press enter to select first option (Claude subscription)
+          setTimeout(() => proc.write('\r'), 100);
+        }
+      }
 
       // Look for auth URL
-      const match = text.match(config.urlPattern);
+      const match = cleanText.match(config.urlPattern);
       if (match && match[1]) {
         session.authUrl = match[1];
         session.status = 'waiting_auth';
       }
 
       // Look for success indicators
-      if (text.toLowerCase().includes('success') ||
-          text.toLowerCase().includes('authenticated') ||
-          text.toLowerCase().includes('logged in')) {
+      if (lowerText.includes('success') ||
+          lowerText.includes('authenticated') ||
+          lowerText.includes('logged in')) {
         session.status = 'success';
       }
-    };
-
-    proc.stdout.on('data', handleOutput);
-    proc.stderr.on('data', handleOutput);
-
-    proc.on('error', (err) => {
-      session.status = 'error';
-      session.error = `Failed to start CLI: ${err.message}`;
     });
 
-    proc.on('exit', async (code) => {
-      if (code === 0 && session.status !== 'error') {
+    proc.onExit(async ({ exitCode }) => {
+      if (exitCode === 0 && session.status !== 'error') {
         session.status = 'success';
         // Try to read credentials from file
         await extractCredentials(session, config);
       } else if (session.status === 'starting') {
         session.status = 'error';
-        session.error = `CLI exited with code ${code}`;
+        session.error = `CLI exited with code ${exitCode}`;
       }
     });
 
-    // Wait a moment for URL to appear
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Wait for URL to appear - longer timeout for Claude's multi-step setup
+    // Claude asks: dark mode? -> subscription vs API key? -> shows login URL
+    const waitTime = provider === 'anthropic' ? 5000 : 2000;
+    await new Promise(resolve => setTimeout(resolve, waitTime));
 
-    // Return session info
-    if (session.authUrl) {
+    // Return session info based on current state
+    if (session.status === 'success') {
+      // Already authenticated - CLI exited successfully without auth URL
+      activeSessions.delete(sessionId);
+      res.json({
+        sessionId,
+        status: 'success',
+        alreadyAuthenticated: true,
+        message: `Already authenticated with ${config.displayName}`,
+      });
+    } else if (session.authUrl) {
       res.json({
         sessionId,
         status: 'waiting_auth',
@@ -252,7 +328,11 @@ onboardingRouter.post('/cli/:provider/complete/:sessionId', async (req: Request,
 
     // Clean up session
     if (session.process) {
-      session.process.kill();
+      try {
+        session.process.kill();
+      } catch {
+        // Process may already be dead
+      }
     }
     activeSessions.delete(sessionId);
 
@@ -277,7 +357,11 @@ onboardingRouter.post('/cli/:provider/cancel/:sessionId', (req: Request, res: Re
   const session = activeSessions.get(sessionId);
   if (session?.userId === userId) {
     if (session.process) {
-      session.process.kill();
+      try {
+        session.process.kill();
+      } catch {
+        // Process may already be dead
+      }
     }
     activeSessions.delete(sessionId);
   }
