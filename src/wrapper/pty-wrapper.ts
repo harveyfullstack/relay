@@ -12,7 +12,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { RelayClient } from './client.js';
 import type { ParsedCommand, ParsedSummary, SessionEndMarker } from './parser.js';
-import { parseSummaryWithDetails, parseSessionEndFromOutput } from './parser.js';
+import { parseSummaryWithDetails, parseSessionEndFromOutput, isPlaceholderTarget } from './parser.js';
 import type { SendPayload, SendMeta, SpeakOnTrigger } from '../protocol/types.js';
 import { getProjectPaths } from '../utils/project-namespace.js';
 import { getTrailEnvVars } from '../trajectory/integration.js';
@@ -125,6 +125,7 @@ export class PtyWrapper extends EventEmitter {
   private relayPrefix: string;
   private cliType: CliType;
   private sentMessageHashes: Set<string> = new Set();
+  private receivedMessageIds: Set<string> = new Set(); // Dedup incoming messages
   private processedSpawnCommands: Set<string> = new Set();
   private processedReleaseCommands: Set<string> = new Set();
   private pendingFencedSpawn: { name: string; cli: string; taskLines: string[] } | null = null;
@@ -135,7 +136,7 @@ export class PtyWrapper extends EventEmitter {
   private injectionMetrics: InjectionMetrics = createInjectionMetrics();
   private logFilePath?: string;
   private logStream?: fs.WriteStream;
-  private hasAcceptedPrompt = false;
+  private acceptedPrompts: Set<string> = new Set(); // Track which prompts have been accepted
   private hookRegistry: HookRegistry;
   private sessionStartTime = Date.now();
   private continuity?: ContinuityManager;
@@ -575,21 +576,25 @@ export class PtyWrapper extends EventEmitter {
 
   /**
    * Auto-accept Claude's first-run prompts
-   * Handles:
+   * Handles multiple prompts in sequence:
    * 1. --dangerously-skip-permissions acceptance ("Yes, I accept")
    * 2. Trust directory prompt ("Yes, I trust this folder")
+   * 3. "Ready to code here?" permission prompt ("Yes, continue")
+   *
+   * Uses a Set to track which prompts have been accepted, allowing
+   * multiple different prompts to be handled in sequence.
    */
   private handleAutoAcceptPrompts(data: string): void {
-    if (this.hasAcceptedPrompt) return;
     if (!this.ptyProcess || !this.running) return;
 
     const cleanData = stripAnsi(data);
 
     // Check for the permission acceptance prompt (--dangerously-skip-permissions)
     // Pattern: "2. Yes, I accept" in the output
-    if (cleanData.includes('Yes, I accept') && cleanData.includes('No, exit')) {
+    if (!this.acceptedPrompts.has('permission') &&
+        cleanData.includes('Yes, I accept') && cleanData.includes('No, exit')) {
       console.log(`[pty:${this.config.name}] Detected permission prompt, auto-accepting...`);
-      this.hasAcceptedPrompt = true;
+      this.acceptedPrompts.add('permission');
       // Send "2" to select "Yes, I accept" and Enter to confirm
       setTimeout(() => {
         if (this.ptyProcess && this.running) {
@@ -601,11 +606,29 @@ export class PtyWrapper extends EventEmitter {
 
     // Check for the trust directory prompt
     // Pattern: "1. Yes, I trust this folder" with "No, exit"
-    if ((cleanData.includes('trust this folder') || cleanData.includes('safety check'))
+    if (!this.acceptedPrompts.has('trust') &&
+        (cleanData.includes('trust this folder') || cleanData.includes('safety check'))
         && cleanData.includes('No, exit')) {
       console.log(`[pty:${this.config.name}] Detected trust directory prompt, auto-accepting...`);
-      this.hasAcceptedPrompt = true;
+      this.acceptedPrompts.add('trust');
       // Send Enter to accept first option (already selected)
+      setTimeout(() => {
+        if (this.ptyProcess && this.running) {
+          this.ptyProcess.write('\r');
+        }
+      }, 300);
+      return;
+    }
+
+    // Check for "Ready to code here?" permission prompt
+    // Pattern: "Yes, continue" with "No, exit" and "Ready to code here?"
+    // This prompt asks for permission to work with files in the workspace
+    if (!this.acceptedPrompts.has('ready-to-code') &&
+        cleanData.includes('Yes, continue') && cleanData.includes('No, exit')
+        && (cleanData.includes('Ready to code here') || cleanData.includes('permission to work with your files'))) {
+      console.log(`[pty:${this.config.name}] Detected "Ready to code here?" prompt, auto-accepting...`);
+      this.acceptedPrompts.add('ready-to-code');
+      // Send Enter to accept first option (already selected with ❯)
       setTimeout(() => {
         if (this.ptyProcess && this.running) {
           this.ptyProcess.write('\r');
@@ -687,6 +710,11 @@ export class PtyWrapper extends EventEmitter {
         continue;
       }
 
+      // Skip placeholder targets (documentation examples like "AgentName", "Lead", etc.)
+      if (isPlaceholderTarget(target)) {
+        continue;
+      }
+
       // Find the closing >>>
       const endIdx = content.indexOf('>>>', startIdx);
       if (endIdx === -1) continue;
@@ -702,6 +730,11 @@ export class PtyWrapper extends EventEmitter {
       if (colonIdx > 0 && colonIdx < target.length - 1) {
         project = target.substring(0, colonIdx);
         to = target.substring(colonIdx + 1);
+      }
+
+      // Skip placeholder targets after parsing cross-project syntax
+      if (isPlaceholderTarget(to)) {
+        continue;
       }
 
       this.sendRelayCommand({
@@ -751,6 +784,9 @@ export class PtyWrapper extends EventEmitter {
         const [, target, body] = simpleMatch;
         if (!body) continue;
 
+        // Skip placeholder targets (documentation examples)
+        if (isPlaceholderTarget(target)) continue;
+
         // Parse target for cross-project syntax
         const colonIdx = target.indexOf(':');
         let to = target;
@@ -759,6 +795,9 @@ export class PtyWrapper extends EventEmitter {
           project = target.substring(0, colonIdx);
           to = target.substring(colonIdx + 1);
         }
+
+        // Skip placeholder targets after parsing cross-project syntax
+        if (isPlaceholderTarget(to)) continue;
 
         this.sendRelayCommand({
           to,
@@ -773,6 +812,9 @@ export class PtyWrapper extends EventEmitter {
       const [, target, threadProject, threadId, body] = targetMatch;
       if (!body) continue;
 
+      // Skip placeholder targets (documentation examples)
+      if (isPlaceholderTarget(target)) continue;
+
       // Parse target for cross-project syntax
       const colonIdx = target.indexOf(':');
       let to = target;
@@ -781,6 +823,9 @@ export class PtyWrapper extends EventEmitter {
         project = target.substring(0, colonIdx);
         to = target.substring(colonIdx + 1);
       }
+
+      // Skip placeholder targets after parsing cross-project syntax
+      if (isPlaceholderTarget(to)) continue;
 
       this.sendRelayCommand({
         to,
@@ -1064,6 +1109,19 @@ export class PtyWrapper extends EventEmitter {
    * @param originalTo - The original 'to' field from sender. '*' indicates this was a broadcast message.
    */
   private handleIncomingMessage(from: string, payload: SendPayload, messageId: string, meta?: SendMeta, originalTo?: string): void {
+    // Deduplicate: skip if we've already received this message
+    if (this.receivedMessageIds.has(messageId)) {
+      console.log(`[pty:${this.config.name}] Skipping duplicate message: ${messageId.substring(0, 8)}`);
+      return;
+    }
+    this.receivedMessageIds.add(messageId);
+
+    // Limit dedup set size to prevent memory leak
+    if (this.receivedMessageIds.size > 1000) {
+      const oldest = this.receivedMessageIds.values().next().value;
+      if (oldest) this.receivedMessageIds.delete(oldest);
+    }
+
     this.messageQueue.push({ from, body: payload.body, messageId, thread: payload.thread, importance: meta?.importance, data: payload.data, originalTo });
     this.processMessageQueue();
 
@@ -1191,6 +1249,9 @@ export class PtyWrapper extends EventEmitter {
         log: (message: string) => console.log(`[pty:${this.config.name}] ${message}`),
         logError: (message: string) => console.error(`[pty:${this.config.name}] ${message}`),
         getMetrics: () => this.injectionMetrics,
+        // Skip verification for PTY-based injection - CLIs don't echo input back
+        // so verification will always fail. Trust that pty.write() succeeds.
+        skipVerification: true,
       };
 
       // Inject with retry and verification using shared logic
@@ -1223,27 +1284,24 @@ export class PtyWrapper extends EventEmitter {
   }
 
   /**
-   * Inject usage instructions including persistence protocol
+   * Queue minimal agent identity notification as the first message.
+   *
+   * Full protocol instructions are in ~/.claude/CLAUDE.md (set up by entrypoint.sh).
+   * We only inject a brief identity message here to let the agent know its name
+   * and that it's connected to the relay.
    */
   private injectInstructions(): void {
-    if (!this.running || !this.ptyProcess) return;
+    if (!this.running) return;
 
-    const escapedPrefix = '\\' + this.relayPrefix;
-    const instructions = [
-      `[Agent Relay] You are "${this.config.name}" - connected for real-time messaging.`,
-      `SEND: ${escapedPrefix}AgentName message`,
-      `PROTOCOL: (1) ACK receipt (2) Work (3) Send "DONE: summary"`,
-      `PERSIST: Output [[SUMMARY]]{"currentTask":"...","context":"..."}[[/SUMMARY]] after major work.`,
-      `END: Output [[SESSION_END]]{"summary":"..."}[[/SESSION_END]] when session complete.`,
-    ].join(' | ');
+    // Minimal notification - full protocol is in ~/.claude/CLAUDE.md
+    const notification = `You are agent "${this.config.name}" connected to Agent Relay. See CLAUDE.md for the messaging protocol. ACK messages, do work, send DONE when complete.`;
 
-    // Note: Trail instructions are injected via hooks (trajectory-hooks.ts)
-
-    try {
-      this.ptyProcess.write(instructions + '\r');
-    } catch {
-      // Silent fail
-    }
+    // Queue as first message from "system" - will be injected when CLI is ready
+    this.messageQueue.unshift({
+      from: 'system',
+      body: notification,
+      messageId: `init-${Date.now()}`,
+    });
   }
 
   /**
@@ -1410,12 +1468,17 @@ export class PtyWrapper extends EventEmitter {
       this.outputsSinceSummary = 0;
 
       // Inject reminder as a relay-style message
-      const reminder = `\n[Agent Relay] It's been ${Math.round(minutesSinceSummary)} minutes. Please output a [[SUMMARY]] block to checkpoint your progress:\n[[SUMMARY]]\n{"currentTask": "...", "completedTasks": [...], "context": "..."}\n[[/SUMMARY]]\n`;
+      // IMPORTANT: Must be single-line - embedded newlines cause the message to span
+      // multiple lines in the CLI input buffer, and the final Enter only submits
+      // the last (empty) line. Regular relay messages are also single-line (see buildInjectionString).
+      const reminder = `[Agent Relay] It's been ${Math.round(minutesSinceSummary)} minutes. Please output a [[SUMMARY]] block to checkpoint your progress: [[SUMMARY]]{"currentTask": "...", "completedTasks": [...], "context": "..."}[[/SUMMARY]]`;
 
-      // Delay slightly to not interrupt current output
-      setTimeout(() => {
+      // Delay slightly to not interrupt current output, then write + Enter
+      setTimeout(async () => {
         if (this.ptyProcess && this.running) {
-          this.ptyProcess.write(reminder + '\r');
+          this.ptyProcess.write(reminder);
+          await sleep(INJECTION_CONSTANTS.ENTER_DELAY_MS);
+          this.ptyProcess.write('\r');
         }
       }, 1000);
     }

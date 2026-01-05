@@ -264,10 +264,6 @@ workspacesRouter.get('/:id', async (req: Request, res: Response) => {
       computeProvider: workspace.computeProvider,
       config: workspace.config,
       errorMessage: workspace.errorMessage,
-      // SSH access for port forwarding (e.g., Codex OAuth)
-      sshHost: workspace.sshHost,
-      sshPort: workspace.sshPort,
-      sshPassword: workspace.sshPassword,
       repositories: repositories.map((r) => ({
         id: r.id,
         fullName: r.githubFullName,
@@ -671,7 +667,10 @@ async function removeDomainFromCompute(workspace: Workspace): Promise<void> {
  */
 workspacesRouter.all('/:id/proxy/{*proxyPath}', async (req: Request, res: Response) => {
   const userId = req.session.userId!;
-  const { id, proxyPath } = req.params;
+  const { id } = req.params;
+  // Express 5 wildcard params return an array of path segments, not a slash-separated string
+  const proxyPathParam = req.params.proxyPath;
+  const proxyPath = Array.isArray(proxyPathParam) ? proxyPathParam.join('/') : proxyPathParam;
 
   try {
     const workspace = await db.workspaces.findById(id);
@@ -703,18 +702,32 @@ workspacesRouter.all('/:id/proxy/{*proxyPath}', async (req: Request, res: Respon
     const targetUrl = `${targetBaseUrl}/api/${proxyPath}`;
     console.log(`[workspace-proxy] ${req.method} ${targetUrl}`);
 
+    // Store targetUrl for error handling
+    (req as any)._proxyTargetUrl = targetUrl;
+
+    // Add timeout to prevent hanging requests
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
     const fetchOptions: RequestInit = {
       method: req.method,
       headers: {
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
     };
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       fetchOptions.body = JSON.stringify(req.body);
     }
 
-    const proxyRes = await fetch(targetUrl, fetchOptions);
+    let proxyRes: globalThis.Response;
+    try {
+      proxyRes = await fetch(targetUrl, fetchOptions);
+    } finally {
+      clearTimeout(timeout);
+    }
+    console.log(`[workspace-proxy] Response: ${proxyRes.status} ${proxyRes.statusText}`);
 
     // Handle non-JSON responses gracefully
     const contentType = proxyRes.headers.get('content-type');
@@ -726,10 +739,35 @@ workspacesRouter.all('/:id/proxy/{*proxyPath}', async (req: Request, res: Respon
       res.status(proxyRes.status).send(text);
     }
   } catch (error) {
-    console.error('[workspace-proxy] Error:', error);
+    const targetUrl = (req as any)._proxyTargetUrl || 'unknown';
+    console.error('[workspace-proxy] Error proxying to:', targetUrl);
+    console.error('[workspace-proxy] Error details:', error);
+
+    // Check for timeout/abort errors
+    if (error instanceof Error && error.name === 'AbortError') {
+      res.status(504).json({
+        error: 'Workspace request timed out',
+        details: 'The workspace did not respond within 15 seconds',
+        targetUrl: targetUrl,
+      });
+      return;
+    }
+
+    // Check for connection refused (workspace not running)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('fetch failed')) {
+      res.status(503).json({
+        error: 'Workspace is not reachable',
+        details: 'The workspace container may not be running or accepting connections',
+        targetUrl: targetUrl,
+      });
+      return;
+    }
+
     res.status(500).json({
       error: 'Failed to proxy request to workspace',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: errorMessage,
+      targetUrl: targetUrl, // Include target URL for debugging
     });
   }
 });

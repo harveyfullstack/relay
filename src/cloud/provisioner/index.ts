@@ -11,16 +11,8 @@ import { vault } from '../vault/index.js';
 import { nangoService } from '../services/nango.js';
 
 const WORKSPACE_PORT = 3888;
-const SSH_PORT = 2222;
 const FETCH_TIMEOUT_MS = 10_000;
 const WORKSPACE_IMAGE = process.env.WORKSPACE_IMAGE || 'ghcr.io/agentworkforce/relay-workspace:latest';
-
-/**
- * Generate a random password for SSH access
- */
-function generateSSHPassword(): string {
-  return crypto.randomBytes(16).toString('base64').replace(/[/+=]/g, '').substring(0, 16);
-}
 
 /**
  * Get a fresh GitHub App installation token from Nango.
@@ -153,9 +145,6 @@ interface ComputeProvisioner {
   provision(workspace: Workspace, credentials: Map<string, string>): Promise<{
     computeId: string;
     publicUrl: string;
-    sshHost?: string;
-    sshPort?: number;
-    sshPassword?: string;
   }>;
   deprovision(workspace: Workspace): Promise<void>;
   getStatus(workspace: Workspace): Promise<WorkspaceStatus>;
@@ -209,9 +198,8 @@ class FlyProvisioner implements ComputeProvisioner {
   async provision(
     workspace: Workspace,
     credentials: Map<string, string>
-  ): Promise<{ computeId: string; publicUrl: string; sshHost?: string; sshPort?: number; sshPassword?: string }> {
+  ): Promise<{ computeId: string; publicUrl: string }> {
     const appName = `ar-${workspace.id.substring(0, 8)}`;
-    const sshPassword = generateSSHPassword();
 
     // Create Fly app
     await fetchWithRetry('https://api.machines.dev/v1/apps', {
@@ -226,22 +214,22 @@ class FlyProvisioner implements ComputeProvisioner {
       }),
     });
 
-    // Set secrets (credentials + SSH password)
-    const secrets: Record<string, string> = {
-      SSH_PASSWORD: sshPassword,
-    };
+    // Set secrets (provider credentials)
+    const secrets: Record<string, string> = {};
     for (const [provider, token] of credentials) {
       secrets[`${provider.toUpperCase()}_TOKEN`] = token;
     }
 
-    await fetchWithRetry(`https://api.machines.dev/v1/apps/${appName}/secrets`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.apiToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(secrets),
-    });
+    if (Object.keys(secrets).length > 0) {
+      await fetchWithRetry(`https://api.machines.dev/v1/apps/${appName}/secrets`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(secrets),
+      });
+    }
 
     // If custom workspace domain is configured, add certificate
     const customHostname = this.workspaceDomain
@@ -253,7 +241,6 @@ class FlyProvisioner implements ComputeProvisioner {
     }
 
     // Create machine with auto-stop/start for cost optimization
-    // SSH enabled for port forwarding (e.g., Codex OAuth)
     const machineResponse = await fetchWithRetry(
       `https://api.machines.dev/v1/apps/${appName}/machines`,
       {
@@ -277,8 +264,6 @@ class FlyProvisioner implements ComputeProvisioner {
               // Git gateway configuration
               CLOUD_API_URL: this.cloudApiUrl,
               WORKSPACE_TOKEN: this.generateWorkspaceToken(workspace.id),
-              // SSH for port forwarding (Codex OAuth, etc.)
-              ENABLE_SSH: 'true',
             },
             services: [
               {
@@ -292,12 +277,6 @@ class FlyProvisioner implements ComputeProvisioner {
                 auto_stop_machines: true,
                 auto_start_machines: true,
                 min_machines_running: 0,
-              },
-              {
-                // SSH for port forwarding
-                ports: [{ port: SSH_PORT, handlers: [] }],
-                protocol: 'tcp',
-                internal_port: SSH_PORT,
               },
             ],
             guest: {
@@ -322,16 +301,11 @@ class FlyProvisioner implements ComputeProvisioner {
       ? `https://${customHostname}`
       : `https://${appName}.fly.dev`;
 
-    const sshHost = customHostname || `${appName}.fly.dev`;
-
     await softHealthCheck(publicUrl);
 
     return {
       computeId: machine.id,
       publicUrl,
-      sshHost,
-      sshPort: SSH_PORT,
-      sshPassword,
     };
   }
 
@@ -836,9 +810,8 @@ class DockerProvisioner implements ComputeProvisioner {
   async provision(
     workspace: Workspace,
     credentials: Map<string, string>
-  ): Promise<{ computeId: string; publicUrl: string; sshHost?: string; sshPort?: number; sshPassword?: string }> {
+  ): Promise<{ computeId: string; publicUrl: string }> {
     const containerName = `ar-${workspace.id.substring(0, 8)}`;
-    const sshPassword = generateSSHPassword();
 
     // Build environment variables
     const envArgs: string[] = [
@@ -851,35 +824,33 @@ class DockerProvisioner implements ComputeProvisioner {
       `-e AGENT_RELAY_DASHBOARD_PORT=${WORKSPACE_PORT}`,
       `-e CLOUD_API_URL=${this.cloudApiUrl}`,
       `-e WORKSPACE_TOKEN=${this.generateWorkspaceToken(workspace.id)}`,
-      // SSH for port forwarding (Codex OAuth, etc.)
-      `-e ENABLE_SSH=true`,
-      `-e SSH_PASSWORD=${sshPassword}`,
     ];
 
     for (const [provider, token] of credentials) {
       envArgs.push(`-e ${provider.toUpperCase()}_TOKEN=${token}`);
     }
 
-    // Run container with SSH port exposed
+    // Run container
     const { execSync } = await import('child_process');
     const hostPort = 3000 + Math.floor(Math.random() * 1000);
-    const sshHostPort = 2200 + Math.floor(Math.random() * 100);
 
     // When running in Docker, connect to the same network for container-to-container communication
     const runningInDocker = process.env.RUNNING_IN_DOCKER === 'true';
     const networkArg = runningInDocker ? '--network agent-relay-dev' : '';
 
-    // In development, mount local dist folder for faster iteration
+    // In development, mount local dist and docs folders for faster iteration
     // Set WORKSPACE_DEV_MOUNT=true to enable
     const devMount = process.env.WORKSPACE_DEV_MOUNT === 'true';
-    const volumeArgs = devMount ? `-v "${process.cwd()}/dist:/app/dist:ro"` : '';
+    const volumeArgs = devMount
+      ? `-v "${process.cwd()}/dist:/app/dist:ro" -v "${process.cwd()}/docs:/app/docs:ro"`
+      : '';
     if (devMount) {
-      console.log('[provisioner] Dev mode: mounting local dist/ folder into workspace container');
+      console.log('[provisioner] Dev mode: mounting local dist/ and docs/ folders into workspace container');
     }
 
     try {
       execSync(
-        `docker run -d --user root --name ${containerName} ${networkArg} ${volumeArgs} -p ${hostPort}:${WORKSPACE_PORT} -p ${sshHostPort}:${SSH_PORT} ${envArgs.join(' ')} ${WORKSPACE_IMAGE}`,
+        `docker run -d --user root --name ${containerName} ${networkArg} ${volumeArgs} -p ${hostPort}:${WORKSPACE_PORT} ${envArgs.join(' ')} ${WORKSPACE_IMAGE}`,
         { stdio: 'pipe' }
       );
 
@@ -895,9 +866,6 @@ class DockerProvisioner implements ComputeProvisioner {
       return {
         computeId: containerName,
         publicUrl,
-        sshHost: 'localhost',
-        sshPort: sshHostPort,
-        sshPassword,
       };
     } catch (error) {
       // Clean up container if it was created but health check failed
@@ -1000,6 +968,16 @@ export class WorkspaceProvisioner {
       },
     });
 
+    // Add creator as owner in workspace_members for team collaboration support
+    await db.workspaceMembers.addMember({
+      workspaceId: workspace.id,
+      userId: config.userId,
+      role: 'owner',
+      invitedBy: config.userId, // Self-invited as creator
+    });
+    // Auto-accept the creator's membership
+    await db.workspaceMembers.acceptInvite(workspace.id, config.userId);
+
     // Get credentials
     const credentials = new Map<string, string>();
     for (const provider of config.providers) {
@@ -1029,7 +1007,7 @@ export class WorkspaceProvisioner {
 
     // Provision compute
     try {
-      const { computeId, publicUrl, sshHost, sshPort, sshPassword } = await this.provisioner.provision(
+      const { computeId, publicUrl } = await this.provisioner.provision(
         workspace,
         credentials
       );
@@ -1037,9 +1015,6 @@ export class WorkspaceProvisioner {
       await db.workspaces.updateStatus(workspace.id, 'running', {
         computeId,
         publicUrl,
-        sshHost,
-        sshPort,
-        sshPassword,
       });
 
       return {

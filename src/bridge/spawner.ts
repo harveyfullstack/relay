@@ -67,87 +67,16 @@ export type OnAgentDeathCallback = (info: {
 }) => void;
 
 /**
- * Load the relay communication snippet.
- * This defines how agents communicate via relay patterns.
- * Cached after first load.
+ * Get a minimal relay reminder.
+ * Agents already have full relay docs via CLAUDE.md - this is just a brief reminder.
+ * Loading full docs (400+ lines) overwhelms agents and causes "meandering".
  */
-let relaySnippetCache: string | null = null;
-let relayProtocolCache: string | null = null;
-
-function loadRelaySnippets(): string {
-  if (relaySnippetCache !== null && relayProtocolCache !== null) {
-    return `${relaySnippetCache}\n\n${relayProtocolCache}`;
-  }
-
-  try {
-    // Resolve path relative to this file's location
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-    // From src/bridge/ go up to package root, then into docs/
-    const snippetPath = path.resolve(__dirname, '../../docs/agent-relay-snippet.md');
-    const protocolPath = path.resolve(__dirname, '../../docs/agent-relay-protocol.md');
-
-    // Load base communication snippet
-    if (fs.existsSync(snippetPath)) {
-      relaySnippetCache = fs.readFileSync(snippetPath, 'utf-8');
-      console.log('[spawner] Loaded relay communication snippet');
-    } else {
-      // Fallback: minimal relay instructions
-      relaySnippetCache = `# Agent Relay Communication
-
-You are connected to an agent relay system. Use these patterns to communicate:
-
-## Sending Messages
-\`\`\`
-->relay:AgentName <<<
-Your message here.>>>
-\`\`\`
-
-## Communication Protocol
-- **ACK immediately** when receiving a task
-- **Report completion** with DONE: summary
-
-## Common Patterns
-- \`->relay:Lead <<<ACK: Starting task>>>\`
-- \`->relay:Lead <<<DONE: Task complete>>>\`
-`;
-      console.log('[spawner] Using fallback relay snippet (docs/agent-relay-snippet.md not found)');
-    }
-
-    // Load protocol snippet (session persistence, trajectories, etc.)
-    if (fs.existsSync(protocolPath)) {
-      relayProtocolCache = fs.readFileSync(protocolPath, 'utf-8');
-      console.log('[spawner] Loaded relay protocol snippet');
-    } else {
-      // Fallback: minimal protocol instructions
-      relayProtocolCache = `# Agent Relay Protocol
-
-## Work Trajectories (Required)
-
-Record your work using trail commands:
-
-\`\`\`bash
-trail start "Task description"
-trail decision "Choice made" --reasoning "Why"
-trail complete --summary "What was done" --confidence 0.85
-\`\`\`
-
-## Session End
-
-When done, output:
-\`\`\`
-[[SESSION_END]]Work complete.[[/SESSION_END]]
-\`\`\`
-`;
-      console.log('[spawner] Using fallback protocol snippet (docs/agent-relay-protocol.md not found)');
-    }
-  } catch (err: any) {
-    console.error('[spawner] Failed to load relay snippets:', err.message);
-    relaySnippetCache = relaySnippetCache || '';
-    relayProtocolCache = relayProtocolCache || '';
-  }
-
-  return `${relaySnippetCache}\n\n${relayProtocolCache}`;
+function getMinimalRelayReminder(): string {
+  return `# Quick Relay Reference
+- Send: \`->relay:Name <<<message>>>\`
+- ACK tasks, send DONE when complete
+- Use \`trail start/decision/complete\` for trajectories
+- Output \`[[SESSION_END]]..[[/SESSION_END]]\` when done`;
 }
 
 export class AgentSpawner {
@@ -349,12 +278,14 @@ export class AgentSpawner {
       // Fall back to callbacks only if no dashboardPort is set
       // Note: Spawned agents CAN spawn sub-workers intentionally - the parser is strict enough
       // to avoid accidental spawns from documentation text (requires line start, PascalCase, known CLI)
+      // Use request.cwd if specified, otherwise use projectRoot
+      const agentCwd = request.cwd || this.projectRoot;
       const ptyConfig: PtyWrapperConfig = {
         name,
         command,
         args,
         socketPath: this.socketPath,
-        cwd: this.projectRoot,
+        cwd: agentCwd,
         logsDir: this.logsDir,
         dashboardPort: this.dashboardPort,
         // Shadow agent configuration
@@ -446,16 +377,15 @@ export class AgentSpawner {
         };
       }
 
-      // Build the full message: relay snippet + policy instructions (if any) + task
+      // Build the full message: minimal relay reminder + policy instructions (if any) + task
       let fullMessage = task || '';
 
-      // Always prepend relay communication rules so agents know how to communicate
-      // This is essential because target repos may not have the snippet installed
-      // Includes both base communication patterns AND protocol rules (trajectories, session persistence)
-      const relayRules = loadRelaySnippets();
-      if (relayRules) {
-        fullMessage = `${relayRules}\n\n---\n\n${fullMessage}`;
-        if (debug) console.log(`[spawner:debug] Prepended relay communication rules for ${name}`);
+      // Prepend a brief relay reminder (agents have full docs via CLAUDE.md)
+      // Note: Previously loaded full 400+ line docs which overwhelmed agents
+      const relayReminder = getMinimalRelayReminder();
+      if (relayReminder) {
+        fullMessage = `${relayReminder}\n\n---\n\n${fullMessage}`;
+        if (debug) console.log(`[spawner:debug] Prepended relay reminder for ${name}`);
       }
 
       // Prepend policy instructions if enforcement is enabled
