@@ -24,7 +24,7 @@ interface PendingAuthSession {
 const pendingAuthSessions = new Map<string, PendingAuthSession>();
 
 // Clean up old sessions every minute
-setInterval(() => {
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [id, session] of pendingAuthSessions) {
     // Remove sessions older than 10 minutes
@@ -33,6 +33,13 @@ setInterval(() => {
     }
   }
 }, 60000);
+
+/**
+ * Stop the cleanup interval. Call this on server shutdown.
+ */
+export function stopCodexAuthCleanup(): void {
+  clearInterval(cleanupInterval);
+}
 
 /**
  * POST /api/auth/codex-helper/cli-session

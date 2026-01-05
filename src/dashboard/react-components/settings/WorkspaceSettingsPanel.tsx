@@ -1024,12 +1024,16 @@ export function WorkspaceSettingsPanel({
               subtitle="Repositories you have access to via your GitHub account"
             />
             <RepoAccessPanel
-              workspaces={workspace ? [{
-                id: workspace.id,
-                name: workspace.name,
-                repositoryFullName: workspace.repositories[0]?.fullName,
-                status: workspace.status as 'provisioning' | 'running' | 'stopped' | 'error',
-              }] : []}
+              workspaces={
+                workspace && workspace.repositories?.length > 0
+                  ? [{
+                      id: workspace.id,
+                      name: workspace.name,
+                      repositoryFullName: workspace.repositories[0].fullName,
+                      status: workspace.status as 'provisioning' | 'running' | 'stopped' | 'error',
+                    }]
+                  : []
+              }
               onWorkspaceCreated={(workspaceId, repoFullName) => {
                 // Refresh workspace data after creating
                 cloudApi.getWorkspaceDetails(workspaceId).then(result => {
