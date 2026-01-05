@@ -154,6 +154,8 @@ export class PtyWrapper extends EventEmitter {
   private recentLogChunks: Map<string, number> = new Map(); // Dedup log streaming (hash -> timestamp)
   private static readonly LOG_DEDUP_WINDOW_MS = 500; // Window for considering logs as duplicates
   private static readonly LOG_DEDUP_MAX_SIZE = 100; // Max entries in dedup map
+  private lastParsedLength = 0; // Track last parsed position to avoid re-parsing entire buffer
+  private lastContinuityParsedLength = 0; // Same for continuity commands
 
   constructor(config: PtyWrapperConfig) {
     super();
@@ -533,9 +535,15 @@ export class PtyWrapper extends EventEmitter {
     // Parse for continuity commands (->continuity:save, ->continuity:load, etc.)
     // Use rawBuffer (accumulated content) not immediate chunk, since multi-line
     // fenced commands like ->continuity:save <<<...>>> span multiple output events
-    this.parseContinuityCommands(cleanContent).catch(err => {
-      console.error(`[pty:${this.config.name}] Continuity command parsing error:`, err);
-    });
+    // Optimization: Only parse new content with lookback for incomplete fenced commands
+    if (cleanContent.length > this.lastContinuityParsedLength) {
+      const lookbackStart = Math.max(0, this.lastContinuityParsedLength - 500);
+      const contentToParse = cleanContent.substring(lookbackStart);
+      this.parseContinuityCommands(contentToParse).catch(err => {
+        console.error(`[pty:${this.config.name}] Continuity command parsing error:`, err);
+      });
+      this.lastContinuityParsedLength = cleanContent.length;
+    }
 
     // Track outputs and potentially remind about summaries
     this.trackOutputAndRemind(data);
@@ -735,18 +743,32 @@ export class PtyWrapper extends EventEmitter {
    * Parse relay commands from output.
    * Handles both single-line and multi-line (fenced) formats.
    * Deduplication via sentMessageHashes.
+   *
+   * Optimization: Only parses new content since last parse to avoid O(n²) behavior.
+   * Uses lookback buffer for incomplete fenced messages that span output chunks.
    */
   private parseRelayCommands(): void {
     const cleanContent = stripAnsi(this.rawBuffer);
 
+    // Skip if no new content
+    if (cleanContent.length <= this.lastParsedLength) return;
+
+    // For fenced messages, need some lookback for incomplete fences that span chunks
+    // 500 chars is enough to capture most relay message headers
+    const lookbackStart = Math.max(0, this.lastParsedLength - 500);
+    const contentToParse = cleanContent.substring(lookbackStart);
+
     // First, try to find fenced multi-line messages: ->relay:Target <<<\n...\n>>>
-    this.parseFencedMessages(cleanContent);
+    this.parseFencedMessages(contentToParse);
 
     // Then parse single-line messages
-    this.parseSingleLineMessages(cleanContent);
+    this.parseSingleLineMessages(contentToParse);
 
     // Parse spawn/release commands
-    this.parseSpawnReleaseCommands(cleanContent);
+    this.parseSpawnReleaseCommands(contentToParse);
+
+    // Update parsed position
+    this.lastParsedLength = cleanContent.length;
   }
 
   /**
