@@ -70,6 +70,17 @@ function clearProvisioningProgress(workspaceId: string): void {
 }
 
 /**
+ * Schedule cleanup of provisioning progress after a delay
+ * This gives the frontend time to poll and see the 'complete' stage
+ */
+function scheduleProgressCleanup(workspaceId: string, delayMs: number = 30_000): void {
+  setTimeout(() => {
+    clearProvisioningProgress(workspaceId);
+    console.log(`[provisioner] Cleaned up provisioning progress for ${workspaceId.substring(0, 8)}`);
+  }, delayMs);
+}
+
+/**
  * Get a fresh GitHub App installation token from Nango.
  * Looks up the user's connected repositories to find a valid Nango connection.
  */
@@ -620,6 +631,9 @@ class FlyProvisioner implements ComputeProvisioner {
 
     // Stage: Complete
     updateProvisioningStage(workspace.id, 'complete');
+
+    // Schedule cleanup of provisioning progress after 30s (gives frontend time to see 'complete')
+    scheduleProgressCleanup(workspace.id);
 
     return {
       computeId: machine.id,
@@ -1292,6 +1306,7 @@ export class WorkspaceProvisioner {
 
   /**
    * Provision a new workspace (one-click)
+   * Returns immediately with 'provisioning' status and runs actual provisioning in background
    */
   async provision(config: ProvisionConfig): Promise<ProvisionResult> {
     // Create workspace record
