@@ -116,36 +116,10 @@ export function ProviderAuthFlow({
   // Determine if this is the Codex flow
   const isCodexFlow = provider.requiresUrlCopy || provider.id === 'codex' || backendProviderId === 'openai';
 
-  // Fetch CLI session for Codex - provides a command the user can run locally
-  const fetchCliSession = useCallback(async () => {
-    if (!isCodexFlow) return;
-
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-
-      const res = await fetch('/api/auth/codex-helper/cli-session', {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-      });
-
-      if (res.ok) {
-        const data = await res.json() as { authSessionId: string; command: string };
-        setCliCommand(data.command);
-        setCliSessionId(data.authSessionId);
-        // Start polling for CLI completion
-        startCliPolling(data.authSessionId);
-      }
-    } catch (err) {
-      console.error('Failed to fetch CLI session:', err);
-    }
-  }, [isCodexFlow, csrfToken, startCliPolling]);
-
   // Ref to hold the latest code submission handler (avoids stale closure in polling)
   const handleCodeReceivedRef = useRef<((code: string) => Promise<void>) | null>(null);
 
-  // Poll for CLI auth completion
+  // Poll for CLI auth completion (must be defined before fetchCliSession)
   const startCliPolling = useCallback((cliAuthSessionId: string) => {
     if (cliPollingRef.current) return;
     cliPollingRef.current = true;
@@ -193,6 +167,32 @@ export function ProviderAuthFlow({
 
     poll();
   }, []);
+
+  // Fetch CLI session for Codex - provides a command the user can run locally
+  const fetchCliSession = useCallback(async () => {
+    if (!isCodexFlow) return;
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+      const res = await fetch('/api/auth/codex-helper/cli-session', {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+      });
+
+      if (res.ok) {
+        const data = await res.json() as { authSessionId: string; command: string };
+        setCliCommand(data.command);
+        setCliSessionId(data.authSessionId);
+        // Start polling for CLI completion
+        startCliPolling(data.authSessionId);
+      }
+    } catch (err) {
+      console.error('Failed to fetch CLI session:', err);
+    }
+  }, [isCodexFlow, csrfToken, startCliPolling]);
 
   // Fetch CLI session when auth starts for Codex
   useEffect(() => {
