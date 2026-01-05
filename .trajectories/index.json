@@ -295,6 +295,20 @@
       "startedAt": "2026-01-05T21:18:03.796Z",
       "completedAt": "2026-01-05T21:29:51.191Z",
       "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_g0fisy9h51mf.json"
+    },
+    "traj_22bhyulruouw": {
+      "title": "Lead agent coordination - responsive nav fix and team assignments",
+      "status": "completed",
+      "startedAt": "2026-01-05T19:45:50.807Z",
+      "completedAt": "2026-01-05T20:10:25.523Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_22bhyulruouw.json"
+    },
+    "traj_hhxte7w4gjjx": {
+      "title": "test",
+      "status": "abandoned",
+      "startedAt": "2026-01-05T20:14:01.563Z",
+      "completedAt": "2026-01-05T20:14:01.617Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_hhxte7w4gjjx.json"
     }
   }
 }

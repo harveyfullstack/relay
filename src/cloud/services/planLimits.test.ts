@@ -59,7 +59,7 @@ describe('Plan Limits Configuration', () => {
       expect(limits.sessionPersistence).toBe(true);
       expect(limits.coordinatorsEnabled).toBe(true);
       expect(limits.maxWorkspaces).toBe(5);
-      expect(limits.maxConcurrentAgents).toBe(10);
+      expect(limits.maxConcurrentAgents).toBe(5);
     });
 
     it('returns correct limits for team plan', () => {
@@ -252,9 +252,9 @@ describe('Resource Limits', () => {
 
     it('allows more agents for pro plan', async () => {
       mockUser.plan = 'pro';
-      // Pro plan has maxConcurrentAgents: 10
+      // Pro plan has maxConcurrentAgents: 5
 
-      const result = await canSpawnAgent('user-123', 5);
+      const result = await canSpawnAgent('user-123', 4);
 
       expect(result.allowed).toBe(true);
     });
