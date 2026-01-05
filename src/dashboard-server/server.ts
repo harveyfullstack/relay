@@ -2072,7 +2072,7 @@ export async function startDashboard(
    * POST /auth/cli/:provider/code/:sessionId - Submit auth code to PTY
    * Used when OAuth returns a code that must be pasted into the CLI
    */
-  app.post('/auth/cli/:provider/code/:sessionId', (req, res) => {
+  app.post('/auth/cli/:provider/code/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
     const { code } = req.body;
 
@@ -2080,7 +2080,7 @@ export async function startDashboard(
       return res.status(400).json({ error: 'Auth code is required' });
     }
 
-    const result = submitAuthCode(sessionId, code);
+    const result = await submitAuthCode(sessionId, code);
     if (!result.success) {
       return res.status(404).json({ error: result.error || 'Session not found or process not running' });
     }
