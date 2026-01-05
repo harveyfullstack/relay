@@ -241,6 +241,12 @@ export interface InjectionCallbacks {
   logError: (message: string) => void;
   /** Get the injection metrics object to update */
   getMetrics: () => InjectionMetrics;
+  /**
+   * Skip verification and trust that write succeeded.
+   * Set to true for PTY-based injection where CLIs don't echo input.
+   * When true, injection succeeds on first attempt without verification.
+   */
+  skipVerification?: boolean;
 }
 
 /**
@@ -299,6 +305,20 @@ export async function injectWithRetry(
 ): Promise<InjectionResult> {
   const metrics = callbacks.getMetrics();
   metrics.total++;
+
+  // Skip verification mode: trust that write() succeeds without checking output
+  // Used for PTY-based injection where CLIs don't echo input back
+  if (callbacks.skipVerification) {
+    try {
+      await callbacks.performInjection(injection);
+      metrics.successFirstTry++;
+      return { success: true, attempts: 1 };
+    } catch (err: any) {
+      callbacks.logError(`Injection error: ${err?.message || err}`);
+      metrics.failed++;
+      return { success: false, attempts: 1 };
+    }
+  }
 
   for (let attempt = 0; attempt < INJECTION_CONSTANTS.MAX_RETRIES; attempt++) {
     try {

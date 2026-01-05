@@ -41,6 +41,8 @@ export interface SpawnRequest {
   task: string;
   /** Optional team name to organize agents under */
   team?: string;
+  /** Working directory for the agent (defaults to detected workspace) */
+  cwd?: string;
   /** Name of the agent requesting the spawn (for policy enforcement) */
   spawnerName?: string;
   /** Shadow execution mode (subagent = no extra process) */

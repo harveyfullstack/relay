@@ -404,9 +404,55 @@ export async function createServer(): Promise<CloudServer> {
     return Array.from(onlineUsers.values()).map((state) => state.info);
   };
 
+  // Heartbeat interval to detect dead connections (30 seconds)
+  const PRESENCE_HEARTBEAT_INTERVAL = 30000;
+  const PRESENCE_HEARTBEAT_TIMEOUT = 35000; // Allow 5s grace period
+
+  // Track connection health for heartbeat
+  const connectionHealth = new WeakMap<WebSocket, { isAlive: boolean; lastPing: number }>();
+
+  // Heartbeat interval to clean up dead connections
+  const presenceHeartbeat = setInterval(() => {
+    const now = Date.now();
+    wssPresence.clients.forEach((ws) => {
+      const health = connectionHealth.get(ws);
+      if (!health) {
+        // New connection without health tracking - initialize it
+        connectionHealth.set(ws, { isAlive: true, lastPing: now });
+        return;
+      }
+
+      if (!health.isAlive) {
+        // Connection didn't respond to last ping - terminate it
+        ws.terminate();
+        return;
+      }
+
+      // Mark as not alive until we get a pong
+      health.isAlive = false;
+      health.lastPing = now;
+      ws.ping();
+    });
+  }, PRESENCE_HEARTBEAT_INTERVAL);
+
+  // Clean up interval on server close
+  wssPresence.on('close', () => {
+    clearInterval(presenceHeartbeat);
+  });
+
   // Handle presence connections
   wssPresence.on('connection', (ws) => {
-    console.log('[cloud] Presence WebSocket client connected');
+    // Initialize health tracking (no log - too noisy)
+    connectionHealth.set(ws, { isAlive: true, lastPing: Date.now() });
+
+    // Handle pong responses (heartbeat)
+    ws.on('pong', () => {
+      const health = connectionHealth.get(ws);
+      if (health) {
+        health.isAlive = true;
+      }
+    });
+
     let clientUsername: string | undefined;
 
     ws.on('message', (data) => {
@@ -434,7 +480,11 @@ export async function createServer(): Promise<CloudServer> {
             if (existing) {
               existing.connections.add(ws);
               existing.info.lastSeen = now;
-              console.log(`[cloud] User ${username} opened new tab (${existing.connections.size} connections)`);
+              // Only log at milestones to reduce noise
+              const count = existing.connections.size;
+              if (count === 2 || count === 5 || count === 10 || count % 50 === 0) {
+                console.log(`[cloud] User ${username} has ${count} connections`);
+              }
             } else {
               onlineUsers.set(username, {
                 info: { username, avatarUrl, connectedAt: now, lastSeen: now },

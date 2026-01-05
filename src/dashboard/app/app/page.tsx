@@ -435,7 +435,10 @@ export default function DashboardPage() {
 
           {/* Provider auth flow - using shared component */}
           {connectingProvider && (() => {
-            const provider = AI_PROVIDERS.find(p => p.id === connectingProvider);
+            // Handle codex-device as codex with device flow
+            const isDeviceFlow = connectingProvider === 'codex-device';
+            const providerId = isDeviceFlow ? 'codex' : connectingProvider;
+            const provider = AI_PROVIDERS.find(p => p.id === providerId);
             if (!provider) return null;
             return (
               <div className="mb-6 bg-bg-primary/80 backdrop-blur-sm border border-border-subtle rounded-2xl p-6">
@@ -445,10 +448,13 @@ export default function DashboardPage() {
                     name: provider.name,
                     displayName: provider.displayName,
                     color: provider.color,
-                    requiresUrlCopy: provider.requiresUrlCopy,
+                    // Don't require URL copy for device flow
+                    requiresUrlCopy: isDeviceFlow ? false : provider.requiresUrlCopy,
+                    supportsDeviceFlow: provider.supportsDeviceFlow,
                   }}
                   workspaceId={selectedWorkspace!.id}
                   csrfToken={csrfToken || undefined}
+                  useDeviceFlow={isDeviceFlow}
                   onSuccess={() => {
                     // Show success state briefly, then offer options
                     setConnectingProvider(null);
@@ -488,34 +494,95 @@ export default function DashboardPage() {
               <h2 className="text-lg font-semibold text-white mb-4">Choose an AI Provider</h2>
               <div className="space-y-3">
                 {AI_PROVIDERS.map((provider) => (
-                  <div key={provider.id} className="space-y-2">
-                    <button
-                      onClick={() => handleConnectProvider(provider)}
-                      className="w-full flex items-center gap-3 p-4 bg-bg-tertiary rounded-xl border border-border-subtle hover:border-accent-cyan/50 transition-colors text-left"
-                    >
-                      <div
-                        className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold flex-shrink-0"
-                        style={{ backgroundColor: provider.color }}
+                  <div key={provider.id}>
+                    {/* Special expanded section for Codex with device flow option */}
+                    {provider.id === 'codex' ? (
+                      <div className="p-4 bg-bg-tertiary rounded-xl border border-border-subtle space-y-4">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold flex-shrink-0"
+                            style={{ backgroundColor: provider.color }}
+                          >
+                            {provider.displayName[0]}
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-white font-medium">{provider.displayName}</p>
+                            <p className="text-text-muted text-sm">{provider.name}</p>
+                          </div>
+                        </div>
+
+                        {/* Warning about localhost redirect */}
+                        <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                          <p className="text-sm text-amber-400 font-medium mb-1">⚠️ Heads up about the login flow</p>
+                          <p className="text-xs text-amber-400/80">
+                            OpenAI's OAuth redirects to <code className="bg-bg-deep px-1 rounded">localhost</code> after login,
+                            which will show a "Page not found" or "This site can't be reached" error.
+                            <strong className="text-amber-400"> This is expected!</strong> You'll need to copy the URL from your browser and paste it back here.
+                          </p>
+                        </div>
+
+                        {/* Two auth options */}
+                        <div className="space-y-2">
+                          <button
+                            onClick={() => {
+                              // Start with device flow
+                              setConnectingProvider('codex-device');
+                            }}
+                            className="w-full flex items-center gap-3 p-3 bg-bg-card rounded-lg border border-accent-cyan/30 hover:border-accent-cyan/50 transition-colors text-left"
+                          >
+                            <div className="w-8 h-8 rounded-lg bg-accent-cyan/20 flex items-center justify-center text-accent-cyan flex-shrink-0">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                              </svg>
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-white font-medium text-sm">Device Code Flow <span className="text-accent-cyan text-xs ml-1">(Recommended)</span></p>
+                              <p className="text-text-muted text-xs">Enter a code on OpenAI's website - no URL copying needed</p>
+                            </div>
+                            <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+
+                          <button
+                            onClick={() => handleConnectProvider(provider)}
+                            className="w-full flex items-center gap-3 p-3 bg-bg-card rounded-lg border border-border-subtle hover:border-accent-cyan/30 transition-colors text-left"
+                          >
+                            <div className="w-8 h-8 rounded-lg bg-bg-tertiary flex items-center justify-center text-text-muted flex-shrink-0">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
+                              </svg>
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-white font-medium text-sm">Standard Browser Flow</p>
+                              <p className="text-text-muted text-xs">Login in browser, then copy the localhost URL back here</p>
+                            </div>
+                            <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Standard provider button */
+                      <button
+                        onClick={() => handleConnectProvider(provider)}
+                        className="w-full flex items-center gap-3 p-4 bg-bg-tertiary rounded-xl border border-border-subtle hover:border-accent-cyan/50 transition-colors text-left"
                       >
-                        {provider.displayName[0]}
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-white font-medium">{provider.displayName}</p>
-                        <p className="text-text-muted text-sm">{provider.name}</p>
-                      </div>
-                      <svg className="w-5 h-5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                    {/* Pre-auth warning for providers that require URL copy */}
-                    {provider.requiresUrlCopy && (
-                      <div className="ml-4 p-3 bg-warning/10 border border-warning/20 rounded-lg">
-                        <p className="text-xs text-warning">
-                          <span className="font-semibold">⚠️ Important:</span> After signing in, you'll see a "Page not found" error.
-                          This is expected! Copy the <span className="font-medium">entire URL</span> from your browser's address bar
-                          (it will look like <code className="bg-bg-deep px-1 rounded">http://127.0.0.1:...?code=...</code>) and paste it back here.
-                        </p>
-                      </div>
+                        <div
+                          className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold flex-shrink-0"
+                          style={{ backgroundColor: provider.color }}
+                        >
+                          {provider.displayName[0]}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-white font-medium">{provider.displayName}</p>
+                          <p className="text-text-muted text-sm">{provider.name}</p>
+                        </div>
+                        <svg className="w-5 h-5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
                     )}
                   </div>
                 ))}

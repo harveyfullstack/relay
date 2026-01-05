@@ -143,6 +143,7 @@ export class AgentSpawner {
    * Called after the dashboard server starts and we know the actual port.
    */
   setDashboardPort(port: number): void {
+    console.log(`[spawner] Dashboard port set to ${port} - nested spawns now enabled`);
     this.dashboardPort = port;
   }
 
@@ -275,11 +276,15 @@ export class AgentSpawner {
 
       // Create PtyWrapper config
       // Use dashboardPort for nested spawns (API-based, works in non-TTY contexts)
-      // Fall back to callbacks only if no dashboardPort is set
+      // Fall back to callbacks only if no dashboardPort is not set
       // Note: Spawned agents CAN spawn sub-workers intentionally - the parser is strict enough
       // to avoid accidental spawns from documentation text (requires line start, PascalCase, known CLI)
       // Use request.cwd if specified, otherwise use projectRoot
       const agentCwd = request.cwd || this.projectRoot;
+
+      // Log whether nested spawning will be enabled for this agent
+      console.log(`[spawner] Spawning ${name}: dashboardPort=${this.dashboardPort || 'none'} (${this.dashboardPort ? 'nested spawns enabled' : 'nested spawns disabled'})`);
+
       const ptyConfig: PtyWrapperConfig = {
         name,
         command,

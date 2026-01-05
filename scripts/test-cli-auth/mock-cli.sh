@@ -49,11 +49,12 @@ case "$PROVIDER" in
     echo ""
     sleep "$DELAY"
 
-    # Auth method prompt
-    echo -e "How would you like to authenticate?"
-    echo "  1. Use Claude ${YELLOW}subscription${NC} (recommended)"
-    echo "  2. Use ${YELLOW}API key${NC}"
-    echo -n "Choice (1-2): "
+    # Login method selection prompt (matches real Claude CLI)
+    echo -e "Select login method:"
+    echo ""
+    echo -e " ❯ 1. Claude account with ${YELLOW}subscription${NC} · Pro, Max, Team, or Enterprise"
+    echo ""
+    echo -e "   2. Anthropic Console account · API usage billing"
     read -r -n 1 response 2>/dev/null || true
     echo ""
     sleep "$DELAY"

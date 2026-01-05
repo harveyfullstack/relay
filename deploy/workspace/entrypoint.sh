@@ -55,7 +55,15 @@ GHEOF
 
   # gh CLI will use GH_TOKEN if set; we export a function to refresh it
   # For now, set it once at startup (will be refreshed by the credential helper for git operations)
-  export GH_TOKEN=$(/tmp/gh-token-helper.sh 2>/dev/null || echo "")
+  # Retry a few times in case the cloud API isn't ready yet
+  export GH_TOKEN=""
+  for attempt in 1 2 3; do
+    GH_TOKEN=$(/tmp/gh-token-helper.sh 2>/dev/null || echo "")
+    if [[ -n "${GH_TOKEN}" ]]; then
+      break
+    fi
+    sleep 1
+  done
   if [[ -n "${GH_TOKEN}" ]]; then
     log "GitHub CLI configured with fresh token"
   else
@@ -150,6 +158,82 @@ EOF
   chmod 600 "${HOME}/.claude/.credentials.json"
 fi
 
+# Configure Claude Code for cloud workspaces
+# Create both settings and instructions files
+log "Configuring Claude Code for cloud workspace..."
+mkdir -p "${HOME}/.claude"
+
+# Create settings.json to auto-accept permissions (required for cloud workspaces)
+# This tells Claude Code to skip the "Ready to code here?" permission prompt
+# Reference: Claude Code uses this for headless/automated environments
+cat > "${HOME}/.claude/settings.json" <<'SETTINGSEOF'
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Bash",
+      "Glob",
+      "Grep",
+      "Task",
+      "WebFetch",
+      "WebSearch",
+      "NotebookEdit",
+      "TodoWrite"
+    ],
+    "deny": []
+  },
+  "autoApproveApiRequest": true
+}
+SETTINGSEOF
+chmod 600 "${HOME}/.claude/settings.json"
+log "Created Claude Code settings (auto-approve enabled)"
+
+# Create CLAUDE.md with agent relay protocol instructions
+# This is loaded automatically by Claude Code and provides the relay protocol
+if [[ -f "/app/docs/agent-relay-snippet.md" ]]; then
+  cp "/app/docs/agent-relay-snippet.md" "${HOME}/.claude/CLAUDE.md"
+  log "Copied relay protocol from /app/docs/agent-relay-snippet.md"
+else
+  # Fallback: create minimal instructions
+  log "WARN: /app/docs/agent-relay-snippet.md not found, creating minimal instructions"
+  cat > "${HOME}/.claude/CLAUDE.md" <<'RELAYEOF'
+# Agent Relay
+
+Real-time agent-to-agent messaging. Output `->relay:` patterns to communicate.
+
+## Sending Messages
+
+Use fenced format for reliable delivery:
+```
+->relay:AgentName <<<
+Your message here.>>>
+```
+
+Broadcast to all: `->relay:* <<<message>>>`
+
+## Protocol
+
+1. ACK immediately when you receive a task
+2. Do the work
+3. Send DONE: summary when complete
+
+## Session Persistence
+
+Output periodically to checkpoint progress:
+```
+[[SUMMARY]]{"currentTask":"...","completedTasks":[...],"context":"..."}[[/SUMMARY]]
+```
+
+When session is complete:
+```
+[[SESSION_END]]{"summary":"...","completedTasks":[...]}[[/SESSION_END]]
+```
+RELAYEOF
+fi
+log "Claude Code configuration complete"
+
 # Codex CLI expects ~/.codex/auth.json
 # Format: { tokens: { access_token: "...", refresh_token: "...", ... } }
 if [[ -n "${OPENAI_TOKEN:-}" ]]; then
@@ -179,7 +263,55 @@ EOF
   chmod 600 "${HOME}/.config/gcloud/application_default_credentials.json"
 fi
 
-log "Starting agent-relay daemon on port ${PORT}"
+# ============================================================================
+# Detect workspace path and start daemon
+# The daemon must start from the same directory that spawned agents will use
+# to ensure consistent socket paths
+# ============================================================================
+
+# Function to detect the actual workspace path (same logic as project-namespace.ts)
+detect_workspace_path() {
+  local base_dir="${1}"
+
+  # 1. Explicit override via env var
+  if [[ -n "${WORKSPACE_CWD:-}" ]]; then
+    echo "${WORKSPACE_CWD}"
+    return
+  fi
+
+  # 2. Check if base_dir itself is a git repo
+  if [[ -d "${base_dir}/.git" ]]; then
+    echo "${base_dir}"
+    return
+  fi
+
+  # 3. Scan for cloned repos (directories with .git)
+  local first_repo=""
+  for dir in "${base_dir}"/*/; do
+    if [[ -d "${dir}.git" ]]; then
+      # Use first repo found (alphabetically sorted by bash glob)
+      first_repo="${dir%/}"
+      break
+    fi
+  done
+
+  if [[ -n "${first_repo}" ]]; then
+    echo "${first_repo}"
+    return
+  fi
+
+  # 4. Fall back to base_dir
+  echo "${base_dir}"
+}
+
+# Detect the actual workspace path
+ACTUAL_WORKSPACE=$(detect_workspace_path "${WORKSPACE_DIR}")
+log "Detected workspace path: ${ACTUAL_WORKSPACE}"
+
+# Change to the detected workspace before starting daemon
+cd "${ACTUAL_WORKSPACE}"
+
+log "Starting agent-relay daemon on port ${PORT} from ${ACTUAL_WORKSPACE}"
 args=(/app/dist/cli/index.js up --port "${PORT}")
 
 if [[ "${SUPERVISOR_ENABLED:-true}" == "true" ]]; then

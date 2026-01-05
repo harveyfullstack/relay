@@ -151,6 +151,9 @@ export class PtyWrapper extends EventEmitter {
   private sessionEndData?: SessionEndMarker; // Store SESSION_END data for handoff
   private instructionsInjected = false; // Track if init instructions have been injected
   private continuityInjected = false; // Track if continuity context has been injected
+  private recentLogChunks: Map<string, number> = new Map(); // Dedup log streaming (hash -> timestamp)
+  private static readonly LOG_DEDUP_WINDOW_MS = 500; // Window for considering logs as duplicates
+  private static readonly LOG_DEDUP_MAX_SIZE = 100; // Max entries in dedup map
 
   constructor(config: PtyWrapperConfig) {
     super();
@@ -484,9 +487,10 @@ export class PtyWrapper extends EventEmitter {
 
     // Stream to daemon for dashboard log viewing (if connected)
     // Filter out Claude's extended thinking blocks before streaming
+    // Also deduplicate to prevent terminal redraws from causing duplicate log entries
     if (this.config.streamLogs !== false && this.client.state === 'READY') {
       const filteredData = this.filterThinkingBlocks(data);
-      if (filteredData) {
+      if (filteredData && !this.isDuplicateLogChunk(filteredData)) {
         this.client.sendLog(filteredData);
       }
     }
@@ -586,6 +590,51 @@ export class PtyWrapper extends EventEmitter {
     }
 
     return outputLines.join('\n');
+  }
+
+  /**
+   * Check if a log chunk is a duplicate (recently streamed).
+   * Prevents terminal redraws from causing duplicate log entries in the dashboard.
+   *
+   * Uses content normalization and time-based deduplication:
+   * - Strips whitespace and normalizes content for comparison
+   * - Considers chunks with same normalized content within LOG_DEDUP_WINDOW_MS as duplicates
+   * - Cleans up old entries to prevent memory growth
+   */
+  private isDuplicateLogChunk(data: string): boolean {
+    // Normalize: strip excessive whitespace, limit to first 200 chars for hash
+    // This helps catch redraws that might have slight formatting differences
+    const normalized = stripAnsi(data).replace(/\s+/g, ' ').trim().substring(0, 200);
+
+    // Very short chunks (likely control chars or partial output) - allow through
+    if (normalized.length < 10) {
+      return false;
+    }
+
+    // Simple hash using string as key
+    const hash = normalized;
+    const now = Date.now();
+
+    // Check if this chunk was recently streamed
+    const lastSeen = this.recentLogChunks.get(hash);
+    if (lastSeen && (now - lastSeen) < PtyWrapper.LOG_DEDUP_WINDOW_MS) {
+      return true; // Duplicate
+    }
+
+    // Record this chunk
+    this.recentLogChunks.set(hash, now);
+
+    // Cleanup: remove old entries if map is getting large
+    if (this.recentLogChunks.size > PtyWrapper.LOG_DEDUP_MAX_SIZE) {
+      const cutoff = now - PtyWrapper.LOG_DEDUP_WINDOW_MS * 2;
+      for (const [key, timestamp] of this.recentLogChunks) {
+        if (timestamp < cutoff) {
+          this.recentLogChunks.delete(key);
+        }
+      }
+    }
+
+    return false; // Not a duplicate
   }
 
   /**
@@ -943,20 +992,21 @@ export class PtyWrapper extends EventEmitter {
     const spawnPrefix = '->relay:spawn';
     const releasePrefix = '->relay:release';
 
-    // Pattern to strip common line prefixes (bullets, prompts, etc.)
-    // Same prefixes allowed in the message parser
-    const linePrefixPattern = /^(?:[>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■│┃┆┇┊┋╎╏✦]\s*)+/;
-
     for (const line of lines) {
       let trimmed = line.trim();
 
-      // Strip common line prefixes (bullets, prompts) before checking for commands
-      const originalTrimmed = trimmed;
-      trimmed = trimmed.replace(linePrefixPattern, '');
-
-      // Debug: log prefix stripping when spawn detected
-      if (originalTrimmed.includes('->relay:spawn') && originalTrimmed !== trimmed) {
-        console.log(`[pty:${this.config.name}] [SPAWN-DEBUG] Stripped prefix: "${originalTrimmed.substring(0, 50)}" -> "${trimmed.substring(0, 50)}"`);
+      // Strip bullet/prompt prefixes but PRESERVE the ->relay: pattern
+      // Look for ->relay: in the line and only strip what comes before it
+      const relayIdx = trimmed.indexOf('->relay:');
+      if (relayIdx > 0) {
+        // There's content before ->relay: - check if it's just prefix chars
+        const beforeRelay = trimmed.substring(0, relayIdx);
+        // Only strip if the prefix is just bullets/prompts/whitespace
+        if (/^[\s●•◦‣⁃⏺◆◇○□■│┃┆┇┊┋╎╏✦→➜›»$%#*]+$/.test(beforeRelay)) {
+          const originalTrimmed = trimmed;
+          trimmed = trimmed.substring(relayIdx);
+          console.log(`[pty:${this.config.name}] [SPAWN-DEBUG] Stripped prefix: "${originalTrimmed.substring(0, 60)}" -> "${trimmed.substring(0, 60)}"`);
+        }
       }
 
       // Skip escaped commands: \->relay:spawn should not trigger

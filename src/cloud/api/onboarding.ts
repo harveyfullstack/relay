@@ -261,11 +261,17 @@ onboardingRouter.get('/cli/:provider/status/:sessionId', async (req: Request, re
 /**
  * POST /api/onboarding/cli/:provider/complete/:sessionId
  * Mark CLI auth as complete and store credentials
+ *
+ * Handles two modes:
+ * 1. Workspace delegation: Forwards to workspace daemon to complete auth, then fetches credentials
+ * 2. Direct: Uses token from body or session
  */
 onboardingRouter.post('/cli/:provider/complete/:sessionId', async (req: Request, res: Response) => {
   const { provider, sessionId } = req.params;
   const userId = req.session.userId!;
-  const { token } = req.body; // Optional: user can paste token directly
+  const { token, authCode } = req.body; // token for direct mode, authCode for Codex redirect
+
+  console.log(`[onboarding] POST /cli/${provider}/complete/${sessionId} - token: ${token ? 'provided' : 'none'}, authCode: ${authCode ? 'provided' : 'none'}`);
 
   const session = activeSessions.get(sessionId);
   if (!session) {
@@ -277,31 +283,58 @@ onboardingRouter.post('/cli/:provider/complete/:sessionId', async (req: Request,
   }
 
   try {
-    // If token provided directly, use it
     let accessToken = token || session.token;
     let refreshToken = session.refreshToken;
     let tokenExpiresAt = session.tokenExpiresAt;
 
-    // If no token yet, try to get from workspace
-    if (!accessToken && session.workspaceUrl && session.workspaceSessionId) {
-      try {
-        const credsResponse = await fetch(
-          `${session.workspaceUrl}/auth/cli/${provider}/creds/${session.workspaceSessionId}`
-        );
-        if (credsResponse.ok) {
-          const creds = await credsResponse.json() as {
-            token?: string;
-            refreshToken?: string;
-            expiresAt?: string;
-          };
-          accessToken = creds.token;
-          refreshToken = creds.refreshToken;
-          if (creds.expiresAt) {
-            tokenExpiresAt = new Date(creds.expiresAt);
-          }
+    // If using workspace delegation, forward complete request first
+    if (session.workspaceUrl && session.workspaceSessionId) {
+      // Forward authCode to workspace if provided (for Codex-style redirects)
+      if (authCode) {
+        const backendProviderId = provider === 'anthropic' ? 'anthropic' : provider;
+        const targetUrl = `${session.workspaceUrl}/auth/cli/${backendProviderId}/complete/${session.workspaceSessionId}`;
+        console.log('[onboarding] Forwarding complete request to workspace:', targetUrl);
+
+        const completeResponse = await fetch(targetUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ authCode }),
+        });
+
+        if (!completeResponse.ok) {
+          const errorData = await completeResponse.json().catch(() => ({})) as { error?: string };
+          return res.status(completeResponse.status).json({
+            error: errorData.error || 'Failed to complete authentication in workspace',
+          });
         }
-      } catch (err) {
-        console.error('[onboarding] Failed to get credentials from workspace:', err);
+        session.status = 'success';
+      }
+
+      // Fetch credentials from workspace
+      if (!accessToken) {
+        try {
+          const credsResponse = await fetch(
+            `${session.workspaceUrl}/auth/cli/${provider}/creds/${session.workspaceSessionId}`
+          );
+          if (credsResponse.ok) {
+            const creds = await credsResponse.json() as {
+              token?: string;
+              refreshToken?: string;
+              expiresAt?: string;
+            };
+            accessToken = creds.token;
+            refreshToken = creds.refreshToken;
+            if (creds.expiresAt) {
+              tokenExpiresAt = new Date(creds.expiresAt);
+            }
+            console.log('[onboarding] Fetched credentials from workspace:', {
+              hasToken: !!accessToken,
+              hasRefreshToken: !!refreshToken,
+            });
+          }
+        } catch (err) {
+          console.error('[onboarding] Failed to get credentials from workspace:', err);
+        }
       }
     }
 
@@ -415,62 +448,8 @@ onboardingRouter.post('/cli/:provider/code/:sessionId', async (req: Request, res
   });
 });
 
-/**
- * POST /api/onboarding/cli/:provider/complete/:sessionId
- * Complete auth - for providers like Codex, accepts authCode (redirect URL with code)
- * For providers like Claude, just polls for credentials
- */
-onboardingRouter.post('/cli/:provider/complete/:sessionId', async (req: Request, res: Response) => {
-  const { provider, sessionId } = req.params;
-  const { authCode } = req.body || {};
-  const userId = req.session.userId!;
-
-  console.log(`[onboarding] POST /cli/${provider}/complete/${sessionId} - authCode: ${authCode ? 'provided' : 'none'}`);
-
-  const session = activeSessions.get(sessionId);
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found or expired' });
-  }
-
-  if (session.userId !== userId) {
-    return res.status(403).json({ error: 'Unauthorized' });
-  }
-
-  // Forward to workspace daemon
-  if (session.workspaceUrl && session.workspaceSessionId) {
-    try {
-      const backendProviderId = provider === 'anthropic' ? 'anthropic' : provider;
-      const targetUrl = `${session.workspaceUrl}/auth/cli/${backendProviderId}/complete/${session.workspaceSessionId}`;
-      console.log('[onboarding] Forwarding complete request to workspace:', targetUrl);
-
-      // Forward the authCode if provided
-      const completeResponse = await fetch(targetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: authCode ? JSON.stringify({ authCode }) : undefined,
-      });
-
-      if (completeResponse.ok) {
-        session.status = 'success';
-        return res.json({ success: true, message: 'Authentication complete' });
-      }
-
-      const errorData = await completeResponse.json().catch(() => ({})) as { error?: string };
-      return res.status(completeResponse.status).json({
-        error: errorData.error || 'Failed to complete authentication',
-      });
-    } catch (err) {
-      console.error('[onboarding] Failed to complete auth via workspace:', err);
-      return res.status(500).json({
-        error: 'Failed to reach workspace. Please ensure your workspace is running.',
-      });
-    }
-  }
-
-  return res.status(400).json({
-    error: 'No workspace session available. Please try connecting again.',
-  });
-});
+// Note: POST /cli/:provider/complete/:sessionId handler is defined above (lines 269-368)
+// It handles both direct token storage and workspace delegation with authCode forwarding
 
 /**
  * POST /api/onboarding/cli/:provider/cancel/:sessionId

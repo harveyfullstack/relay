@@ -125,7 +125,14 @@ const PLACEHOLDER_TARGETS = new Set([
   'targetagent',
   'someagent',
   'otheragent',
-  'worker',        // Too generic, often used in examples
+  'name',          // Generic placeholder
+  // NOTE: Removed 'lead', 'developer', 'reviewer', 'architect', 'designer' - these are valid agent names!
+  // Only include truly placeholder names that would never be real agents
+  'sender',
+  'agent',
+  'workername',    // ->relay:spawn WorkerName examples
+  'myagent',
+  'youragent',
 ]);
 
 /**
@@ -140,7 +147,7 @@ function isInstructionalText(body: string): boolean {
  * Check if a target name is a placeholder commonly used in documentation/examples.
  * These should not be treated as real message targets.
  */
-function isPlaceholderTarget(target: string): boolean {
+export function isPlaceholderTarget(target: string): boolean {
   return PLACEHOLDER_TARGETS.has(target.toLowerCase());
 }
 

@@ -203,7 +203,8 @@ export function ProviderAuthFlow({
       }
 
       setStatus('success');
-      onSuccess();
+      // Brief delay to show success message before parent unmounts component
+      setTimeout(() => onSuccess(), 1500);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to complete authentication';
       setErrorMessage(msg);
@@ -247,7 +248,7 @@ export function ProviderAuthFlow({
         body: JSON.stringify({ code }),
       });
 
-      const data = await res.json() as { status?: string; error?: string; needsRestart?: boolean };
+      const data = await res.json() as { success?: boolean; status?: string; error?: string; needsRestart?: boolean };
 
       if (!res.ok) {
         // If server indicates we need to restart, show helpful message
@@ -261,7 +262,9 @@ export function ProviderAuthFlow({
 
       setCodeInput('');
 
-      if (data.status === 'success') {
+      // Backend returns { success: true } not { status: 'success' }
+      if (data.success) {
+        // Code was accepted, now complete the auth flow to store credentials
         await handleComplete();
       }
       // Otherwise continue polling

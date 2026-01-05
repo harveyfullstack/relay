@@ -67,6 +67,11 @@ RUN npm install -g @openai/codex
 RUN npm install -g @google/gemini-cli
 RUN npm install -g opencode-ai@latest
 
+# Create symlink for agent-relay CLI (for debugging inside container)
+# The actual CLI is built as part of the app
+RUN ln -sf /app/dist/cli/index.js /usr/local/bin/agent-relay && \
+    chmod +x /app/dist/cli/index.js 2>/dev/null || true
+
 # Create workspace directory
 RUN mkdir -p /workspace /data
 

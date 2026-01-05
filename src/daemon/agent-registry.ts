@@ -164,6 +164,42 @@ export class AgentRegistry {
     return Array.from(this.agents.values());
   }
 
+  /**
+   * Remove an agent from the registry.
+   */
+  remove(agentName: string): boolean {
+    const deleted = this.agents.delete(agentName);
+    if (deleted) {
+      this.save();
+    }
+    return deleted;
+  }
+
+  /**
+   * Remove agents that haven't been seen for longer than the threshold.
+   * @param thresholdMs - Time in milliseconds (default: 24 hours)
+   * @returns Number of agents removed
+   */
+  pruneStale(thresholdMs: number = 24 * 60 * 60 * 1000): number {
+    const cutoff = Date.now() - thresholdMs;
+    let removed = 0;
+
+    for (const [name, record] of this.agents) {
+      const lastSeenTime = new Date(record.lastSeen).getTime();
+      if (lastSeenTime < cutoff) {
+        this.agents.delete(name);
+        removed++;
+        log.info('Pruned stale agent', { name, lastSeen: record.lastSeen });
+      }
+    }
+
+    if (removed > 0) {
+      this.save();
+    }
+
+    return removed;
+  }
+
   private ensureRecord(agentName: string): AgentRecord {
     const existing = this.agents.get(agentName);
     if (existing) return existing;

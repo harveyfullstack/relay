@@ -38,7 +38,8 @@ import { useTrajectory } from './hooks/useTrajectory';
 import { useRecentRepos } from './hooks/useRecentRepos';
 import { usePresence, type UserPresence } from './hooks/usePresence';
 import { useCloudSessionOptional } from './CloudSessionProvider';
-import { api, convertApiDecision } from '../lib/api';
+import { WorkspaceProvider } from './WorkspaceContext';
+import { api, convertApiDecision, setActiveWorkspaceId as setApiWorkspaceId } from '../lib/api';
 import { cloudApi } from '../lib/cloudApi';
 import type { CurrentUser } from './MessageList';
 
@@ -146,6 +147,16 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   const effectiveActiveWorkspaceId = isCloudMode ? activeCloudWorkspaceId : activeWorkspaceId;
   const effectiveIsLoading = isCloudMode ? isLoadingCloudWorkspaces : isOrchestratorLoading;
+
+  // Sync the active workspace ID with the api module for cloud mode proxying
+  useEffect(() => {
+    if (isCloudMode && activeCloudWorkspaceId) {
+      setApiWorkspaceId(activeCloudWorkspaceId);
+    } else if (!isCloudMode) {
+      // Clear the workspace ID when not in cloud mode
+      setApiWorkspaceId(null);
+    }
+  }, [isCloudMode, activeCloudWorkspaceId]);
 
   // Handle workspace selection (works for both cloud and orchestrator)
   const handleEffectiveWorkspaceSelect = useCallback(async (workspace: { id: string; name: string }) => {
@@ -834,6 +845,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   }, [handleSpawnClick, handleNewConversationClick]);
 
   return (
+    <WorkspaceProvider wsUrl={wsUrl}>
     <div className="flex h-screen bg-bg-deep font-sans text-text-primary">
       {/* Mobile Sidebar Overlay */}
       <div
@@ -1240,6 +1252,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         />
       )}
     </div>
+    </WorkspaceProvider>
   );
 }
 

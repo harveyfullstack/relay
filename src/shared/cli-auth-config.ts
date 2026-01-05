@@ -103,6 +103,15 @@ export const CLI_AUTH_CONFIG: Record<string, CLIAuthConfig> = {
         description: 'Trust directory prompt',
       },
       {
+        // "Ready to code here?" permission prompt - asks for file access permission
+        // Shows "Yes, continue" / "No, exit" options with "Enter to confirm"
+        // This is different from trust directory - it's about granting file permissions
+        pattern: /ready\s*to\s*code\s*here|permission\s*to\s*work\s*with\s*your\s*files|yes,?\s*continue/i,
+        response: '\r', // Press enter to accept "Yes, continue" (already selected)
+        delay: 300,
+        description: 'Ready to code permission prompt',
+      },
+      {
         // Fallback: Any "press enter" or "enter to confirm/continue" prompt
         // Keep this LAST so more specific handlers match first
         pattern: /press\s*enter|enter\s*to\s*(confirm|continue|proceed)|hit\s*enter/i,
