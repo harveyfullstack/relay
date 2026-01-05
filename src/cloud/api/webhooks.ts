@@ -25,10 +25,11 @@ function getWorkspaceInternalUrl(publicUrl: string): string {
 
   if (isOnFly && url.includes('.fly.dev')) {
     // Use Fly.io internal networking
-    // ar-583f273b.fly.dev -> http://ar-583f273b.flycast:3888
+    // ar-583f273b.fly.dev -> http://ar-583f273b.internal:3888
+    // .internal uses IPv6 and works by default for apps in the same org
     const appName = url.match(/https?:\/\/([^.]+)\.fly\.dev/)?.[1];
     if (appName) {
-      url = `http://${appName}.flycast:3888`;
+      url = `http://${appName}.internal:3888`;
     }
   }
 
