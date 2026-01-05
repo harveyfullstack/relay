@@ -191,8 +191,9 @@ async function waitForMachineStarted(
 
     try {
       // Use Fly.io's /wait endpoint - blocks until machine reaches target state
+      // timeout is an integer in seconds (max 60)
       const res = await fetch(
-        `https://api.machines.dev/v1/apps/${appName}/machines/${machineId}/wait?state=started&timeout=${waitSeconds}s`,
+        `https://api.machines.dev/v1/apps/${appName}/machines/${machineId}/wait?state=started&timeout=${waitSeconds}`,
         {
           headers: { Authorization: `Bearer ${apiToken}` },
         }
