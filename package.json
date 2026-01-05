@@ -8,15 +8,6 @@
   "bin": {
     "agent-relay": "dist/cli/index.js"
   },
-  "files": [
-    "dist/",
-    "bin/",
-    "scripts/",
-    "install.sh",
-    "README.md",
-    "LICENSE",
-    "docs/"
-  ],
   "publishConfig": {
     "access": "public"
   },
