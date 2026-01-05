@@ -178,41 +178,56 @@ async function waitForMachineStarted(
 ): Promise<void> {
   console.log(`[provisioner] Waiting for machine ${machineId} to start (timeout: ${timeoutSeconds}s)...`);
 
-  try {
-    // Use Fly.io's /wait endpoint - blocks until machine reaches target state
-    const res = await fetch(
-      `https://api.machines.dev/v1/apps/${appName}/machines/${machineId}/wait?state=started&timeout=${timeoutSeconds}`,
-      {
-        headers: { Authorization: `Bearer ${apiToken}` },
-      }
-    );
+  // Fly.io /wait endpoint has max timeout of 60s, so we need to loop for longer waits
+  const maxSingleWait = 60;
+  const startTime = Date.now();
+  const deadline = startTime + timeoutSeconds * 1000;
 
-    if (res.ok) {
-      console.log(`[provisioner] Machine ${machineId} is now started`);
-      return;
-    }
+  while (Date.now() < deadline) {
+    const remainingMs = deadline - Date.now();
+    const waitSeconds = Math.min(maxSingleWait, Math.ceil(remainingMs / 1000));
 
-    // 408 = timeout, machine didn't reach state in time
-    if (res.status === 408) {
-      // Get current state for error message
-      const stateRes = await fetch(
-        `https://api.machines.dev/v1/apps/${appName}/machines/${machineId}`,
-        { headers: { Authorization: `Bearer ${apiToken}` } }
+    if (waitSeconds <= 0) break;
+
+    try {
+      // Use Fly.io's /wait endpoint - blocks until machine reaches target state
+      const res = await fetch(
+        `https://api.machines.dev/v1/apps/${appName}/machines/${machineId}/wait?state=started&timeout=${waitSeconds}s`,
+        {
+          headers: { Authorization: `Bearer ${apiToken}` },
+        }
       );
-      const machine = stateRes.ok ? (await stateRes.json()) as { state: string } : { state: 'unknown' };
-      throw new Error(`Machine ${machineId} did not start within ${timeoutSeconds}s (last state: ${machine.state})`);
-    }
 
-    // Other error
-    const errorText = await res.text();
-    throw new Error(`Wait for machine failed: ${res.status} ${errorText}`);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('did not start')) {
-      throw error;
+      if (res.ok) {
+        console.log(`[provisioner] Machine ${machineId} is now started`);
+        return;
+      }
+
+      // 408 = timeout, machine didn't reach state in time - try again if we have time
+      if (res.status === 408) {
+        console.log(`[provisioner] Machine ${machineId} not ready yet, continuing to wait...`);
+        continue;
+      }
+
+      // Other error
+      const errorText = await res.text();
+      throw new Error(`Wait for machine failed: ${res.status} ${errorText}`);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Wait for machine failed')) {
+        throw error;
+      }
+      console.warn(`[provisioner] Error waiting for machine:`, error);
+      throw new Error(`Failed to wait for machine ${machineId}: ${(error as Error).message}`);
     }
-    console.warn(`[provisioner] Error waiting for machine:`, error);
-    throw new Error(`Failed to wait for machine ${machineId}: ${(error as Error).message}`);
   }
+
+  // Timeout reached - get current state for error message
+  const stateRes = await fetch(
+    `https://api.machines.dev/v1/apps/${appName}/machines/${machineId}`,
+    { headers: { Authorization: `Bearer ${apiToken}` } }
+  );
+  const machine = stateRes.ok ? (await stateRes.json()) as { state: string } : { state: 'unknown' };
+  throw new Error(`Machine ${machineId} did not start within ${timeoutSeconds}s (last state: ${machine.state})`);
 }
 
 /**
