@@ -2409,22 +2409,26 @@ export async function startDashboard(
       if (spawner) {
         const activeWorkers = spawner.getActiveWorkers();
         for (const worker of activeWorkers) {
-          // Get memory usage via ps command
+          // Get memory usage via /proc filesystem
           let rssBytes = 0;
           let cpuPercent = 0;
 
           if (worker.pid) {
             try {
-              const { execSync } = await import('child_process');
-              const output = execSync(`ps -o rss=,pcpu= -p ${worker.pid}`, {
-                encoding: 'utf8',
-                timeout: 3000,
-              }).trim();
-              const parts = output.split(/\s+/);
-              rssBytes = parseInt(parts[0] || '0', 10) * 1024;
-              cpuPercent = parseFloat(parts[1] || '0');
+              // Use /proc filesystem instead of ps command (not available in all containers)
+              const statusPath = `/proc/${worker.pid}/status`;
+              if (fs.existsSync(statusPath)) {
+                const status = fs.readFileSync(statusPath, 'utf8');
+                // Parse VmRSS (Resident Set Size) from /proc/[pid]/status
+                const rssMatch = status.match(/VmRSS:\s+(\d+)\s+kB/);
+                if (rssMatch) {
+                  rssBytes = parseInt(rssMatch[1], 10) * 1024; // Convert kB to bytes
+                }
+              }
+              // Note: CPU percentage requires sampling /proc/[pid]/stat over time
+              // which is more complex. Leaving at 0 for now.
             } catch {
-              // Process may have exited
+              // Process may have exited or /proc not accessible
             }
           }
 
