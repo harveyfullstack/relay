@@ -292,15 +292,22 @@ billingRouter.post('/checkout', requireAuth, async (req, res) => {
       await db.users.update(userId, { plan: tier });
       console.log(`[billing] Admin user ${user.githubUsername} upgraded to ${tier} (free)`);
 
-      // Resize workspaces to match new plan (async)
-      resizeWorkspacesForPlan(userId, tier as PlanType).catch((err) => {
-        console.error(`[billing] Failed to resize workspaces for admin ${user.githubUsername}:`, err);
-      });
+      // Resize workspaces to match new plan (wait for result to inform user)
+      const resizeResult = await resizeWorkspacesForPlan(userId, tier as PlanType);
+
+      // Build success URL with deferred workspace info if any
+      let successUrl = `${config.appUrl}/billing/success?admin=true`;
+      if (resizeResult.deferred.length > 0) {
+        // Encode deferred workspaces info for the frontend to display
+        const deferredInfo = encodeURIComponent(JSON.stringify(resizeResult.deferred));
+        successUrl += `&deferred=${deferredInfo}`;
+      }
 
       // Return a fake session that redirects to success
       return res.json({
         sessionId: 'admin-upgrade',
-        checkoutUrl: `${config.appUrl}/billing/success?admin=true`,
+        checkoutUrl: successUrl,
+        resizeResult, // Also include in response for API consumers
       });
     }
 
@@ -619,7 +626,16 @@ billingRouter.post(
             console.log(`Updated user ${billingEvent.userId} plan to: ${tier}`);
 
             // Resize workspaces to match new plan (async, don't block webhook)
-            resizeWorkspacesForPlan(billingEvent.userId, tier).catch((err) => {
+            resizeWorkspacesForPlan(billingEvent.userId, tier).then((result) => {
+              if (result.deferred.length > 0) {
+                console.log(`[billing] User ${billingEvent.userId} upgrade: ${result.resized} resized, ${result.deferred.length} deferred (have active agents)`);
+                result.deferred.forEach((d) => {
+                  console.log(`[billing]   - "${d.workspaceName}" has ${d.agentCount} agent(s), will resize on next restart`);
+                });
+              } else {
+                console.log(`[billing] User ${billingEvent.userId} upgrade: all ${result.resized} workspace(s) resized immediately`);
+              }
+            }).catch((err) => {
               console.error(`Failed to resize workspaces for user ${billingEvent.userId}:`, err);
             });
           } else {

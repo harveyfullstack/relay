@@ -8,9 +8,16 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { cloudApi } from '../lib/cloudApi';
 
+interface DeferredWorkspace {
+  workspaceId: string;
+  workspaceName: string;
+  agentCount: number;
+}
+
 export interface BillingResultProps {
   type: 'success' | 'canceled';
   sessionId?: string;
+  deferredWorkspaces?: DeferredWorkspace[];
   onClose: () => void;
 }
 
