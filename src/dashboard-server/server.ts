@@ -2411,7 +2411,7 @@ export async function startDashboard(
         for (const worker of activeWorkers) {
           // Get memory usage via /proc filesystem
           let rssBytes = 0;
-          let cpuPercent = 0;
+          const cpuPercent = 0;
 
           if (worker.pid) {
             try {
