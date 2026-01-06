@@ -272,8 +272,12 @@ export async function createServer(): Promise<CloudServer> {
   app.use('/api/workspaces', workspacesRouter);
   app.use('/api/repos', reposRouter);
   app.use('/api/onboarding', onboardingRouter);
+  // Git router must be mounted before teamsRouter (which is at /api)
+  // to prevent teamsRouter's requireAuth from intercepting git token requests
+  app.use('/api/git', gitRouter);
   // Teams router handles /workspaces/:id/members and /invites routes
   // Must be mounted at /api since routes include full paths
+  // WARNING: This catches ALL /api/* requests not matched above, so mount specific routers first!
   app.use('/api', teamsRouter);
   app.use('/api/billing', billingRouter);
   app.use('/api/usage', usageRouter);
@@ -284,7 +288,6 @@ export async function createServer(): Promise<CloudServer> {
   app.use('/api/github-app', githubAppRouter);
   app.use('/api/auth/nango', nangoAuthRouter);
   app.use('/api/auth/codex-helper', codexAuthHelperRouter);
-  app.use('/api/git', gitRouter);
 
   // Test helper routes (only available in non-production)
   if (process.env.NODE_ENV !== 'production') {
