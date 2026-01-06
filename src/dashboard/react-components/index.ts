@@ -21,7 +21,7 @@ export { DecisionQueue, type DecisionQueueProps, type Decision } from './Decisio
 export { ServerCard, type ServerCardProps, type ServerInfo } from './ServerCard';
 export { FleetOverview, type FleetOverviewProps } from './FleetOverview';
 export { BroadcastComposer, type BroadcastComposerProps, type BroadcastTarget } from './BroadcastComposer';
-export { SettingsPanel, defaultSettings, type SettingsPanelProps, type Settings } from './SettingsPanel';
+export { defaultSettings, type Settings } from './settings';
 export { NotificationToast, useToasts, type NotificationToastProps, type Toast } from './NotificationToast';
 export { ThemeProvider, ThemeToggle, useTheme, type ThemeProviderProps, type Theme, type ResolvedTheme } from './ThemeProvider';
 export { App, appStyles, type AppProps } from './App';
