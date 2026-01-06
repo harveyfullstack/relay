@@ -473,6 +473,34 @@ workspacesRouter.post('/', checkWorkspaceLimit, async (req: Request, res: Respon
     return res.status(400).json({ error: 'Repositories array is required' });
   }
 
+  // Check if any of the repos already have a workspace the user can access
+  // This prevents creating duplicate workspaces for the same repo
+  for (const repoFullName of repositories as string[]) {
+    const existingRepos = await db.repositories.findByGithubFullName(repoFullName);
+    for (const existingRepo of existingRepos) {
+      if (existingRepo.workspaceId) {
+        const accessResult = await checkWorkspaceAccess(userId, existingRepo.workspaceId);
+        if (accessResult.hasAccess) {
+          const existingWorkspace = await db.workspaces.findById(existingRepo.workspaceId);
+          if (existingWorkspace) {
+            console.log(`[workspaces/create] User ${userId.substring(0, 8)} has access to existing workspace ${existingWorkspace.id.substring(0, 8)} for repo ${repoFullName}`);
+            return res.status(409).json({
+              error: 'A workspace already exists for one of these repositories',
+              existingWorkspace: {
+                id: existingWorkspace.id,
+                name: existingWorkspace.name,
+                publicUrl: existingWorkspace.publicUrl,
+                accessType: accessResult.accessType,
+              },
+              conflictingRepo: repoFullName,
+              message: `You already have ${accessResult.accessType} access to workspace "${existingWorkspace.name}" which includes ${repoFullName}.`,
+            });
+          }
+        }
+      }
+    }
+  }
+
   // Verify user has credentials for all providers
   const credentials = await db.credentials.findByUserId(userId);
   const connectedProviders = new Set(credentials.map((c) => c.provider));
@@ -1435,6 +1463,30 @@ workspacesRouter.post('/quick', checkWorkspaceLimit, async (req: Request, res: R
   }
 
   try {
+    // Check if a workspace already exists for this repo
+    // If so, check if user has access and return it instead of creating a duplicate
+    const existingRepos = await db.repositories.findByGithubFullName(repositoryFullName);
+    for (const existingRepo of existingRepos) {
+      if (existingRepo.workspaceId) {
+        // Check if user has access to this workspace
+        const accessResult = await checkWorkspaceAccess(userId, existingRepo.workspaceId);
+        if (accessResult.hasAccess) {
+          const existingWorkspace = await db.workspaces.findById(existingRepo.workspaceId);
+          if (existingWorkspace) {
+            console.log(`[workspaces/quick] User ${userId.substring(0, 8)} has access to existing workspace ${existingWorkspace.id.substring(0, 8)} for repo ${repositoryFullName}`);
+            return res.status(200).json({
+              workspaceId: existingWorkspace.id,
+              status: existingWorkspace.status,
+              publicUrl: existingWorkspace.publicUrl,
+              existingWorkspace: true,
+              accessType: accessResult.accessType,
+              message: `You already have ${accessResult.accessType} access to a workspace for this repository.`,
+            });
+          }
+        }
+      }
+    }
+
     // Get user's connected providers (optional now)
     const credentials = await db.credentials.findByUserId(userId);
     const providers = credentials
