@@ -15,8 +15,12 @@
 import { exec, execSync, spawn, ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
-import { RelayClient } from './client.js';
+import { BaseWrapper, type BaseWrapperConfig } from './base-wrapper.js';
 import { OutputParser, type ParsedCommand, type ParsedSummary, parseSummaryWithDetails, parseSessionEndFromOutput, type SessionEndMarker } from './parser.js';
+import {
+  hasContinuityCommand,
+  parseContinuityCommand,
+} from '../continuity/index.js';
 import { InboxManager } from './inbox.js';
 import type { SendPayload, SendMeta } from '../protocol/types.js';
 import { SqliteStorageAdapter } from '../storage/sqlite-adapter.js';
@@ -35,20 +39,12 @@ import {
 } from '../trajectory/integration.js';
 import { escapeForShell } from '../bridge/utils.js';
 import {
-  getContinuityManager,
-  parseContinuityCommand,
-  hasContinuityCommand,
-  type ContinuityManager,
-} from '../continuity/index.js';
-import {
   type QueuedMessage,
   type CliType,
-  type InjectionMetrics,
   type InjectionCallbacks,
   stripAnsi,
   sleep,
   getDefaultRelayPrefix,
-  createInjectionMetrics,
   buildInjectionString,
   injectWithRetry as sharedInjectWithRetry,
   INJECTION_CONSTANTS,
@@ -68,21 +64,13 @@ const DEBUG_LOG_TRUNCATE_LENGTH = 40;
 /** Maximum characters to show in relay command log truncation */
 const RELAY_LOG_TRUNCATE_LENGTH = 50;
 
-export interface TmuxWrapperConfig {
-  name: string;
-  command: string;
-  args?: string[];
-  socketPath?: string;
+export interface TmuxWrapperConfig extends BaseWrapperConfig {
   cols?: number;
   rows?: number;
-  cwd?: string;
-  env?: Record<string, string>;
   /** Optional program identifier (e.g., 'claude', 'gpt-4o') */
   program?: string;
   /** Optional model identifier (e.g., 'claude-3-opus') */
   model?: string;
-  /** Optional task/role description for dashboard/registry */
-  task?: string;
   /** Use file-based inbox in addition to injection */
   useInbox?: boolean;
   /** Custom inbox directory */
@@ -103,26 +91,12 @@ export interface TmuxWrapperConfig {
   inputWaitTimeoutMs?: number;
   /** Polling interval when waiting for clear input (ms) */
   inputWaitPollMs?: number;
-  /** CLI type for special handling (auto-detected from command if not set) */
-  cliType?: 'claude' | 'codex' | 'gemini' | 'droid' | 'opencode' | 'other';
   /** Enable tmux mouse mode for scroll passthrough (default: true) */
   mouseMode?: boolean;
-  /** Relay prefix pattern (default: '->relay:') */
-  relayPrefix?: string;
-  /** Callback for spawn commands (@relay:spawn WorkerName cli "task") */
-  onSpawn?: (name: string, cli: string, task: string) => Promise<void>;
-  /** Callback for release commands (@relay:release WorkerName) */
-  onRelease?: (name: string) => Promise<void>;
   /** Max time to wait for stable pane output before injection (ms) */
   outputStabilityTimeoutMs?: number;
   /** Poll interval when checking pane stability before injection (ms) */
   outputStabilityPollMs?: number;
-  /** Stream output to daemon for dashboard log viewing (default: true) */
-  streamLogs?: boolean;
-  /** Resume from a previous agent ID (for crash recovery) */
-  resumeAgentId?: string;
-  /** Dashboard port for API-based spawn/release (preferred over callbacks) */
-  dashboardPort?: number;
 }
 
 /**
@@ -134,15 +108,13 @@ export function getDefaultPrefix(_cliType: CliType): string {
   return getDefaultRelayPrefix();
 }
 
-export class TmuxWrapper {
-  private config: TmuxWrapperConfig;
+export class TmuxWrapper extends BaseWrapper {
+  protected override config: TmuxWrapperConfig;
   private sessionName: string;
-  private client: RelayClient;
   private parser: OutputParser;
   private inbox?: InboxManager;
   private storage?: SqliteStorageAdapter;
   private storageReady: Promise<boolean>; // Resolves true if storage initialized, false if failed
-  private running = false;
   private pollTimer?: NodeJS.Timeout;
   private attachProcess?: ChildProcess;
   private lastCapturedOutput = '';
@@ -150,25 +122,14 @@ export class TmuxWrapper {
   private lastActivityTime = Date.now();
   private activityState: 'active' | 'idle' | 'disconnected' = 'disconnected';
   private recentlySentMessages: Map<string, number> = new Map();
-  private sentMessageHashes: Set<string> = new Set(); // Permanent dedup
-  private messageQueue: QueuedMessage[] = [];
-  private isInjecting = false;
   // Track processed output to avoid re-parsing
   private processedOutputLength = 0;
   private lastLoggedLength = 0; // Track length for incremental log streaming
   private lastDebugLog = 0;
-  private cliType: CliType;
-  private relayPrefix: string;
   private lastSummaryHash = ''; // Dedup summary saves
-  private lastSummaryRawContent = ''; // Dedup invalid JSON error logging
-  private sessionEndProcessed = false; // Track if we've already processed session end
-  private sessionEndData?: SessionEndMarker; // Store SESSION_END data for handoff
   private pendingRelayCommands: ParsedCommand[] = [];
   private queuedMessageHashes: Set<string> = new Set(); // For offline queue dedup
   private readonly MAX_PENDING_RELAY_COMMANDS = 50;
-  private processedSpawnCommands: Set<string> = new Set(); // Dedup spawn commands
-  private processedReleaseCommands: Set<string> = new Set(); // Dedup release commands
-  private pendingFencedSpawn: { name: string; cli: string; taskLines: string[] } | null = null; // Track multi-line spawn task
   private receivedMessageIdSet: Set<string> = new Set();
   private receivedMessageIdOrder: string[] = [];
   private readonly MAX_RECEIVED_MESSAGES = 2000;
@@ -177,13 +138,10 @@ export class TmuxWrapper {
   private lastDetectedPhase?: PDEROPhase; // Track last auto-detected PDERO phase
   private seenToolCalls: Set<string> = new Set(); // Dedup tool call trajectory events
   private seenErrors: Set<string> = new Set(); // Dedup error trajectory events
-  private continuity?: ContinuityManager; // Session continuity management
-  private processedContinuityCommands: Set<string> = new Set(); // Dedup continuity commands
-  private agentId?: string; // Unique agent ID for resume functionality
-  private injectionMetrics: InjectionMetrics = createInjectionMetrics(); // Track injection reliability
 
   constructor(config: TmuxWrapperConfig) {
-    this.config = {
+    // Merge defaults with config
+    const mergedConfig: TmuxWrapperConfig = {
       cols: process.stdout.columns || 120,
       rows: process.stdout.rows || 40,
       pollInterval: 200, // Slightly slower polling since we're not displaying
@@ -199,26 +157,9 @@ export class TmuxWrapper {
       ...config,
     };
 
-    // Detect CLI type from command for special handling
-    const cmdLower = config.command.toLowerCase();
-    if (config.cliType) {
-      this.cliType = config.cliType;
-    } else if (cmdLower.includes('gemini')) {
-      this.cliType = 'gemini';
-    } else if (cmdLower.includes('codex')) {
-      this.cliType = 'codex';
-    } else if (cmdLower.includes('claude')) {
-      this.cliType = 'claude';
-    } else if (cmdLower.includes('droid')) {
-      this.cliType = 'droid';
-    } else if (cmdLower.includes('opencode')) {
-      this.cliType = 'opencode';
-    } else {
-      this.cliType = 'other';
-    }
-
-    // Determine relay prefix: explicit config > auto-detect from CLI type
-    this.relayPrefix = config.relayPrefix ?? getDefaultPrefix(this.cliType);
+    // Call parent constructor (initializes client, cliType, relayPrefix, continuity)
+    super(mergedConfig);
+    this.config = mergedConfig;
 
     // Session name (one agent per name - starting a duplicate kills the existing one)
     this.sessionName = `relay-${config.name}`;
@@ -235,17 +176,6 @@ export class TmuxWrapper {
         this.logStderr(`Auto-detected role: ${detectedTask.substring(0, 60)}...`, true);
       }
     }
-
-    this.client = new RelayClient({
-      agentName: config.name,
-      socketPath: config.socketPath,
-      cli: this.cliType,
-      program: this.config.program,
-      model: this.config.model,
-      task: detectedTask,
-      workingDirectory: this.config.cwd ?? process.cwd(),
-      quiet: true, // Keep stdout clean; we log to stderr via wrapper
-    });
 
     this.parser = new OutputParser({ prefix: this.relayPrefix });
 
@@ -270,14 +200,6 @@ export class TmuxWrapper {
     // Initialize trajectory tracking via trail CLI
     this.trajectory = getTrajectoryIntegration(projectPaths.projectId, config.name);
 
-    // Initialize continuity manager for session persistence
-    this.continuity = getContinuityManager({ defaultCli: this.cliType });
-
-    // Handle incoming messages from relay
-    this.client.onMessage = (from: string, payload: SendPayload, messageId: string, meta?: SendMeta, originalTo?: string) => {
-      this.handleIncomingMessage(from, payload, messageId, meta, originalTo);
-    };
-
     this.client.onStateChange = (state) => {
       // Only log to stderr, never stdout (user is in tmux)
       if (state === 'READY') {
@@ -291,6 +213,24 @@ export class TmuxWrapper {
         this.logStderr('Connecting to relay daemon...');
       }
     };
+  }
+
+  // =========================================================================
+  // Abstract method implementations
+  // =========================================================================
+
+  /**
+   * Inject content into the tmux session via paste
+   */
+  protected async performInjection(content: string): Promise<void> {
+    await this.pasteLiteral(content);
+  }
+
+  /**
+   * Get cleaned output for parsing (strip ANSI codes)
+   */
+  protected getCleanOutput(): string {
+    return stripAnsi(this.lastCapturedOutput);
   }
 
   /**
@@ -539,9 +479,9 @@ export class TmuxWrapper {
   }
 
   /**
-   * Initialize agent ID for continuity/resume functionality
+   * Initialize agent ID for continuity/resume functionality (uses logStderr for tmux)
    */
-  private async initializeAgentId(): Promise<void> {
+  protected override async initializeAgentId(): Promise<void> {
     if (!this.continuity) return;
 
     try {
@@ -832,67 +772,6 @@ export class TmuxWrapper {
   }
 
   /**
-   * Join continuation lines after ->relay commands.
-   * Claude Code and other TUIs insert real newlines in output, causing
-   * ->relay messages to span multiple lines. This joins indented
-   * continuation lines back to the ->relay line.
-   */
-  private joinContinuationLines(content: string): string {
-    const lines = content.split('\n');
-    const result: string[] = [];
-
-    // Pattern to detect relay OR continuity command line (with optional bullet prefix)
-    // Must handle both ->relay: and ->continuity: commands for multi-line messages
-    const escapedPrefix = escapeRegex(this.relayPrefix);
-    const relayPattern = new RegExp(
-      `^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■]\\s*)*)?(?:${escapedPrefix}|->continuity:)`
-    );
-    // Pattern to detect a continuation line (starts with spaces, no bullet/command)
-    const continuationPattern = /^[ \t]+[^>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■\s]/;
-    // Pattern to detect a new block/bullet (stops continuation)
-    const newBlockPattern = /^(?:\s*)?[>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■]/;
-
-    let i = 0;
-    while (i < lines.length) {
-      const line = lines[i];
-
-      // Check if this is a ->relay line
-      if (relayPattern.test(line)) {
-        let joined = line;
-        let j = i + 1;
-
-        // Look ahead for continuation lines
-        while (j < lines.length) {
-          const nextLine = lines[j];
-
-          // Empty line stops continuation
-          if (nextLine.trim() === '') break;
-
-          // New bullet/block stops continuation
-          if (newBlockPattern.test(nextLine)) break;
-
-          // Check if it looks like a continuation (indented text)
-          if (continuationPattern.test(nextLine)) {
-            // Join with newline to preserve multi-line message content
-            joined += '\n' + nextLine.trim();
-            j++;
-          } else {
-            break;
-          }
-        }
-
-        result.push(joined);
-        i = j; // Skip the lines we joined
-      } else {
-        result.push(line);
-        i++;
-      }
-    }
-
-    return result.join('\n');
-  }
-
-  /**
    * Record recent activity and transition back to active if needed.
    */
   private markActivity(): void {
@@ -924,9 +803,9 @@ export class TmuxWrapper {
   }
 
   /**
-   * Send relay command to daemon
+   * Send relay command to daemon (overrides BaseWrapper for offline queue support)
    */
-  private sendRelayCommand(cmd: ParsedCommand): void {
+  protected override sendRelayCommand(cmd: ParsedCommand): void {
     const msgHash = `${cmd.to}:${cmd.body}`;
 
     // Permanent dedup - never send the same message twice (silent)
@@ -1056,10 +935,10 @@ export class TmuxWrapper {
   }
 
   /**
-   * Save a parsed summary to the continuity ledger.
+   * Save a parsed summary to the continuity ledger (uses logStderr for tmux).
    * Maps summary fields to ledger fields for session recovery.
    */
-  private async saveSummaryToLedger(summary: ParsedSummary): Promise<void> {
+  protected override async saveSummaryToLedger(summary: ParsedSummary): Promise<void> {
     if (!this.continuity) return;
 
     const updates: Record<string, unknown> = {};
@@ -1098,7 +977,7 @@ export class TmuxWrapper {
    *   ->continuity:uncertain "..."  - Mark item as uncertain
    *   ->continuity:handoff <<<...>>> - Create explicit handoff
    */
-  private async parseContinuityCommands(content: string): Promise<void> {
+  protected override async parseContinuityCommands(content: string): Promise<void> {
     if (!this.continuity) return;
     if (!hasContinuityCommand(content)) return;
 
@@ -1192,7 +1071,7 @@ export class TmuxWrapper {
   /**
    * Execute spawn via API (if dashboardPort set) or callback
    */
-  private async executeSpawn(name: string, cli: string, task: string): Promise<void> {
+  protected override async executeSpawn(name: string, cli: string, task: string): Promise<void> {
     if (this.config.dashboardPort) {
       // Use dashboard API for spawning (works from any context, no terminal required)
       try {
@@ -1223,7 +1102,7 @@ export class TmuxWrapper {
   /**
    * Execute release via API (if dashboardPort set) or callback
    */
-  private async executeRelease(name: string): Promise<void> {
+  protected override async executeRelease(name: string): Promise<void> {
     if (this.config.dashboardPort) {
       // Use dashboard API for release (works from any context, no terminal required)
       try {
@@ -1258,7 +1137,7 @@ export class TmuxWrapper {
    *                        can span multiple lines>>>
    *   ->relay:release WorkerName
    */
-  private parseSpawnReleaseCommands(content: string): void {
+  protected override parseSpawnReleaseCommands(content: string): void {
     // Only process if we have API or callbacks configured
     const canSpawn = this.config.dashboardPort || this.config.onSpawn;
     const canRelease = this.config.dashboardPort || this.config.onRelease;
@@ -1404,7 +1283,7 @@ export class TmuxWrapper {
    * @param originalTo - The original 'to' field from sender. '*' indicates this was a broadcast message.
    *                     Agents should reply to originalTo to maintain channel routing (e.g., respond to #general, not DM).
    */
-  private handleIncomingMessage(from: string, payload: SendPayload, messageId: string, meta?: SendMeta, originalTo?: string): void {
+  protected override handleIncomingMessage(from: string, payload: SendPayload, messageId: string, meta?: SendMeta, originalTo?: string): void {
     if (this.hasSeenIncoming(messageId)) {
       this.logStderr(`← ${from}: duplicate delivery (${messageId.substring(0, 8)})`);
       return;
