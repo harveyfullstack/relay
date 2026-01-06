@@ -539,7 +539,9 @@ export class PtyWrapper extends EventEmitter {
     if (cleanContent.length > this.lastContinuityParsedLength) {
       const lookbackStart = Math.max(0, this.lastContinuityParsedLength - 500);
       const contentToParse = cleanContent.substring(lookbackStart);
-      this.parseContinuityCommands(contentToParse).catch(err => {
+      // Join continuation lines for multi-line fenced commands
+      const joinedContent = this.joinContinuationLines(contentToParse);
+      this.parseContinuityCommands(joinedContent).catch(err => {
         console.error(`[pty:${this.config.name}] Continuity command parsing error:`, err);
       });
       this.lastContinuityParsedLength = cleanContent.length;
@@ -1749,5 +1751,64 @@ export class PtyWrapper extends EventEmitter {
    */
   get pendingMessageCount(): number {
     return this.messageQueue.length;
+  }
+
+  /**
+   * Join continuation lines after ->relay or ->continuity commands.
+   * TUIs like Claude Code insert real newlines in output, causing
+   * messages to span multiple lines. This joins indented
+   * continuation lines back to the command line.
+   */
+  private joinContinuationLines(content: string): string {
+    const lines = content.split('\n');
+    const result: string[] = [];
+
+    // Pattern to detect relay OR continuity command line (with optional bullet prefix)
+    const commandPattern = new RegExp(
+      `^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■]\\s*)*)?(?:${this.relayPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|->continuity:)`
+    );
+    // Pattern to detect a continuation line (starts with spaces, no bullet/command)
+    const continuationPattern = /^[ \t]+[^>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■\s]/;
+    // Pattern to detect a new block/bullet (stops continuation)
+    const newBlockPattern = /^(?:\s*)?[>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■]/;
+
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // Check if this is a command line
+      if (commandPattern.test(line)) {
+        let joined = line;
+        let j = i + 1;
+
+        // Look ahead for continuation lines
+        while (j < lines.length) {
+          const nextLine = lines[j];
+
+          // Empty line stops continuation
+          if (nextLine.trim() === '') break;
+
+          // New bullet/block stops continuation
+          if (newBlockPattern.test(nextLine)) break;
+
+          // Check if it looks like a continuation (indented text)
+          if (continuationPattern.test(nextLine)) {
+            // Join with newline to preserve multi-line message content
+            joined += '\n' + nextLine.trim();
+            j++;
+          } else {
+            break;
+          }
+        }
+
+        result.push(joined);
+        i = j; // Skip the lines we joined
+      } else {
+        result.push(line);
+        i++;
+      }
+    }
+
+    return result.join('\n');
   }
 }

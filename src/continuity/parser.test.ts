@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSaveContent, parseHandoffContent } from './parser.js';
+import { parseSaveContent, parseHandoffContent, parseContinuityCommand, hasContinuityCommand } from './parser.js';
 
 describe('parseSaveContent', () => {
   describe('plain text format', () => {
@@ -133,6 +133,104 @@ Blocked: API not ready`;
       expect(result.completed).toContain('Identified the issue');
       expect(result.completed).toContain('Created test cases');
       expect(result.inProgress).toContain('Implementation');
+    });
+  });
+});
+
+describe('parseContinuityCommand', () => {
+  describe('save command', () => {
+    it('should parse save command with fenced content', () => {
+      const output = `Some output before
+->continuity:save <<<
+Current task: Testing fix
+Completed: Item 1, Item 2
+In progress: Item 3
+>>>
+Some output after`;
+
+      const cmd = parseContinuityCommand(output);
+
+      expect(cmd).not.toBeNull();
+      expect(cmd!.type).toBe('save');
+      expect(cmd!.content).toContain('Current task: Testing fix');
+      expect(cmd!.createHandoff).toBe(false);
+    });
+
+    it('should parse save command with --handoff flag', () => {
+      const output = `->continuity:save --handoff <<<
+Current task: Testing
+>>>`;
+
+      const cmd = parseContinuityCommand(output);
+
+      expect(cmd).not.toBeNull();
+      expect(cmd!.type).toBe('save');
+      expect(cmd!.createHandoff).toBe(true);
+    });
+
+    it('should parse save command inline (single line)', () => {
+      const output = '->continuity:save <<<Current task: Quick save>>>';
+
+      const cmd = parseContinuityCommand(output);
+
+      expect(cmd).not.toBeNull();
+      expect(cmd!.type).toBe('save');
+      expect(cmd!.content).toBe('Current task: Quick save');
+    });
+
+    it('should extract content correctly and parseSaveContent should parse it', () => {
+      const output = `->continuity:save <<<
+Current task: Implement authentication
+Completed: Login form, Validation
+In progress: Session handling
+>>>`;
+
+      const cmd = parseContinuityCommand(output);
+      expect(cmd).not.toBeNull();
+
+      // Now parse the extracted content
+      const parsed = parseSaveContent(cmd!.content!);
+
+      expect(parsed.currentTask).toBe('Implement authentication');
+      expect(parsed.completed).toEqual(['Login form', 'Validation']);
+      expect(parsed.inProgress).toEqual(['Session handling']);
+    });
+  });
+
+  describe('load command', () => {
+    it('should detect load command', () => {
+      const output = 'Some text\n->continuity:load\nMore text';
+
+      const cmd = parseContinuityCommand(output);
+
+      expect(cmd).not.toBeNull();
+      expect(cmd!.type).toBe('load');
+    });
+  });
+
+  describe('search command', () => {
+    it('should parse search with quoted query', () => {
+      const output = '->continuity:search "authentication patterns"';
+
+      const cmd = parseContinuityCommand(output);
+
+      expect(cmd).not.toBeNull();
+      expect(cmd!.type).toBe('search');
+      expect(cmd!.query).toBe('authentication patterns');
+    });
+  });
+
+  describe('hasContinuityCommand', () => {
+    it('should return true when save command present', () => {
+      expect(hasContinuityCommand('->continuity:save <<<test>>>')).toBe(true);
+    });
+
+    it('should return true when load command present', () => {
+      expect(hasContinuityCommand('prefix ->continuity:load suffix')).toBe(true);
+    });
+
+    it('should return false when no command present', () => {
+      expect(hasContinuityCommand('regular output without commands')).toBe(false);
     });
   });
 });

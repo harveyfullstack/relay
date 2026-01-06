@@ -149,9 +149,15 @@ export class ContinuityManager {
   ): Promise<Ledger> {
     await this.initialize();
 
-    // Parse content if string
-    const updates =
-      typeof content === 'string' ? parseSaveContent(content) : content;
+    // Parse content if string, otherwise filter placeholders from object input
+    // This ensures placeholder values like "...", "task1", etc. never get saved
+    let updates: Partial<Ledger>;
+    if (typeof content === 'string') {
+      updates = parseSaveContent(content);
+    } else {
+      // Filter placeholders from object input (e.g., from [[SUMMARY]] blocks)
+      updates = this.filterUpdatesPlaceholders(content);
+    }
 
     // Get or create existing ledger
     let ledger = await this.ledgerStore.load(agentName);
@@ -444,6 +450,50 @@ export class ContinuityManager {
       decisions: handoff.decisions.filter(d => !isPlaceholderValue(d.decision)),
       learnings: handoff.learnings ? filterPlaceholders(handoff.learnings) : undefined,
     };
+  }
+
+  /**
+   * Filter placeholder values from ledger updates (for object input to saveLedger).
+   * This ensures placeholder values like "...", "task1", etc. don't get saved.
+   */
+  private filterUpdatesPlaceholders(updates: Partial<Ledger>): Partial<Ledger> {
+    const filtered: Partial<Ledger> = { ...updates };
+
+    // Filter string fields
+    if (filtered.currentTask !== undefined) {
+      filtered.currentTask = isPlaceholderValue(filtered.currentTask) ? undefined : filtered.currentTask;
+      if (filtered.currentTask === undefined) delete filtered.currentTask;
+    }
+
+    // Filter array fields
+    if (filtered.completed) {
+      filtered.completed = filterPlaceholders(filtered.completed);
+      if (filtered.completed.length === 0) delete filtered.completed;
+    }
+    if (filtered.inProgress) {
+      filtered.inProgress = filterPlaceholders(filtered.inProgress);
+      if (filtered.inProgress.length === 0) delete filtered.inProgress;
+    }
+    if (filtered.blocked) {
+      filtered.blocked = filterPlaceholders(filtered.blocked);
+      if (filtered.blocked.length === 0) delete filtered.blocked;
+    }
+    if (filtered.uncertainItems) {
+      filtered.uncertainItems = filterPlaceholders(filtered.uncertainItems);
+      if (filtered.uncertainItems.length === 0) delete filtered.uncertainItems;
+    }
+
+    // Filter complex array fields
+    if (filtered.fileContext) {
+      filtered.fileContext = filtered.fileContext.filter(f => !isPlaceholderValue(f.path));
+      if (filtered.fileContext.length === 0) delete filtered.fileContext;
+    }
+    if (filtered.keyDecisions) {
+      filtered.keyDecisions = filtered.keyDecisions.filter(d => !isPlaceholderValue(d.decision));
+      if (filtered.keyDecisions.length === 0) delete filtered.keyDecisions;
+    }
+
+    return filtered;
   }
 
   /**

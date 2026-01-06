@@ -841,10 +841,11 @@ export class TmuxWrapper {
     const lines = content.split('\n');
     const result: string[] = [];
 
-    // Pattern to detect relay command line (with optional bullet prefix)
+    // Pattern to detect relay OR continuity command line (with optional bullet prefix)
+    // Must handle both ->relay: and ->continuity: commands for multi-line messages
     const escapedPrefix = escapeRegex(this.relayPrefix);
     const relayPattern = new RegExp(
-      `^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■]\\s*)*)?${escapedPrefix}`
+      `^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■]\\s*)*)?(?:${escapedPrefix}|->continuity:)`
     );
     // Pattern to detect a continuation line (starts with spaces, no bullet/command)
     const continuationPattern = /^[ \t]+[^>$%#→➜›»●•◦‣⁃\-*⏺◆◇○□■\s]/;

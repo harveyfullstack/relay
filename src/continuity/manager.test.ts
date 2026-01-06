@@ -229,24 +229,42 @@ describe('ContinuityManager', () => {
 
   describe('cleanupPlaceholders', () => {
     it('cleans placeholder data from ledgers', async () => {
-      // Create ledger with placeholder data
+      // saveLedger now filters placeholders on save, so this tests legacy data cleanup
+      // First create a clean ledger
       await manager.saveLedger('DirtyAgent', {
-        currentTask: 'What you\'re working on',
-        completed: ['What you\'ve done', 'Real task'],
-        inProgress: ['task1', 'task2', 'Real in progress'],
+        currentTask: 'Real task',
+        completed: ['Real task'],
+        inProgress: ['Real in progress'],
       });
 
-      // Run cleanup
+      // Verify clean data was saved
+      let ledger = await manager.getLedger('DirtyAgent');
+      expect(ledger!.currentTask).toBe('Real task');
+
+      // Run cleanup (should report 0 since data is already clean)
       const result = await manager.cleanupPlaceholders();
+      expect(result.cleaned).toBe(0);
 
-      expect(result.cleaned).toBe(1);
-      expect(result.agents).toContain('DirtyAgent');
-
-      // Verify cleaned ledger
-      const ledger = await manager.getLedger('DirtyAgent');
-      expect(ledger!.currentTask).toBe('');
+      // Verify ledger is unchanged
+      ledger = await manager.getLedger('DirtyAgent');
+      expect(ledger!.currentTask).toBe('Real task');
       expect(ledger!.completed).toEqual(['Real task']);
       expect(ledger!.inProgress).toEqual(['Real in progress']);
+    });
+
+    it('filters placeholder values on save', async () => {
+      // Test that placeholders are filtered when saving
+      await manager.saveLedger('FilterTestAgent', {
+        currentTask: 'What you\'re working on', // placeholder - should be filtered
+        completed: ['What you\'ve done', 'Real task'], // mixed - should keep only 'Real task'
+        inProgress: ['task1', 'task2', 'Real in progress'], // mixed - should keep only 'Real in progress'
+      });
+
+      // Verify placeholders were filtered on save
+      const ledger = await manager.getLedger('FilterTestAgent');
+      expect(ledger!.currentTask).toBe(''); // filtered to empty
+      expect(ledger!.completed).toEqual(['Real task']); // placeholder removed
+      expect(ledger!.inProgress).toEqual(['Real in progress']); // placeholders removed
     });
   });
 });
