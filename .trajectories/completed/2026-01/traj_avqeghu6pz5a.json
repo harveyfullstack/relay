@@ -24,17 +24,17 @@
       "agentName": "Lead",
       "startedAt": "2026-01-05T23:14:00.911Z",
       "events": [],
-      "endedAt": "2026-01-06T06:24:07.897Z"
+      "endedAt": "2026-01-05T23:44:34.432Z"
     }
   ],
   "commits": [],
   "filesChanged": [],
   "projectId": "84085b56a3fa",
   "tags": [],
-  "completedAt": "2026-01-06T06:24:07.897Z",
+  "completedAt": "2026-01-05T23:44:34.432Z",
   "retrospective": {
-    "summary": "Previous session - stale trajectory cleaned up",
+    "summary": "Beads task created for gh CLI auth issue. Investigation identified the bug but fix deferred to future work.",
     "approach": "Standard approach",
-    "confidence": 0.5
+    "confidence": 0.6
   }
 }

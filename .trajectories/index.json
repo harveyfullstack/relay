@@ -321,8 +321,15 @@
       "title": "Fix gh CLI authentication in workspace containers",
       "status": "completed",
       "startedAt": "2026-01-05T23:14:00.755Z",
-      "completedAt": "2026-01-06T06:24:07.897Z",
-      "path": "/home/user/relay/.trajectories/completed/2026-01/traj_avqeghu6pz5a.json"
+      "completedAt": "2026-01-05T23:44:34.432Z",
+      "path": "/workspace/relay/.trajectories/completed/2026-01/traj_avqeghu6pz5a.json"
+    },
+    "traj_hfmki2jr9d4r": {
+      "title": "Implement auto workspace access + mobile UI fixes",
+      "status": "completed",
+      "startedAt": "2026-01-05T23:45:03.470Z",
+      "completedAt": "2026-01-06T00:03:49.311Z",
+      "path": "/workspace/relay/.trajectories/completed/2026-01/traj_hfmki2jr9d4r.json"
     },
     "traj_5ammh5qtvklq": {
       "title": "Evaluate Fly.io Sprites and implement workspace resilience",
