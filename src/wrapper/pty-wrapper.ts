@@ -23,14 +23,12 @@ import { HookRegistry, createTrajectoryHooks, type LifecycleHooks } from '../hoo
 import { parseContinuityCommand, hasContinuityCommand } from '../continuity/index.js';
 import {
   type QueuedMessage,
-  type InjectionMetrics,
   type InjectionCallbacks,
   INJECTION_CONSTANTS,
   stripAnsi,
   sleep,
   buildInjectionString,
   injectWithRetry as sharedInjectWithRetry,
-  calculateSuccessRate,
   CLI_QUIRKS,
 } from './shared.js';
 
@@ -1619,22 +1617,5 @@ export class PtyWrapper extends BaseWrapper {
     this.sessionEndProcessed = false;
     this.lastSummaryRawContent = '';
     this.sessionEndData = undefined;
-  }
-
-  /**
-   * Get injection reliability metrics
-   */
-  getInjectionMetrics(): InjectionMetrics & { successRate: number } {
-    return {
-      ...this.injectionMetrics,
-      successRate: calculateSuccessRate(this.injectionMetrics),
-    };
-  }
-
-  /**
-   * Get count of pending messages in queue
-   */
-  get pendingMessageCount(): number {
-    return this.messageQueue.length;
   }
 }
