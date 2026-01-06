@@ -359,6 +359,13 @@
       "completedAt": "2026-01-06T16:24:50.235Z",
       "path": "/home/user/relay/.trajectories/completed/2026-01/traj_78ffm31jn3uk.json"
     },
+    "traj_v9dkdoxylyid": {
+      "title": "Implement first-class user messaging with channels and DMs",
+      "status": "completed",
+      "startedAt": "2026-01-06T17:11:57.504Z",
+      "completedAt": "2026-01-06T17:12:56.919Z",
+      "path": "/home/user/relay/.trajectories/completed/2026-01/traj_v9dkdoxylyid.json"
+    },
     "traj_ub8csuv3lcv4": {
       "title": "Fix WebSocket disconnections for workspace instances",
       "status": "completed",
