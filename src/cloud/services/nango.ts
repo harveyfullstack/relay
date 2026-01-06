@@ -1,6 +1,6 @@
-import crypto from 'crypto';
 import { Nango } from '@nangohq/node';
 import type { AxiosResponse } from 'axios';
+import crypto from 'node:crypto';
 import { getConfig } from '../config.js';
 
 export const NANGO_INTEGRATIONS = {
@@ -56,38 +56,217 @@ class NangoService {
 
   /**
    * Retrieve an installation access token from a GitHub App connection.
-   * Nango will refresh the token when refreshGithubAppJwtToken=true.
+   * Use this ONLY when you need the raw token (e.g., for git clone URLs).
+   * For API calls, use the proxy methods instead.
    */
   async getGithubAppToken(connectionId: string): Promise<string> {
-    const token = await this.client.getToken(
-      NANGO_INTEGRATIONS.GITHUB_APP,
-      connectionId,
-      false,
-      true
-    );
-    if (typeof token !== 'string') {
+    try {
+      const token = await this.client.getToken(
+        NANGO_INTEGRATIONS.GITHUB_APP,
+        connectionId,
+        false,
+        true
+      );
+
+      // Handle different return formats from Nango
+      if (typeof token === 'string') {
+        return token;
+      }
+
+      // Nango may return an object with access_token
+      if (token && typeof token === 'object') {
+        const tokenObj = token as { access_token?: string; token?: string };
+        if (tokenObj.access_token) {
+          return tokenObj.access_token;
+        }
+        if (tokenObj.token) {
+          return tokenObj.token;
+        }
+      }
+
+      console.error('[nango] Unexpected token format:', typeof token, token);
       throw new Error('Expected GitHub App token to be a string');
+    } catch (err: unknown) {
+      // Handle 404 (connection not found) gracefully
+      const error = err as { response?: { status?: number }; status?: number };
+      const status = error.response?.status || error.status;
+      if (status === 404) {
+        throw new Error(`GitHub App connection not found: ${connectionId} (may have been disconnected)`);
+      }
+      // Re-throw with cleaner message
+      throw new Error(`Failed to get GitHub App token: ${(err as Error).message || 'Unknown error'}`);
     }
-    return token;
   }
 
   /**
-   * List repositories available to a GitHub App installation using the Nango connection.
+   * Retrieve the user's OAuth access token from a GitHub App OAuth connection.
+   * This is the user-level token (not the installation token).
+   * Use this for operations that require user context (e.g., gh CLI).
+   *
+   * The user token can be found in:
+   * 1. getToken() without installation flag
+   * 2. connection_config.access_token in github-app-oauth
+   * 3. Separate 'github' user connection
+   */
+  async getGithubUserOAuthToken(connectionId: string): Promise<string> {
+    // First try: Get token from github-app-oauth connection credentials
+    try {
+      const token = await this.client.getToken(
+        NANGO_INTEGRATIONS.GITHUB_APP,
+        connectionId
+      );
+
+      if (typeof token === 'string' && token.length > 0) {
+        return token;
+      }
+
+      if (token && typeof token === 'object') {
+        const tokenObj = token as { access_token?: string; token?: string };
+        if (tokenObj.access_token) {
+          return tokenObj.access_token;
+        }
+        if (tokenObj.token) {
+          return tokenObj.token;
+        }
+      }
+    } catch (err) {
+      console.log('[nango] getToken for user OAuth failed, trying connection_config:', err);
+    }
+
+    // Second try: Check connection_config for user token
+    try {
+      const connection = await this.client.getConnection(NANGO_INTEGRATIONS.GITHUB_APP, connectionId);
+      const connConfig = (connection as { connection_config?: Record<string, unknown> }).connection_config;
+      if (connConfig?.access_token && typeof connConfig.access_token === 'string') {
+        return connConfig.access_token;
+      }
+      // Also check credentials object
+      const credentials = (connection as { credentials?: { access_token?: string } }).credentials;
+      if (credentials?.access_token) {
+        return credentials.access_token;
+      }
+    } catch (err) {
+      console.log('[nango] connection_config check failed:', err);
+    }
+
+    throw new Error('Could not retrieve GitHub user OAuth token');
+  }
+
+  /**
+   * Retrieve the user's OAuth token from a 'github' user connection.
+   * This is for the separate GitHub OAuth login (not the App connection).
+   */
+  async getGithubUserToken(connectionId: string): Promise<string> {
+    const token = await this.client.getToken(
+      NANGO_INTEGRATIONS.GITHUB_USER,
+      connectionId
+    );
+
+    if (typeof token === 'string') {
+      return token;
+    }
+
+    if (token && typeof token === 'object') {
+      const tokenObj = token as { access_token?: string; token?: string };
+      if (tokenObj.access_token) {
+        return tokenObj.access_token;
+      }
+      if (tokenObj.token) {
+        return tokenObj.token;
+      }
+    }
+
+    throw new Error('Could not retrieve GitHub user token');
+  }
+
+  /**
+   * List repositories available to a GitHub App installation using the Nango Proxy.
+   * The proxy automatically handles token injection and refresh.
+   * @see https://nango.dev/docs/implementation-guides/requests-proxy/implement-requests-proxy
    */
   async listGithubAppRepos(connectionId: string): Promise<{ repositories: Array<{ id: number; full_name: string; private: boolean; default_branch: string }> }> {
-    const token = await this.getGithubAppToken(connectionId);
-    const response = await fetch('https://api.github.com/installation/repositories?per_page=100', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-      },
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Failed to list installation repositories: ${text}`);
+    const response = await this.client.get<{ repositories: Array<{ id: number; full_name: string; private: boolean; default_branch: string }> }>({
+      connectionId,
+      providerConfigKey: NANGO_INTEGRATIONS.GITHUB_APP,
+      endpoint: '/installation/repositories',
+      params: { per_page: '100' },
+    }) as AxiosResponse<{ repositories: Array<{ id: number; full_name: string; private: boolean; default_branch: string }> }>;
+    return response.data;
+  }
+
+  /**
+   * Get the GitHub App installation ID from a connection.
+   * The installation ID is stored in connection_config.installation_id
+   */
+  async getGithubAppInstallationId(connectionId: string): Promise<number | null> {
+    try {
+      const connection = await this.client.getConnection(NANGO_INTEGRATIONS.GITHUB_APP, connectionId);
+      // Extract installation_id from connection_config (where Nango stores it for GitHub App OAuth)
+      const connectionConfig = (connection as { connection_config?: Record<string, unknown> }).connection_config;
+      if (connectionConfig?.installation_id) {
+        return Number(connectionConfig.installation_id);
+      }
+      console.warn('[nango] No installation_id in connection_config');
+      return null;
+    } catch (err) {
+      console.error('[nango] Failed to get installation ID:', err);
+      return null;
     }
-    return response.json() as Promise<{ repositories: Array<{ id: number; full_name: string; private: boolean; default_branch: string }> }>;
+  }
+
+  /**
+   * Create an issue via Nango Proxy.
+   */
+  async createGithubIssue(
+    connectionId: string,
+    owner: string,
+    repo: string,
+    data: { title: string; body?: string; labels?: string[] }
+  ): Promise<{ number: number; html_url: string }> {
+    const response = await this.client.post<{ number: number; html_url: string }>({
+      connectionId,
+      providerConfigKey: NANGO_INTEGRATIONS.GITHUB_APP,
+      endpoint: `/repos/${owner}/${repo}/issues`,
+      data,
+    }) as AxiosResponse<{ number: number; html_url: string }>;
+    return response.data;
+  }
+
+  /**
+   * Create a pull request via Nango Proxy.
+   */
+  async createGithubPullRequest(
+    connectionId: string,
+    owner: string,
+    repo: string,
+    data: { title: string; body?: string; head: string; base: string }
+  ): Promise<{ number: number; html_url: string }> {
+    const response = await this.client.post<{ number: number; html_url: string }>({
+      connectionId,
+      providerConfigKey: NANGO_INTEGRATIONS.GITHUB_APP,
+      endpoint: `/repos/${owner}/${repo}/pulls`,
+      data,
+    }) as AxiosResponse<{ number: number; html_url: string }>;
+    return response.data;
+  }
+
+  /**
+   * Add a comment to an issue via Nango Proxy.
+   */
+  async addGithubIssueComment(
+    connectionId: string,
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    body: string
+  ): Promise<{ id: number; html_url: string }> {
+    const response = await this.client.post<{ id: number; html_url: string }>({
+      connectionId,
+      providerConfigKey: NANGO_INTEGRATIONS.GITHUB_APP,
+      endpoint: `/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+      data: { body },
+    }) as AxiosResponse<{ id: number; html_url: string }>;
+    return response.data;
   }
 
   /**
@@ -101,12 +280,220 @@ class NangoService {
   }
 
   /**
-   * Verify webhook signature sent by Nango using HMAC SHA256 with the secret key.
+   * Delete a connection from Nango.
+   *
+   * Used to remove temporary session connections for returning users
+   * to prevent duplicate connections in Nango. In the two-connection pattern,
+   * new users get a permanent connection but returning users authenticate
+   * with a temporary one that gets deleted.
+   *
+   * @param connectionId - Nango connection ID to delete
+   * @param providerConfigKey - The integration key (e.g., 'github')
    */
-  verifyWebhookSignature(rawBody: string, signature?: string | string[] | null): boolean {
-    if (!signature || typeof signature !== 'string') return false;
-    const expected = crypto.createHmac('sha256', this.secret).update(rawBody).digest('hex');
-    return signature === expected;
+  async deleteConnection(connectionId: string, providerConfigKey: string): Promise<void> {
+    await this.client.deleteConnection(providerConfigKey, connectionId);
+  }
+
+  /**
+   * Get connection metadata including end_user info.
+   * Useful when webhook doesn't include end_user data.
+   */
+  async getConnection(connectionId: string, providerConfigKey: string): Promise<{
+    id: number;
+    connection_id: string;
+    provider_config_key: string;
+    end_user?: { id?: string; email?: string };
+    metadata?: Record<string, unknown>;
+  }> {
+    const connection = await this.client.getConnection(providerConfigKey, connectionId);
+    return connection as unknown as {
+      id: number;
+      connection_id: string;
+      provider_config_key: string;
+      end_user?: { id?: string; email?: string };
+      metadata?: Record<string, unknown>;
+    };
+  }
+
+  /**
+   * Check if user has access to a specific GitHub repository.
+   * Uses the user's OAuth connection to query GitHub API.
+   * @param connectionId - User's Nango connection ID (github user OAuth)
+   * @param owner - Repository owner
+   * @param repo - Repository name
+   * @returns Access details or null if no access
+   */
+  async checkUserRepoAccess(connectionId: string, owner: string, repo: string): Promise<{
+    hasAccess: boolean;
+    permission?: 'admin' | 'write' | 'read' | 'none';
+    repository?: {
+      id: number;
+      fullName: string;
+      isPrivate: boolean;
+      defaultBranch: string;
+    };
+  }> {
+    try {
+      const response = await this.client.get<{
+        id: number;
+        full_name: string;
+        private: boolean;
+        default_branch: string;
+        permissions?: {
+          admin: boolean;
+          push: boolean;
+          pull: boolean;
+        };
+      }>({
+        connectionId,
+        providerConfigKey: NANGO_INTEGRATIONS.GITHUB_USER,
+        endpoint: `/repos/${owner}/${repo}`,
+      }) as AxiosResponse<{
+        id: number;
+        full_name: string;
+        private: boolean;
+        default_branch: string;
+        permissions?: {
+          admin: boolean;
+          push: boolean;
+          pull: boolean;
+        };
+      }>;
+
+      const data = response.data;
+      let permission: 'admin' | 'write' | 'read' | 'none' = 'none';
+
+      if (data.permissions) {
+        if (data.permissions.admin) {
+          permission = 'admin';
+        } else if (data.permissions.push) {
+          permission = 'write';
+        } else if (data.permissions.pull) {
+          permission = 'read';
+        }
+      }
+
+      return {
+        hasAccess: true,
+        permission,
+        repository: {
+          id: data.id,
+          fullName: data.full_name,
+          isPrivate: data.private,
+          defaultBranch: data.default_branch,
+        },
+      };
+    } catch (err: unknown) {
+      // 404 = no access or repo doesn't exist
+      const error = err as { response?: { status?: number } };
+      if (error.response?.status === 404 || error.response?.status === 403) {
+        return { hasAccess: false };
+      }
+      console.error('[nango] checkUserRepoAccess error:', err);
+      throw err;
+    }
+  }
+
+  /**
+   * List all repositories the user has access to via their OAuth connection.
+   * Uses the user's personal OAuth token (not the GitHub App).
+   * @param connectionId - User's Nango connection ID (github user OAuth)
+   * @param options - Pagination and filter options
+   * @returns List of accessible repositories
+   */
+  async listUserAccessibleRepos(connectionId: string, options?: {
+    page?: number;
+    perPage?: number;
+    type?: 'all' | 'owner' | 'public' | 'private' | 'member';
+    sort?: 'created' | 'updated' | 'pushed' | 'full_name';
+  }): Promise<{
+    repositories: Array<{
+      id: number;
+      fullName: string;
+      isPrivate: boolean;
+      defaultBranch: string;
+      permissions: {
+        admin: boolean;
+        push: boolean;
+        pull: boolean;
+      };
+    }>;
+    hasMore: boolean;
+  }> {
+    const page = options?.page ?? 1;
+    const perPage = options?.perPage ?? 100;
+    const type = options?.type ?? 'all';
+    const sort = options?.sort ?? 'updated';
+
+    const response = await this.client.get<Array<{
+      id: number;
+      full_name: string;
+      private: boolean;
+      default_branch: string;
+      permissions?: {
+        admin: boolean;
+        push: boolean;
+        pull: boolean;
+      };
+    }>>({
+      connectionId,
+      providerConfigKey: NANGO_INTEGRATIONS.GITHUB_USER,
+      endpoint: '/user/repos',
+      params: {
+        page: String(page),
+        per_page: String(perPage),
+        type,
+        sort,
+        direction: 'desc',
+      },
+    }) as AxiosResponse<Array<{
+      id: number;
+      full_name: string;
+      private: boolean;
+      default_branch: string;
+      permissions?: {
+        admin: boolean;
+        push: boolean;
+        pull: boolean;
+      };
+    }>>;
+
+    const repos = response.data || [];
+
+    return {
+      repositories: repos.map(r => ({
+        id: r.id,
+        fullName: r.full_name,
+        isPrivate: r.private,
+        defaultBranch: r.default_branch,
+        permissions: r.permissions || { admin: false, push: false, pull: false },
+      })),
+      hasMore: repos.length === perPage,
+    };
+  }
+
+  /**
+   * Verify webhook signature sent by Nango.
+   * Uses the new verifyIncomingWebhookRequest method.
+   * @see https://nango.dev/docs/reference/sdks/node#verify-webhook-signature
+   */
+  verifyWebhookSignature(rawBody: string, headers: Record<string, string | string[] | undefined>): boolean {
+    try {
+      // Use the new method: verifyIncomingWebhookRequest(body, headers)
+      return this.client.verifyIncomingWebhookRequest(rawBody, headers as Record<string, unknown>);
+    } catch (err) {
+      console.error('[nango] verifyIncomingWebhookRequest error:', err);
+      // Fall back to manual HMAC verification using the secret key
+      const signature = headers['x-nango-signature'] as string | undefined;
+      const hmacSha256 = headers['x-nango-hmac-sha256'] as string | undefined;
+      if (!signature && !hmacSha256) return false;
+
+      const expectedSignature = crypto
+        .createHmac('sha256', this.secret)
+        .update(rawBody)
+        .digest('hex');
+      return signature === expectedSignature || hmacSha256 === expectedSignature;
+    }
   }
 }
 

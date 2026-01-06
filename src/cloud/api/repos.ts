@@ -2,11 +2,13 @@
  * Repos API Routes
  *
  * GitHub repository management - list, import, sync.
+ * Includes Nango-based GitHub permission checking for dashboard access control.
  */
 
 import { Router, Request, Response } from 'express';
 import { requireAuth } from './auth.js';
 import { db } from '../db/index.js';
+import { nangoService } from '../services/nango.js';
 
 export const reposRouter = Router();
 
@@ -243,6 +245,125 @@ reposRouter.post('/bulk', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/repos/accessible
+ * List all GitHub repositories the authenticated user has access to.
+ * Uses Nango proxy with user's GitHub OAuth token.
+ */
+reposRouter.get('/accessible', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { page, perPage, type, sort } = req.query;
+
+  try {
+    // Get user's Nango connection ID
+    const user = await db.users.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!user.nangoConnectionId) {
+      return res.status(400).json({
+        error: 'GitHub not connected via Nango',
+        code: 'NANGO_NOT_CONNECTED',
+        message: 'Please reconnect your GitHub account',
+      });
+    }
+
+    // List accessible repos via Nango proxy
+    const result = await nangoService.listUserAccessibleRepos(user.nangoConnectionId, {
+      page: page ? parseInt(page as string, 10) : undefined,
+      perPage: perPage ? Math.min(parseInt(perPage as string, 10), 100) : undefined,
+      type: type as 'all' | 'owner' | 'public' | 'private' | 'member' | undefined,
+      sort: sort as 'created' | 'updated' | 'pushed' | 'full_name' | undefined,
+    });
+
+    res.json({
+      repositories: result.repositories,
+      pagination: {
+        page: page ? parseInt(page as string, 10) : 1,
+        perPage: perPage ? Math.min(parseInt(perPage as string, 10), 100) : 100,
+        hasMore: result.hasMore,
+      },
+      checkedBy: {
+        userId: user.id,
+        githubUsername: user.githubUsername,
+      },
+    });
+  } catch (error) {
+    console.error('Error listing accessible repos:', error);
+    res.status(500).json({ error: 'Failed to list accessible repositories' });
+  }
+});
+
+/**
+ * GET /api/repos/search
+ * Search GitHub repos by name
+ */
+reposRouter.get('/search', async (req: Request, res: Response) => {
+  const githubToken = req.session.githubToken;
+  const { q } = req.query;
+
+  if (!q || typeof q !== 'string') {
+    return res.status(400).json({ error: 'Search query (q) is required' });
+  }
+
+  if (!githubToken) {
+    return res.status(401).json({ error: 'GitHub not connected' });
+  }
+
+  try {
+    // Search user's repos
+    const response = await fetch(
+      `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}+user:@me&sort=updated&per_page=20`,
+      {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('GitHub search failed');
+    }
+
+    const data = await response.json() as {
+      items: Array<{
+        id: number;
+        full_name: string;
+        name: string;
+        owner: { login: string };
+        description: string | null;
+        default_branch: string;
+        private: boolean;
+        language: string | null;
+      }>;
+      total_count: number;
+    };
+
+    res.json({
+      repositories: data.items.map((r) => ({
+        githubId: r.id,
+        fullName: r.full_name,
+        name: r.name,
+        owner: r.owner.login,
+        description: r.description,
+        defaultBranch: r.default_branch,
+        isPrivate: r.private,
+        language: r.language,
+      })),
+      total: data.total_count,
+    });
+  } catch (error) {
+    console.error('Error searching repos:', error);
+    res.status(500).json({ error: 'Failed to search repositories' });
+  }
+});
+
+// ============================================================================
+// WILDCARD ROUTES BELOW - All specific routes must be defined ABOVE this line
+// ============================================================================
+
+/**
  * GET /api/repos/:id
  * Get repository details
  */
@@ -334,67 +455,161 @@ reposRouter.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// ============================================================================
+// Nango-based GitHub Permission APIs (for dashboard access control)
+// ============================================================================
+
 /**
- * GET /api/repos/search
- * Search GitHub repos by name
+ * GET /api/repos/check-access/:owner/:repo
+ * Check if authenticated user has access to a specific GitHub repository.
+ * Uses Nango proxy with user's GitHub OAuth token.
+ *
+ * Response:
+ * - hasAccess: boolean - Whether user can access this repo
+ * - permission: 'admin' | 'write' | 'read' | 'none' - User's permission level
+ * - repository: Repository details if user has access
+ *
+ * Use this for dashboard access control - grant access if hasAccess is true.
  */
-reposRouter.get('/search', async (req: Request, res: Response) => {
-  const githubToken = req.session.githubToken;
-  const { q } = req.query;
+reposRouter.get('/check-access/:owner/:repo', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { owner, repo } = req.params;
 
-  if (!q || typeof q !== 'string') {
-    return res.status(400).json({ error: 'Search query (q) is required' });
-  }
-
-  if (!githubToken) {
-    return res.status(401).json({ error: 'GitHub not connected' });
+  if (!owner || !repo) {
+    return res.status(400).json({ error: 'Owner and repo parameters are required' });
   }
 
   try {
-    // Search user's repos
-    const response = await fetch(
-      `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}+user:@me&sort=updated&per_page=20`,
-      {
-        headers: {
-          Authorization: `Bearer ${githubToken}`,
-          Accept: 'application/vnd.github.v3+json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error('GitHub search failed');
+    // Get user's Nango connection ID
+    const user = await db.users.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
     }
 
-    const data = await response.json() as {
-      items: Array<{
-        id: number;
-        full_name: string;
-        name: string;
-        owner: { login: string };
-        description: string | null;
-        default_branch: string;
-        private: boolean;
-        language: string | null;
-      }>;
-      total_count: number;
-    };
+    if (!user.nangoConnectionId) {
+      return res.status(400).json({
+        error: 'GitHub not connected via Nango',
+        code: 'NANGO_NOT_CONNECTED',
+        message: 'Please reconnect your GitHub account',
+      });
+    }
+
+    // Check access via Nango proxy
+    const accessResult = await nangoService.checkUserRepoAccess(
+      user.nangoConnectionId,
+      owner,
+      repo
+    );
 
     res.json({
-      repositories: data.items.map((r) => ({
-        githubId: r.id,
-        fullName: r.full_name,
-        name: r.name,
-        owner: r.owner.login,
-        description: r.description,
-        defaultBranch: r.default_branch,
-        isPrivate: r.private,
-        language: r.language,
-      })),
-      total: data.total_count,
+      hasAccess: accessResult.hasAccess,
+      permission: accessResult.permission,
+      repository: accessResult.repository,
+      // Include user info for dashboard context
+      checkedBy: {
+        userId: user.id,
+        githubUsername: user.githubUsername,
+      },
     });
   } catch (error) {
-    console.error('Error searching repos:', error);
-    res.status(500).json({ error: 'Failed to search repositories' });
+    console.error('Error checking repo access:', error);
+    res.status(500).json({ error: 'Failed to check repository access' });
+  }
+});
+
+/**
+ * POST /api/repos/check-access-bulk
+ * Check access to multiple repositories at once.
+ * Useful for determining which workspaces a user can view.
+ *
+ * Body:
+ * - repositories: Array of "owner/repo" strings
+ *
+ * Response:
+ * - results: Array of { fullName, hasAccess, permission }
+ */
+reposRouter.post('/check-access-bulk', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { repositories } = req.body;
+
+  if (!repositories || !Array.isArray(repositories)) {
+    return res.status(400).json({ error: 'repositories array is required' });
+  }
+
+  if (repositories.length > 50) {
+    return res.status(400).json({ error: 'Maximum 50 repositories per request' });
+  }
+
+  try {
+    // Get user's Nango connection ID
+    const user = await db.users.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!user.nangoConnectionId) {
+      return res.status(400).json({
+        error: 'GitHub not connected via Nango',
+        code: 'NANGO_NOT_CONNECTED',
+        message: 'Please reconnect your GitHub account',
+      });
+    }
+
+    // Check access for each repo (in parallel with concurrency limit)
+    const results: Array<{
+      fullName: string;
+      hasAccess: boolean;
+      permission?: string;
+      error?: string;
+    }> = [];
+
+    // Process in batches of 10 to avoid rate limiting
+    const batchSize = 10;
+    for (let i = 0; i < repositories.length; i += batchSize) {
+      const batch = repositories.slice(i, i + batchSize);
+      const batchResults = await Promise.all(
+        batch.map(async (fullName: string) => {
+          try {
+            const [owner, repo] = fullName.split('/');
+            if (!owner || !repo) {
+              return { fullName, hasAccess: false, error: 'Invalid repository format' };
+            }
+
+            const accessResult = await nangoService.checkUserRepoAccess(
+              user.nangoConnectionId!,
+              owner,
+              repo
+            );
+
+            return {
+              fullName,
+              hasAccess: accessResult.hasAccess,
+              permission: accessResult.permission,
+            };
+          } catch (_err) {
+            return { fullName, hasAccess: false, error: 'Check failed' };
+          }
+        })
+      );
+      results.push(...batchResults);
+    }
+
+    const accessibleCount = results.filter(r => r.hasAccess).length;
+
+    res.json({
+      results,
+      summary: {
+        total: repositories.length,
+        accessible: accessibleCount,
+        denied: repositories.length - accessibleCount,
+      },
+      checkedBy: {
+        userId: user.id,
+        githubUsername: user.githubUsername,
+      },
+    });
+  } catch (error) {
+    console.error('Error checking bulk repo access:', error);
+    res.status(500).json({ error: 'Failed to check repository access' });
   }
 });

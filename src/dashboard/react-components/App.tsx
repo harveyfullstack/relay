@@ -14,7 +14,8 @@ import { ThreadPanel } from './ThreadPanel';
 import { CommandPalette, type TaskCreateRequest, PRIORITY_CONFIG } from './CommandPalette';
 import { SpawnModal, type SpawnConfig } from './SpawnModal';
 import { NewConversationModal } from './NewConversationModal';
-import { SettingsPanel, defaultSettings, type Settings } from './SettingsPanel';
+import { defaultSettings, type Settings } from './SettingsPanel';
+import { SettingsPage } from './settings';
 import { ConversationHistory } from './ConversationHistory';
 import { MentionAutocomplete, getMentionQuery, completeMentionInValue, type HumanUser } from './MentionAutocomplete';
 import { FileAutocomplete, getFileQuery, completeFileInValue } from './FileAutocomplete';
@@ -29,6 +30,7 @@ import { TypingIndicator } from './TypingIndicator';
 import { OnlineUsersIndicator } from './OnlineUsersIndicator';
 import { UserProfilePanel } from './UserProfilePanel';
 import { CoordinatorPanel } from './CoordinatorPanel';
+import { BillingResult } from './BillingResult';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useAgents } from './hooks/useAgents';
 import { useMessages } from './hooks/useMessages';
@@ -37,7 +39,9 @@ import { useTrajectory } from './hooks/useTrajectory';
 import { useRecentRepos } from './hooks/useRecentRepos';
 import { usePresence, type UserPresence } from './hooks/usePresence';
 import { useCloudSessionOptional } from './CloudSessionProvider';
-import { api, convertApiDecision } from '../lib/api';
+import { WorkspaceProvider } from './WorkspaceContext';
+import { api, convertApiDecision, setActiveWorkspaceId as setApiWorkspaceId } from '../lib/api';
+import { cloudApi } from '../lib/cloudApi';
 import type { CurrentUser } from './MessageList';
 
 /**
@@ -87,11 +91,93 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
       }
     : undefined;
 
+  // Cloud workspaces state (for cloud mode)
+  const [cloudWorkspaces, setCloudWorkspaces] = useState<Array<{
+    id: string;
+    name: string;
+    status: string;
+    path?: string;
+  }>>([]);
+  const [activeCloudWorkspaceId, setActiveCloudWorkspaceId] = useState<string | null>(null);
+  const [isLoadingCloudWorkspaces, setIsLoadingCloudWorkspaces] = useState(false);
+
+  // Fetch cloud workspaces when in cloud mode
+  useEffect(() => {
+    if (!cloudSession?.user) return;
+
+    const fetchCloudWorkspaces = async () => {
+      setIsLoadingCloudWorkspaces(true);
+      try {
+        const result = await cloudApi.getWorkspaceSummary();
+        if (result.success && result.data.workspaces) {
+          setCloudWorkspaces(result.data.workspaces);
+          // Auto-select first workspace if none selected
+          if (!activeCloudWorkspaceId && result.data.workspaces.length > 0) {
+            setActiveCloudWorkspaceId(result.data.workspaces[0].id);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch cloud workspaces:', err);
+      } finally {
+        setIsLoadingCloudWorkspaces(false);
+      }
+    };
+
+    fetchCloudWorkspaces();
+    // Poll for updates every 30 seconds
+    const interval = setInterval(fetchCloudWorkspaces, 30000);
+    return () => clearInterval(interval);
+  }, [cloudSession?.user, activeCloudWorkspaceId]);
+
+  // Determine which workspaces to use (cloud mode or orchestrator)
+  const isCloudMode = Boolean(cloudSession?.user);
+  const effectiveWorkspaces = useMemo(() => {
+    if (isCloudMode && cloudWorkspaces.length > 0) {
+      // Convert cloud workspaces to the format expected by WorkspaceSelector
+      return cloudWorkspaces.map(ws => ({
+        id: ws.id,
+        name: ws.name,
+        path: ws.path || `/workspace/${ws.name}`,
+        status: ws.status === 'running' ? 'active' as const : 'inactive' as const,
+        provider: 'claude' as const,
+        lastActiveAt: new Date(),
+      }));
+    }
+    return workspaces;
+  }, [isCloudMode, cloudWorkspaces, workspaces]);
+
+  const effectiveActiveWorkspaceId = isCloudMode ? activeCloudWorkspaceId : activeWorkspaceId;
+  const effectiveIsLoading = isCloudMode ? isLoadingCloudWorkspaces : isOrchestratorLoading;
+
+  // Sync the active workspace ID with the api module for cloud mode proxying
+  useEffect(() => {
+    if (isCloudMode && activeCloudWorkspaceId) {
+      setApiWorkspaceId(activeCloudWorkspaceId);
+    } else if (!isCloudMode) {
+      // Clear the workspace ID when not in cloud mode
+      setApiWorkspaceId(null);
+    }
+  }, [isCloudMode, activeCloudWorkspaceId]);
+
+  // Handle workspace selection (works for both cloud and orchestrator)
+  const handleEffectiveWorkspaceSelect = useCallback(async (workspace: { id: string; name: string }) => {
+    if (isCloudMode) {
+      setActiveCloudWorkspaceId(workspace.id);
+    } else {
+      await switchWorkspace(workspace.id);
+    }
+  }, [isCloudMode, switchWorkspace]);
+
   // Presence tracking for online users and typing indicators
-  const { onlineUsers, typingUsers, sendTyping, isConnected: isPresenceConnected } = usePresence({
-    currentUser: currentUser
+  // Memoize the user object to prevent reconnection on every render
+  const presenceUser = useMemo(() =>
+    currentUser
       ? { username: currentUser.displayName, avatarUrl: currentUser.avatarUrl }
       : undefined,
+    [currentUser?.displayName, currentUser?.avatarUrl]
+  );
+  const { onlineUsers, typingUsers, sendTyping, isConnected: isPresenceConnected } = usePresence({
+    currentUser: presenceUser,
   });
 
   // User profile panel state
@@ -117,9 +203,12 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   // Command palette state
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
-  // Settings panel state
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // Settings state (for theme)
   const [settings, setSettings] = useState<Settings>(defaultSettings);
+
+  // Full settings page state
+  const [isFullSettingsOpen, setIsFullSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'dashboard' | 'workspace' | 'team' | 'billing'>('dashboard');
 
   // Conversation history panel state
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -467,9 +556,16 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     setIsSpawnModalOpen(true);
   }, []);
 
-  // Handle settings click
+  // Handle settings click - opens full settings page
   const handleSettingsClick = useCallback(() => {
-    setIsSettingsOpen(true);
+    setSettingsInitialTab('dashboard');
+    setIsFullSettingsOpen(true);
+  }, []);
+
+  // Handle workspace settings click - opens settings to workspace tab
+  const handleWorkspaceSettingsClick = useCallback(() => {
+    setSettingsInitialTab('workspace');
+    setIsFullSettingsOpen(true);
   }, []);
 
   // Handle history click
@@ -745,6 +841,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         setIsSpawnModalOpen(false);
         setIsNewConversationOpen(false);
         setIsTrajectoryOpen(false);
+        setIsFullSettingsOpen(false);
       }
     };
 
@@ -752,7 +849,35 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSpawnClick, handleNewConversationClick]);
 
+  // Handle billing result routes (success/cancel after Stripe checkout)
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+
+  if (pathname === '/billing/success') {
+    return (
+      <BillingResult
+        type="success"
+        sessionId={searchParams.get('session_id') || undefined}
+        onClose={() => {
+          window.location.href = '/';
+        }}
+      />
+    );
+  }
+
+  if (pathname === '/billing/canceled') {
+    return (
+      <BillingResult
+        type="canceled"
+        onClose={() => {
+          window.location.href = '/';
+        }}
+      />
+    );
+  }
+
   return (
+    <WorkspaceProvider wsUrl={wsUrl}>
     <div className="flex h-screen bg-bg-deep font-sans text-text-primary">
       {/* Mobile Sidebar Overlay */}
       <div
@@ -774,11 +899,12 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         {/* Workspace Selector */}
         <div className="p-3 border-b border-sidebar-border">
           <WorkspaceSelector
-            workspaces={workspaces}
-            activeWorkspaceId={activeWorkspaceId}
-            onSelect={handleWorkspaceSelect}
+            workspaces={effectiveWorkspaces}
+            activeWorkspaceId={effectiveActiveWorkspaceId ?? undefined}
+            onSelect={handleEffectiveWorkspaceSelect}
             onAddWorkspace={() => setIsAddWorkspaceOpen(true)}
-            isLoading={isOrchestratorLoading}
+            onWorkspaceSettings={handleWorkspaceSettingsClick}
+            isLoading={effectiveIsLoading}
           />
         </div>
 
@@ -804,13 +930,20 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           onLogsClick={handleLogsClick}
           onThreadSelect={setCurrentThread}
           onClose={() => setIsSidebarOpen(false)}
+          onSettingsClick={handleSettingsClick}
+          onTrajectoryClick={() => setIsTrajectoryOpen(true)}
+          hasActiveTrajectory={trajectoryStatus?.active}
+          onFleetClick={() => setIsFleetViewActive(!isFleetViewActive)}
+          isFleetViewActive={isFleetViewActive}
+          onCoordinatorClick={handleCoordinatorClick}
+          hasMultipleProjects={mergedProjects.length > 1}
         />
       </div>
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 bg-bg-secondary/50 overflow-hidden">
-        {/* Header - sticky on mobile */}
-        <div className="sticky top-0 z-50 flex-shrink-0">
+        {/* Header - fixed on mobile for keyboard-safe positioning, sticky on desktop */}
+        <div className="fixed top-0 left-0 right-0 z-50 md:sticky md:top-0 md:left-auto md:right-auto bg-bg-secondary">
           <Header
           currentChannel={currentChannel}
           selectedAgent={selectedAgent}
@@ -840,6 +973,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           </div>
         )}
         </div>
+        {/* Spacer for fixed header on mobile - matches header height (52px) */}
+        <div className="h-[52px] flex-shrink-0 md:hidden" />
 
         {/* Content Area */}
         <div className="flex-1 flex overflow-hidden min-h-0">
@@ -939,7 +1074,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         )}
 
         {/* Message Composer */}
-        <div className="p-4 bg-bg-tertiary border-t border-border-subtle">
+        <div className="p-2 sm:p-4 bg-bg-tertiary border-t border-border-subtle">
           <MessageComposer
             recipient={currentChannel === 'general' ? '*' : currentChannel}
             agents={agents}
@@ -977,15 +1112,6 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         existingAgents={agents.map((a) => a.name)}
         isSpawning={isSpawning}
         error={spawnError}
-      />
-
-      {/* Settings Panel */}
-      <SettingsPanel
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        settings={settings}
-        onSettingsChange={setSettings}
-        onResetSettings={() => setSettings(defaultSettings)}
       />
 
       {/* Add Workspace Modal */}
@@ -1146,7 +1272,17 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           setIsCoordinatorOpen(false);
         }}
       />
+
+      {/* Full Settings Page */}
+      {isFullSettingsOpen && (
+        <SettingsPage
+          currentUserId={cloudSession?.user?.id}
+          initialTab={settingsInitialTab}
+          onClose={() => setIsFullSettingsOpen(false)}
+        />
+      )}
     </div>
+    </WorkspaceProvider>
   );
 }
 
@@ -1428,10 +1564,10 @@ function MessageComposer({ recipient, agents, humanUsers, onSend, onTyping, isSe
     !attachments.some(a => a.isUploading);
 
   return (
-    <form className="flex flex-col gap-2" onSubmit={handleSubmit}>
+    <form className="flex flex-col gap-1.5 sm:gap-2" onSubmit={handleSubmit}>
       {/* Attachment previews */}
       {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2 p-2 bg-bg-card rounded-lg border border-border-subtle">
+        <div className="flex flex-wrap gap-1.5 sm:gap-2 p-1.5 sm:p-2 bg-bg-card rounded-lg border border-border-subtle">
           {attachments.map(attachment => (
             <div
               key={attachment.id}
@@ -1471,7 +1607,7 @@ function MessageComposer({ recipient, agents, humanUsers, onSend, onTyping, isSe
       )}
 
       {/* Input row */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-3">
         {/* Image upload button */}
         <input
           ref={fileInputRef}
@@ -1484,17 +1620,17 @@ function MessageComposer({ recipient, agents, humanUsers, onSend, onTyping, isSe
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="p-2.5 bg-bg-card border border-border-subtle rounded-xl text-text-muted hover:text-accent-cyan hover:border-accent-cyan/50 transition-colors"
+          className="p-2 sm:p-2.5 bg-bg-card border border-border-subtle rounded-lg sm:rounded-xl text-text-muted hover:text-accent-cyan hover:border-accent-cyan/50 transition-colors flex-shrink-0"
           title="Attach screenshot (or paste from clipboard)"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="sm:w-[18px] sm:h-[18px]">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
             <circle cx="8.5" cy="8.5" r="1.5" />
             <polyline points="21 15 16 10 5 21" />
           </svg>
         </button>
 
-        <div className="flex-1 relative">
+        <div className="flex-1 relative min-w-0">
           {/* Agent mention autocomplete */}
           <MentionAutocomplete
             agents={agents}
@@ -1515,8 +1651,8 @@ function MessageComposer({ recipient, agents, humanUsers, onSend, onTyping, isSe
           />
           <textarea
             ref={textareaRef}
-            className="w-full py-3 px-4 bg-bg-card border border-border-subtle rounded-xl text-sm font-sans text-text-primary outline-none transition-all duration-200 resize-none min-h-[44px] max-h-[120px] overflow-y-auto focus:border-accent-cyan/50 focus:shadow-[0_0_0_3px_rgba(0,217,255,0.1)] placeholder:text-text-muted"
-            placeholder={`Message ${recipient === '*' ? 'everyone' : '@' + recipient}... (@ for agents/files)`}
+            className="w-full py-2 sm:py-3 px-3 sm:px-4 bg-bg-card border border-border-subtle rounded-lg sm:rounded-xl text-sm font-sans text-text-primary outline-none transition-all duration-200 resize-none min-h-[40px] sm:min-h-[44px] max-h-[100px] sm:max-h-[120px] overflow-y-auto focus:border-accent-cyan/50 focus:shadow-[0_0_0_3px_rgba(0,217,255,0.1)] placeholder:text-text-muted"
+            placeholder={`Message ${recipient === '*' ? 'everyone' : '@' + recipient}...`}
             value={message}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
@@ -1528,17 +1664,17 @@ function MessageComposer({ recipient, agents, humanUsers, onSend, onTyping, isSe
         </div>
         <button
           type="submit"
-          className="py-3 px-5 bg-gradient-to-r from-accent-cyan to-[#00b8d9] text-bg-deep font-semibold border-none rounded-xl text-sm cursor-pointer transition-all duration-150 hover:shadow-glow-cyan hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none"
+          className="py-2 sm:py-3 px-3 sm:px-5 bg-gradient-to-r from-accent-cyan to-[#00b8d9] text-bg-deep font-semibold border-none rounded-lg sm:rounded-xl text-xs sm:text-sm cursor-pointer transition-all duration-150 hover:shadow-glow-cyan hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none flex-shrink-0"
           disabled={!canSend}
           title={isSending ? 'Sending...' : attachments.some(a => a.isUploading) ? 'Uploading...' : 'Send message'}
         >
           {isSending ? (
-            <span>Sending...</span>
+            <span className="hidden sm:inline">Sending...</span>
           ) : attachments.some(a => a.isUploading) ? (
-            <span>Uploading...</span>
+            <span className="hidden sm:inline">Uploading...</span>
           ) : (
-            <span className="flex items-center gap-2">
-              Send
+            <span className="flex items-center gap-1 sm:gap-2">
+              <span className="hidden sm:inline">Send</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13"></line>
                 <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>

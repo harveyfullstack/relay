@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { getApiUrl, initializeWorkspaceId } from '../../lib/api';
 
 interface AgentMetric {
   name: string;
@@ -112,13 +113,39 @@ export default function MetricsPage() {
   const [memoryMetrics, setMemoryMetrics] = useState<MemoryMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [_isCloudMode, setIsCloudMode] = useState(false);
 
   useEffect(() => {
+    // Initialize workspace ID from localStorage for cloud mode
+    const workspaceId = initializeWorkspaceId();
+
+    // Check if we're in cloud mode by checking for session endpoint
+    const checkCloudMode = async () => {
+      try {
+        const res = await fetch('/api/auth/session', { credentials: 'include' });
+        if (res.status !== 404) {
+          setIsCloudMode(true);
+          // In cloud mode without workspace, redirect to app to select one
+          if (!workspaceId) {
+            window.location.href = '/app';
+            return false;
+          }
+        }
+        return true;
+      } catch {
+        return true; // Network error = local mode
+      }
+    };
+
     const fetchMetrics = async () => {
       try {
+        // Check cloud mode first
+        const shouldContinue = await checkCloudMode();
+        if (!shouldContinue) return;
+
         const [metricsRes, memoryRes] = await Promise.all([
-          fetch('/api/metrics'),
-          fetch('/api/metrics/agents'),
+          fetch(getApiUrl('/api/metrics'), { credentials: 'include' }),
+          fetch(getApiUrl('/api/metrics/agents'), { credentials: 'include' }),
         ]);
 
         if (!metricsRes.ok) throw new Error('Failed to fetch metrics');
@@ -185,7 +212,7 @@ export default function MetricsPage() {
         <div className="max-w-[1400px] mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link
-              href="/"
+              href="/app"
               className="flex items-center gap-2 text-text-muted text-sm font-medium px-3 py-2 rounded-md transition-all hover:text-accent hover:bg-accent/10"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

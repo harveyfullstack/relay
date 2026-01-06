@@ -1,35 +1,61 @@
 # Agent Relay Workspace
-# Runs a user's workspace with the relay daemon and agent orchestration
+# Uses pre-built base image with CLI tools for faster builds
 
-FROM node:20-slim
+# Build stage - compile TypeScript
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Install system dependencies for AI CLIs
+# Install build dependencies for native modules (node-pty, better-sqlite3)
 RUN apt-get update && apt-get install -y \
-    bash \
-    ca-certificates \
-    curl \
-    git \
     python3 \
+    make \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude CLI (if available)
-# RUN npm install -g @anthropic-ai/claude-code
+# Copy package files and scripts (needed for postinstall)
+COPY package*.json ./
+COPY scripts ./scripts
 
-# Copy pre-built agent-relay
-COPY --from=ghcr.io/khaliqgant/agent-relay:latest /app/dist ./dist
-COPY --from=ghcr.io/khaliqgant/agent-relay:latest /app/node_modules ./node_modules
-COPY --from=ghcr.io/khaliqgant/agent-relay:latest /app/package*.json ./
+# Install ALL dependencies (need devDependencies for build)
+ENV CI=true
+RUN npm ci
+
+# Copy source files for build
+COPY tsconfig*.json ./
+COPY src ./src
+
+# Build the TypeScript (skip dashboard build for workspace image)
+RUN npx tsc
+
+# Remove devDependencies after build
+RUN npm prune --omit=dev
+
+# ---
+# Runtime stage - use pre-built base with all CLIs
+FROM ghcr.io/agentworkforce/relay-workspace-base:latest
+
+WORKDIR /app
+
+# Copy from builder
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+
+# Copy docs folder (contains relay snippets for agent spawning)
+COPY docs ./docs
+
 COPY deploy/workspace/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY deploy/workspace/git-credential-relay /usr/local/bin/git-credential-relay
+RUN chmod +x /entrypoint.sh /usr/local/bin/git-credential-relay
 
-# Create workspace directory
-RUN mkdir -p /workspace /data
+# Create symlink for agent-relay CLI
+RUN ln -sf /app/dist/cli/index.js /usr/local/bin/agent-relay && \
+    chmod +x /app/dist/cli/index.js 2>/dev/null || true
 
-# Create non-root user
-RUN useradd -m -u 1001 workspace
-RUN chown -R workspace:workspace /app /workspace /data
+# Fix ownership
+RUN chown -R workspace:workspace /app
+
 USER workspace
 
 # Environment
@@ -37,10 +63,9 @@ ENV NODE_ENV=production
 ENV PORT=3888
 ENV AGENT_RELAY_DATA_DIR=/data
 ENV AGENT_RELAY_DASHBOARD_PORT=3888
+ENV PATH="/home/workspace/.local/bin:$PATH"
 
 # Expose ports
-# 3888 - Dashboard/API
-# 3889 - WebSocket (optional)
 EXPOSE 3888 3889
 
 # Volume for persistent data

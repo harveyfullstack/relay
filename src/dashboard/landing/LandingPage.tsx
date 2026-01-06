@@ -11,9 +11,11 @@ import { Logo, LogoIcon, LogoHero } from '../react-components/Logo';
 
 // Agent providers with their signature colors
 const PROVIDERS = {
-  claude: { name: 'Claude', color: '#00D9FF', icon: '◈' },
-  codex: { name: 'Codex', color: '#FF6B35', icon: '⬡' },
-  gemini: { name: 'Gemini', color: '#00FFC8', icon: '◇' },
+  claude: { name: 'Claude', color: '#D97757', icon: '◈' },
+  codex: { name: 'Codex', color: '#10A37F', icon: '⬡' },
+  gemini: { name: 'Gemini', color: '#4285F4', icon: '◇' },
+  opencode: { name: 'OpenCode', color: '#00D4AA', icon: '◆' },
+  droid: { name: 'Droid', color: '#6366F1', icon: '⬢' },
 };
 
 // Simulated agent messages for the live demo
@@ -466,11 +468,6 @@ function ProvidersSection() {
             <div className="provider-status">Supported</div>
           </div>
         ))}
-        <div className="provider-card coming-soon">
-          <div className="provider-icon">◎</div>
-          <div className="provider-name">More Coming</div>
-          <div className="provider-status">2025</div>
-        </div>
       </div>
     </section>
   );
@@ -482,17 +479,17 @@ function PricingSection() {
       name: 'Free',
       price: '$0',
       period: 'forever',
-      description: 'Try it out on a side project',
-      features: ['1 workspace', '3 repositories', '2 concurrent agents', '10 compute hours/month', 'Community support'],
+      description: 'Try AI agent workflows',
+      features: ['1 workspace', '2 repositories', '2 concurrent agents', '5 compute hours/month', 'Shared CPU', 'Community support'],
       cta: 'Get Started',
       highlighted: false,
     },
     {
       name: 'Pro',
-      price: '$29',
+      price: '$49',
       period: '/month',
       description: 'For professional developers',
-      features: ['5 workspaces', '20 repositories', '10 concurrent agents', '100 compute hours/month', 'Coordinator agents', 'Email support'],
+      features: ['5 workspaces', '10 repositories', '5 concurrent agents', '50 compute hours/month', 'Auto-scaling', 'Session persistence', 'Email support'],
       cta: 'Start Free Trial',
       highlighted: true,
     },
@@ -501,14 +498,14 @@ function PricingSection() {
       price: '$99',
       period: '/month',
       description: 'For growing teams',
-      features: ['20 workspaces', '100 repositories', '50 concurrent agents', '500 compute hours/month', 'Coordinator agents', 'Priority support', 'Audit logs'],
+      features: ['20 workspaces', '100 repositories', '50 concurrent agents', '500 compute hours/month', 'Dedicated CPU', 'Priority support', 'Audit logs'],
       cta: 'Start Free Trial',
       highlighted: false,
     },
     {
       name: 'Enterprise',
-      price: 'Custom',
-      period: '',
+      price: '$499',
+      period: '/month',
       description: 'For organizations at scale',
       features: ['Unlimited workspaces', 'Unlimited repositories', 'Unlimited agents', 'Unlimited compute', 'SSO/SAML', 'SLA guarantee', 'Dedicated support'],
       cta: 'Contact Sales',
