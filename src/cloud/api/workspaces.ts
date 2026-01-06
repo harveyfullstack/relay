@@ -1057,6 +1057,144 @@ workspacesRouter.get('/:id/repos', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/workspaces/:id/repo-collaborators
+ * Get all collaborators from repos linked to this workspace
+ * These are users who have access via GitHub repo permissions (grandfathered in)
+ */
+workspacesRouter.get('/:id/repo-collaborators', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { id } = req.params;
+
+  try {
+    const workspace = await db.workspaces.findById(id);
+
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+
+    // Check access (owner, member, or contributor)
+    const accessResult = await checkWorkspaceAccess(userId, id);
+    if (!accessResult.hasAccess) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Get repos linked to this workspace
+    const repos = await db.repositories.findByWorkspaceId(id);
+    if (repos.length === 0) {
+      return res.json({ collaborators: [] });
+    }
+
+    // Find a repo with a Nango connection (GitHub App)
+    const repoWithConnection = repos.find(r => r.nangoConnectionId);
+    if (!repoWithConnection?.nangoConnectionId) {
+      return res.json({
+        collaborators: [],
+        message: 'GitHub App not connected for this workspace',
+      });
+    }
+
+    // Get the workspace owner for filtering
+    const owner = await db.users.findById(workspace.userId);
+
+    // Fetch collaborators for each repo and deduplicate
+    const collaboratorsMap = new Map<number, {
+      id: number;
+      login: string;
+      avatarUrl: string;
+      permission: 'admin' | 'write' | 'read' | 'none';
+      repos: string[];
+    }>();
+
+    // Get existing workspace members to exclude them
+    const existingMembers = await db.workspaceMembers.findByWorkspaceId(id);
+
+    // Also get the workspace owner's GitHub ID to exclude
+    const ownerGithubId = owner?.githubId ? Number(owner.githubId) : null;
+
+    for (const repo of repos) {
+      // Use this repo's connection if it has one, otherwise use the shared connection
+      const connectionId = repo.nangoConnectionId || repoWithConnection.nangoConnectionId;
+      if (!connectionId) continue;
+
+      try {
+        const [repoOwner, repoName] = repo.githubFullName.split('/');
+        const collabs = await nangoService.listRepoCollaborators(
+          connectionId,
+          repoOwner,
+          repoName
+        );
+
+        for (const collab of collabs) {
+          // Skip the workspace owner
+          if (ownerGithubId && collab.id === ownerGithubId) {
+            continue;
+          }
+
+          const existing = collaboratorsMap.get(collab.id);
+          if (existing) {
+            // Add this repo to their list
+            if (!existing.repos.includes(repo.githubFullName)) {
+              existing.repos.push(repo.githubFullName);
+            }
+            // Upgrade permission if this repo gives higher access
+            if (collab.permission === 'admin' && existing.permission !== 'admin') {
+              existing.permission = 'admin';
+            } else if (collab.permission === 'write' && existing.permission === 'read') {
+              existing.permission = 'write';
+            }
+          } else {
+            collaboratorsMap.set(collab.id, {
+              id: collab.id,
+              login: collab.login,
+              avatarUrl: collab.avatarUrl,
+              permission: collab.permission,
+              repos: [repo.githubFullName],
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`[workspace-collaborators] Failed to fetch collaborators for ${repo.githubFullName}:`, err);
+        // Continue with other repos
+      }
+    }
+
+    // Filter out users who are already workspace members
+    // We need to check by GitHub username since we don't have their user IDs
+    const workspaceMemberUsernames = new Set<string>();
+    for (const member of existingMembers) {
+      const memberUser = await db.users.findById(member.userId);
+      if (memberUser?.githubUsername) {
+        workspaceMemberUsernames.add(memberUser.githubUsername.toLowerCase());
+      }
+    }
+
+    // Also add workspace owner
+    if (owner?.githubUsername) {
+      workspaceMemberUsernames.add(owner.githubUsername.toLowerCase());
+    }
+
+    const collaborators = Array.from(collaboratorsMap.values())
+      .filter(c => !workspaceMemberUsernames.has(c.login.toLowerCase()))
+      .sort((a, b) => {
+        // Sort by permission level (admin > write > read), then by username
+        const permOrder = { admin: 0, write: 1, read: 2, none: 3 };
+        if (permOrder[a.permission] !== permOrder[b.permission]) {
+          return permOrder[a.permission] - permOrder[b.permission];
+        }
+        return a.login.localeCompare(b.login);
+      });
+
+    res.json({
+      collaborators,
+      totalRepos: repos.length,
+    });
+  } catch (error) {
+    console.error('Error fetching repo collaborators:', error);
+    res.status(500).json({ error: 'Failed to fetch collaborators' });
+  }
+});
+
+/**
  * DELETE /api/workspaces/:id/repos/:repoId
  * Remove a repository from a workspace
  */

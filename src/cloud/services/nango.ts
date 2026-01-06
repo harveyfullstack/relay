@@ -473,6 +473,82 @@ class NangoService {
   }
 
   /**
+   * List collaborators for a repository via Nango Proxy.
+   * Uses the GitHub App connection to access repository collaborators.
+   * @param connectionId - GitHub App connection ID
+   * @param owner - Repository owner
+   * @param repo - Repository name
+   * @returns List of collaborators with their permissions
+   */
+  async listRepoCollaborators(connectionId: string, owner: string, repo: string): Promise<Array<{
+    id: number;
+    login: string;
+    avatarUrl: string;
+    permission: 'admin' | 'write' | 'read' | 'none';
+  }>> {
+    try {
+      const response = await this.client.get<Array<{
+        id: number;
+        login: string;
+        avatar_url: string;
+        permissions?: {
+          admin: boolean;
+          maintain?: boolean;
+          push: boolean;
+          triage?: boolean;
+          pull: boolean;
+        };
+        role_name?: string;
+      }>>({
+        connectionId,
+        providerConfigKey: NANGO_INTEGRATIONS.GITHUB_APP,
+        endpoint: `/repos/${owner}/${repo}/collaborators`,
+        params: { per_page: '100' },
+      }) as AxiosResponse<Array<{
+        id: number;
+        login: string;
+        avatar_url: string;
+        permissions?: {
+          admin: boolean;
+          maintain?: boolean;
+          push: boolean;
+          triage?: boolean;
+          pull: boolean;
+        };
+        role_name?: string;
+      }>>;
+
+      return (response.data || []).map(collab => {
+        let permission: 'admin' | 'write' | 'read' | 'none' = 'none';
+        if (collab.permissions) {
+          if (collab.permissions.admin) {
+            permission = 'admin';
+          } else if (collab.permissions.push) {
+            permission = 'write';
+          } else if (collab.permissions.pull) {
+            permission = 'read';
+          }
+        }
+        return {
+          id: collab.id,
+          login: collab.login,
+          avatarUrl: collab.avatar_url,
+          permission,
+        };
+      });
+    } catch (err: unknown) {
+      const error = err as { response?: { status?: number } };
+      // 403 = no permission to view collaborators, 404 = repo not found
+      if (error.response?.status === 403 || error.response?.status === 404) {
+        console.warn(`[nango] Cannot list collaborators for ${owner}/${repo}: status ${error.response.status}`);
+        return [];
+      }
+      console.error('[nango] listRepoCollaborators error:', err);
+      throw err;
+    }
+  }
+
+  /**
    * Verify webhook signature sent by Nango.
    * Uses the new verifyIncomingWebhookRequest method.
    * @see https://nango.dev/docs/reference/sdks/node#verify-webhook-signature

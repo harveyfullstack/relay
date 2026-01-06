@@ -472,6 +472,23 @@ export const cloudApi = {
   },
 
   /**
+   * Get repo collaborators (users with GitHub access who aren't workspace members)
+   */
+  async getRepoCollaborators(workspaceId: string) {
+    return cloudFetch<{
+      collaborators: Array<{
+        id: number;
+        login: string;
+        avatarUrl: string;
+        permission: 'admin' | 'write' | 'read' | 'none';
+        repos: string[];
+      }>;
+      totalRepos: number;
+      message?: string;
+    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/repo-collaborators`);
+  },
+
+  /**
    * Invite user to workspace
    */
   async inviteMember(workspaceId: string, githubUsername: string, role = 'member') {
