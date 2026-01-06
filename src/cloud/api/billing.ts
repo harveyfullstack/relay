@@ -19,7 +19,21 @@ export const billingRouter = Router();
  * Get all available billing plans
  */
 billingRouter.get('/plans', (req, res) => {
-  const plans = getAllPlans();
+  const rawPlans = getAllPlans();
+
+  // Transform plans to frontend format
+  const plans = rawPlans.map((plan) => ({
+    tier: plan.id,
+    name: plan.name,
+    description: plan.description,
+    price: {
+      monthly: plan.priceMonthly / 100, // Convert cents to dollars
+      yearly: plan.priceYearly / 100,
+    },
+    features: plan.features,
+    limits: plan.limits,
+    recommended: plan.id === 'pro',
+  }));
 
   // Add publishable key for frontend
   const config = getConfig();

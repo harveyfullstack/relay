@@ -387,9 +387,10 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     }
   }, [workspaces, orchestratorAgents, activeWorkspaceId]);
 
-  // Fetch bridge/project data for multi-project mode
+  // Fetch bridge/project data for multi-project mode (local only)
   useEffect(() => {
-    if (workspaces.length > 0) return; // Skip if using orchestrator
+    // Skip in cloud mode or if using orchestrator
+    if (isCloudMode || workspaces.length > 0) return;
 
     const fetchProjects = async () => {
       const result = await api.getBridgeData();
@@ -435,7 +436,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     // Poll for updates
     const interval = setInterval(fetchProjects, 5000);
     return () => clearInterval(interval);
-  }, [workspaces.length, currentProject]);
+  }, [isCloudMode, workspaces.length, currentProject]);
 
   // Bridge-level agents (like Architect) that should be shown separately
   const BRIDGE_AGENT_NAMES = ['architect'];
