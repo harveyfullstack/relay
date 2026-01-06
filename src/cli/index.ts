@@ -2642,8 +2642,8 @@ program
     console.log(cyan('═══════════════════════════════════════════════════'));
     console.log('');
 
-    // Get or create auth session
-    let authSessionId = options.token;
+    // Get auth session from token
+    const authSessionId = options.token;
 
     if (!authSessionId) {
       // No token provided - show instructions
@@ -2662,7 +2662,7 @@ program
       process.exit(1);
     }
 
-    console.log(`Session: ${authSessionId?.slice(0, 8)}...`);
+    console.log(`Session: ${authSessionId.slice(0, 8)}...`);
     console.log(`Listening on port: ${cyan(String(CALLBACK_PORT))}`);
     console.log('');
 
