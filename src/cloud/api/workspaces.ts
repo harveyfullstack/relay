@@ -664,9 +664,12 @@ workspacesRouter.get('/accessible', async (req: Request, res: Response) => {
     // 1. Get owned workspaces
     const ownedWorkspaces = await db.workspaces.findByUserId(userId);
 
-    // 2. Get workspaces where user is a member
+    // 2. Get workspaces where user is a member (excluding owned ones to prevent duplicates)
+    const ownedWorkspaceIds = new Set(ownedWorkspaces.map((w) => w.id));
     const memberships = await db.workspaceMembers.findByUserId(userId);
-    const memberWorkspaceIds = memberships.map((m) => m.workspaceId);
+    const memberWorkspaceIds = memberships
+      .map((m) => m.workspaceId)
+      .filter((wsId) => !ownedWorkspaceIds.has(wsId)); // Exclude owned workspaces
 
     // Fetch member workspaces
     const memberWorkspaces: Workspace[] = [];
@@ -700,8 +703,9 @@ workspacesRouter.get('/accessible', async (req: Request, res: Response) => {
         }
 
         // Get workspaces that aren't owned or membered
+        // Reuse ownedWorkspaceIds and add member workspace IDs
         const knownWorkspaceIds = new Set([
-          ...ownedWorkspaces.map((w) => w.id),
+          ...ownedWorkspaceIds,
           ...memberWorkspaceIds,
         ]);
 
