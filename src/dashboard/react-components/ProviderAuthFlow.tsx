@@ -57,6 +57,7 @@ export function ProviderAuthFlow({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [cliCommand, setCliCommand] = useState<string | null>(null);
   const [cliSessionId, setCliSessionId] = useState<string | null>(null);
+  const [cliCommandLoading, setCliCommandLoading] = useState(false);
   const [showManualFallback, setShowManualFallback] = useState(false);
   const [cliPollingActive, setCliPollingActive] = useState(false);
   const popupOpenedRef = useRef(false);
@@ -172,6 +173,7 @@ export function ProviderAuthFlow({
   const fetchCliSession = useCallback(async () => {
     if (!isCodexFlow) return;
 
+    setCliCommandLoading(true);
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
@@ -191,6 +193,8 @@ export function ProviderAuthFlow({
       }
     } catch (err) {
       console.error('Failed to fetch CLI session:', err);
+    } finally {
+      setCliCommandLoading(false);
     }
   }, [isCodexFlow, csrfToken, startCliPolling]);
 
@@ -528,8 +532,19 @@ export function ProviderAuthFlow({
           {isCodexFlow ? (
             /* Codex: CLI helper or manual URL paste */
             <div className="space-y-4">
+              {/* Loading state while fetching CLI command */}
+              {cliCommandLoading && (
+                <div className="flex items-center gap-3 p-4 bg-bg-tertiary rounded-lg border border-border-subtle">
+                  <svg className="w-5 h-5 text-accent-cyan animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <span className="text-sm text-text-muted">Generating session token...</span>
+                </div>
+              )}
+
               {/* Primary: CLI command - shown BEFORE the login button */}
-              {cliCommand && !showManualFallback && (
+              {cliCommand && !showManualFallback && !cliCommandLoading && (
                 <div className="space-y-3">
                   <div className="p-3 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg">
                     <p className="text-sm text-accent-cyan mb-2">
@@ -589,8 +604,8 @@ export function ProviderAuthFlow({
                 </div>
               )}
 
-              {/* Fallback: Manual URL paste */}
-              {(showManualFallback || !cliCommand) && (
+              {/* Fallback: Manual URL paste - only show when not loading */}
+              {!cliCommandLoading && (showManualFallback || !cliCommand) && (
                 <div className="space-y-3">
                   <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
                     <p className="text-xs text-amber-400">

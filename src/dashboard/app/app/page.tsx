@@ -592,9 +592,9 @@ export default function DashboardPage() {
                             <div className="p-3 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg">
                               <p className="text-sm text-accent-cyan font-medium mb-1">CLI-assisted authentication</p>
                               <p className="text-xs text-accent-cyan/80">
-                                Codex auth uses a simple CLI command to capture the OAuth callback locally.
-                                You&apos;ll run <code className="bg-bg-deep px-1 rounded">npx agent-relay codex-auth</code> in your terminal,
-                                then sign in with OpenAI. The CLI handles the rest automatically.
+                                Codex auth uses a CLI command to capture the OAuth callback locally.
+                                Click the button below and we&apos;ll show you a command with a unique session token
+                                to run in your terminal before signing in with OpenAI.
                               </p>
                             </div>
 
