@@ -2,14 +2,182 @@
  * Workspaces API Routes
  *
  * One-click workspace provisioning and management.
+ * Includes auto-access based on GitHub repo permissions.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from './auth.js';
 import { db, Workspace } from '../db/index.js';
 import { getProvisioner, getProvisioningStage } from '../provisioner/index.js';
 import { checkWorkspaceLimit } from './middleware/planLimits.js';
 import { getConfig } from '../config.js';
+import { nangoService } from '../services/nango.js';
+
+// ============================================================================
+// Workspace Access Cache
+// ============================================================================
+
+interface CachedAccess {
+  hasAccess: boolean;
+  accessType: 'owner' | 'member' | 'contributor';
+  permission?: 'admin' | 'write' | 'read';
+  cachedAt: number;
+}
+
+// Simple in-memory cache for workspace access checks
+// Key: `${userId}:${workspaceId}`
+const workspaceAccessCache = new Map<string, CachedAccess>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function getCachedAccess(userId: string, workspaceId: string): CachedAccess | null {
+  const key = `${userId}:${workspaceId}`;
+  const cached = workspaceAccessCache.get(key);
+  if (!cached) return null;
+
+  // Check if expired
+  if (Date.now() - cached.cachedAt > CACHE_TTL_MS) {
+    workspaceAccessCache.delete(key);
+    return null;
+  }
+
+  return cached;
+}
+
+function setCachedAccess(userId: string, workspaceId: string, access: Omit<CachedAccess, 'cachedAt'>): void {
+  const key = `${userId}:${workspaceId}`;
+  workspaceAccessCache.set(key, { ...access, cachedAt: Date.now() });
+}
+
+function invalidateCachedAccess(userId: string, workspaceId?: string): void {
+  if (workspaceId) {
+    workspaceAccessCache.delete(`${userId}:${workspaceId}`);
+  } else {
+    // Invalidate all cache entries for this user
+    for (const key of workspaceAccessCache.keys()) {
+      if (key.startsWith(`${userId}:`)) {
+        workspaceAccessCache.delete(key);
+      }
+    }
+  }
+}
+
+// ============================================================================
+// Workspace Access Middleware
+// ============================================================================
+
+/**
+ * Check if user has access to a workspace via:
+ * 1. Workspace ownership (userId matches)
+ * 2. Explicit workspace_members record
+ * 3. GitHub repo access (just-in-time check via Nango)
+ */
+export async function checkWorkspaceAccess(
+  userId: string,
+  workspaceId: string
+): Promise<{ hasAccess: boolean; accessType: 'owner' | 'member' | 'contributor' | 'none'; permission?: 'admin' | 'write' | 'read' }> {
+  // Check cache first
+  const cached = getCachedAccess(userId, workspaceId);
+  if (cached) {
+    return { hasAccess: cached.hasAccess, accessType: cached.accessType, permission: cached.permission };
+  }
+
+  // 1. Check if user is workspace owner
+  const workspace = await db.workspaces.findById(workspaceId);
+  if (!workspace) {
+    return { hasAccess: false, accessType: 'none' };
+  }
+
+  if (workspace.userId === userId) {
+    setCachedAccess(userId, workspaceId, { hasAccess: true, accessType: 'owner', permission: 'admin' });
+    return { hasAccess: true, accessType: 'owner', permission: 'admin' };
+  }
+
+  // 2. Check explicit workspace_members
+  const member = await db.workspaceMembers.findMembership(workspaceId, userId);
+  if (member && member.acceptedAt) {
+    const permission = member.role === 'admin' ? 'admin' : member.role === 'member' ? 'write' : 'read';
+    setCachedAccess(userId, workspaceId, { hasAccess: true, accessType: 'member', permission });
+    return { hasAccess: true, accessType: 'member', permission };
+  }
+
+  // 3. Check GitHub repo access (just-in-time)
+  const user = await db.users.findById(userId);
+  if (!user?.nangoConnectionId) {
+    setCachedAccess(userId, workspaceId, { hasAccess: false, accessType: 'none' });
+    return { hasAccess: false, accessType: 'none' };
+  }
+
+  const repos = await db.repositories.findByWorkspaceId(workspaceId);
+  if (repos.length === 0) {
+    setCachedAccess(userId, workspaceId, { hasAccess: false, accessType: 'none' });
+    return { hasAccess: false, accessType: 'none' };
+  }
+
+  // Check if user has access to ANY repo in this workspace
+  for (const repo of repos) {
+    try {
+      const [owner, repoName] = repo.githubFullName.split('/');
+      const accessResult = await nangoService.checkUserRepoAccess(
+        user.nangoConnectionId,
+        owner,
+        repoName
+      );
+
+      if (accessResult.hasAccess && accessResult.permission && accessResult.permission !== 'none') {
+        setCachedAccess(userId, workspaceId, {
+          hasAccess: true,
+          accessType: 'contributor',
+          permission: accessResult.permission
+        });
+        return { hasAccess: true, accessType: 'contributor', permission: accessResult.permission };
+      }
+    } catch (err) {
+      // Continue to next repo on error
+      console.warn(`[workspace-access] Failed to check repo access for ${repo.githubFullName}:`, err);
+    }
+  }
+
+  // No access found
+  setCachedAccess(userId, workspaceId, { hasAccess: false, accessType: 'none' });
+  return { hasAccess: false, accessType: 'none' };
+}
+
+/**
+ * Middleware to require workspace access.
+ * Checks ownership, membership, or GitHub repo access.
+ */
+export function requireWorkspaceAccess(req: Request, res: Response, next: NextFunction): void {
+  const userId = req.session.userId;
+  const workspaceId = req.params.id || req.params.workspaceId;
+
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  if (!workspaceId) {
+    res.status(400).json({ error: 'Workspace ID required' });
+    return;
+  }
+
+  checkWorkspaceAccess(userId, workspaceId)
+    .then((result) => {
+      if (result.hasAccess) {
+        // Attach access info to request for downstream use
+        (req as any).workspaceAccess = {
+          accessType: result.accessType,
+          permission: result.permission,
+        };
+        next();
+      } else {
+        res.status(403).json({ error: 'No access to this workspace' });
+      }
+    })
+    .catch((err) => {
+      console.error('[workspace-access] Error checking access:', err);
+      res.status(500).json({ error: 'Failed to check workspace access' });
+    });
+}
 
 export const workspacesRouter = Router();
 
@@ -236,22 +404,144 @@ workspacesRouter.get('/primary', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/workspaces/accessible
+ * List all workspaces the user can access:
+ * - Owned workspaces
+ * - Workspaces where user is a member
+ * - Workspaces with repos the user has GitHub access to
+ * NOTE: This route MUST be before /:id to avoid being caught by parameterized route
+ */
+workspacesRouter.get('/accessible', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+
+  try {
+    const user = await db.users.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // 1. Get owned workspaces
+    const ownedWorkspaces = await db.workspaces.findByUserId(userId);
+
+    // 2. Get workspaces where user is a member
+    const memberships = await db.workspaceMembers.findByUserId(userId);
+    const memberWorkspaceIds = memberships.map((m) => m.workspaceId);
+
+    // Fetch member workspaces
+    const memberWorkspaces: Workspace[] = [];
+    for (const wsId of memberWorkspaceIds) {
+      const ws = await db.workspaces.findById(wsId);
+      if (ws) memberWorkspaces.push(ws);
+    }
+
+    // 3. Get workspaces via GitHub repo access (if user has Nango connection)
+    const contributorWorkspaces: Array<Workspace & { accessPermission: string }> = [];
+
+    if (user.nangoConnectionId) {
+      // Get all repos user has access to via GitHub
+      try {
+        const reposResult = await nangoService.listUserAccessibleRepos(user.nangoConnectionId, {
+          perPage: 100,
+          type: 'all',
+        });
+
+        // Find workspaces that contain these repos
+        const accessibleRepoNames = new Set(reposResult.repositories.map((r) => r.fullName));
+
+        // Get all repos in the system
+        const allRepos = await db.repositories.findByUserId(userId); // Will need to expand this
+
+        // Actually, we need a different approach - get all workspaces with their repos
+        // and check if user has access to any of them
+
+        // For now, get all workspaces (this is expensive but works for MVP)
+        // In production, we'd want a more efficient query
+
+        // Get workspaces that aren't owned or membered
+        const knownWorkspaceIds = new Set([
+          ...ownedWorkspaces.map((w) => w.id),
+          ...memberWorkspaceIds,
+        ]);
+
+        // Query for workspaces with repos the user can access
+        // This requires checking each workspace's repos against user's accessible repos
+        // For efficiency, we'll limit this to workspaces with repos that match
+
+        // Get all repo full names from user's accessible repos
+        for (const repo of reposResult.repositories) {
+          // Find repos in our DB that match this full name
+          const dbRepos = await db.repositories.findByGithubFullName(repo.fullName);
+
+          for (const dbRepo of dbRepos) {
+            if (dbRepo.workspaceId && !knownWorkspaceIds.has(dbRepo.workspaceId)) {
+              const ws = await db.workspaces.findById(dbRepo.workspaceId);
+              if (ws) {
+                // Determine permission level
+                const permission = repo.permissions.admin
+                  ? 'admin'
+                  : repo.permissions.push
+                    ? 'write'
+                    : 'read';
+
+                contributorWorkspaces.push({ ...ws, accessPermission: permission });
+                knownWorkspaceIds.add(ws.id);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[workspaces/accessible] Failed to check GitHub repo access:', err);
+        // Continue without contributor workspaces
+      }
+    }
+
+    // Format response
+    const formatWorkspace = (ws: Workspace, accessType: string, permission?: string) => ({
+      id: ws.id,
+      name: ws.name,
+      status: ws.status,
+      publicUrl: ws.publicUrl,
+      accessType,
+      permission: permission || (accessType === 'owner' ? 'admin' : 'read'),
+      createdAt: ws.createdAt,
+    });
+
+    res.json({
+      workspaces: [
+        ...ownedWorkspaces.map((w) => formatWorkspace(w, 'owner', 'admin')),
+        ...memberWorkspaces.map((w) => {
+          const membership = memberships.find((m) => m.workspaceId === w.id);
+          return formatWorkspace(w, 'member', membership?.role);
+        }),
+        ...contributorWorkspaces.map((w) => formatWorkspace(w, 'contributor', w.accessPermission)),
+      ],
+      summary: {
+        owned: ownedWorkspaces.length,
+        member: memberWorkspaces.length,
+        contributor: contributorWorkspaces.length,
+        total: ownedWorkspaces.length + memberWorkspaces.length + contributorWorkspaces.length,
+      },
+    });
+  } catch (error) {
+    console.error('Error getting accessible workspaces:', error);
+    res.status(500).json({ error: 'Failed to get accessible workspaces' });
+  }
+});
+
+/**
  * GET /api/workspaces/:id
  * Get workspace details
+ * Uses requireWorkspaceAccess middleware for auto-access via GitHub repos
  */
-workspacesRouter.get('/:id', async (req: Request, res: Response) => {
-  const userId = req.session.userId!;
+workspacesRouter.get('/:id', requireWorkspaceAccess, async (req: Request, res: Response) => {
   const { id } = req.params;
+  const workspaceAccess = (req as any).workspaceAccess;
 
   try {
     const workspace = await db.workspaces.findById(id);
 
     if (!workspace) {
       return res.status(404).json({ error: 'Workspace not found' });
-    }
-
-    if (workspace.userId !== userId) {
-      return res.status(403).json({ error: 'Unauthorized' });
     }
 
     // Get repositories assigned to this workspace
