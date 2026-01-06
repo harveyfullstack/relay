@@ -269,6 +269,11 @@ export async function startCLIAuth(
         // Try to extract credentials immediately (CLI may not exit after success)
         // Use a small delay to let the CLI finish writing the file
         setTimeout(async () => {
+          // Don't extract if status changed to error (e.g., error detected after success pattern)
+          if (session.status === 'error') {
+            logger.info('Skipping credential extraction - session is in error state', { provider });
+            return;
+          }
           try {
             const creds = await extractCredentials(provider, config);
             if (creds) {
