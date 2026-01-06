@@ -33,6 +33,14 @@ interface PendingInvite {
   invitedBy: string;
 }
 
+interface RepoCollaborator {
+  id: number;
+  login: string;
+  avatarUrl: string;
+  permission: 'admin' | 'write' | 'read' | 'none';
+  repos: string[];
+}
+
 const ROLE_COLORS: Record<string, string> = {
   owner: 'bg-accent-purple/20 text-accent-purple',
   admin: 'bg-accent-cyan/20 text-accent-cyan',
@@ -53,7 +61,9 @@ export function TeamSettingsPanel({
 }: TeamSettingsPanelProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [repoCollaborators, setRepoCollaborators] = useState<RepoCollaborator[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [collaboratorsLoading, setCollaboratorsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -95,6 +105,23 @@ export function TeamSettingsPanel({
     }
 
     loadMembers();
+  }, [workspaceId]);
+
+  // Load repo collaborators (users with GitHub access who aren't workspace members)
+  useEffect(() => {
+    async function loadCollaborators() {
+      setCollaboratorsLoading(true);
+
+      const result = await cloudApi.getRepoCollaborators(workspaceId);
+
+      if (result.success) {
+        setRepoCollaborators(result.data.collaborators || []);
+      }
+
+      setCollaboratorsLoading(false);
+    }
+
+    loadCollaborators();
   }, [workspaceId]);
 
   // Invite member
@@ -350,6 +377,79 @@ export function TeamSettingsPanel({
           </div>
         ))}
       </div>
+
+      {/* Repo Collaborators (Grandfathered Access via GitHub) */}
+      {(repoCollaborators.length > 0 || collaboratorsLoading) && (
+        <div className="mt-8">
+          <div className="flex items-center gap-2 mb-4">
+            <h3 className="text-sm font-semibold text-text-muted uppercase tracking-wide">
+              Repo Collaborators
+            </h3>
+            <span className="px-2 py-0.5 bg-accent-purple/10 text-accent-purple text-[10px] rounded-full">
+              GitHub Access
+            </span>
+          </div>
+          <p className="text-xs text-text-muted mb-4">
+            These users have access via GitHub repo permissions. They can access this workspace without an explicit invite.
+          </p>
+          {collaboratorsLoading ? (
+            <div className="flex items-center gap-2 py-4">
+              <LoadingSpinner />
+              <span className="text-sm text-text-muted">Loading collaborators...</span>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {repoCollaborators.map((collab) => (
+                <div
+                  key={collab.id}
+                  className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 md:p-4 bg-bg-tertiary rounded-lg border border-accent-purple/20"
+                >
+                  <div className="flex items-center gap-3">
+                    {collab.avatarUrl ? (
+                      <img
+                        src={collab.avatarUrl}
+                        alt={collab.login}
+                        className="w-9 h-9 md:w-10 md:h-10 rounded-full"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-accent-purple/20 flex items-center justify-center text-accent-purple font-bold text-xs md:text-sm">
+                        {collab.login[0]?.toUpperCase() || '?'}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-text-primary truncate">
+                          {collab.login}
+                        </p>
+                        <span className="text-[10px] px-2 py-0.5 bg-accent-purple/10 text-accent-purple rounded-full">
+                          via GitHub
+                        </span>
+                      </div>
+                      <p className="text-xs text-text-muted truncate">
+                        {collab.repos.length === 1
+                          ? `Access via ${collab.repos[0]}`
+                          : `Access via ${collab.repos.length} repos`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 sm:gap-3 ml-12 sm:ml-0">
+                    <span className={`px-2 md:px-3 py-1 md:py-1.5 rounded-full text-[10px] md:text-xs font-medium ${
+                      collab.permission === 'admin'
+                        ? 'bg-accent-cyan/20 text-accent-cyan'
+                        : collab.permission === 'write'
+                          ? 'bg-success/20 text-success'
+                          : 'bg-bg-hover text-text-muted'
+                    }`}>
+                      {collab.permission === 'admin' ? 'Admin' : collab.permission === 'write' ? 'Write' : 'Read'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Pending Invites for Current User */}
       {pendingInvites.length > 0 && (
