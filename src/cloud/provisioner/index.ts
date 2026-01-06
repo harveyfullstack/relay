@@ -675,6 +675,7 @@ class FlyProvisioner implements ComputeProvisioner {
             }),
             env: {
               WORKSPACE_ID: workspace.id,
+              WORKSPACE_OWNER_USER_ID: workspace.userId,
               SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled ?? false),
               MAX_AGENTS: String(workspace.config.maxAgents ?? 10),
               REPOSITORIES: (workspace.config.repositories ?? []).join(','),
@@ -1209,6 +1210,7 @@ class RailwayProvisioner implements ComputeProvisioner {
     // Set environment variables
     const envVars: Record<string, string> = {
       WORKSPACE_ID: workspace.id,
+      WORKSPACE_OWNER_USER_ID: workspace.userId,
       SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled ?? false),
       MAX_AGENTS: String(workspace.config.maxAgents ?? 10),
       REPOSITORIES: (workspace.config.repositories ?? []).join(','),
@@ -1454,6 +1456,7 @@ class DockerProvisioner implements ComputeProvisioner {
     // Build environment variables
     const envArgs: string[] = [
       `-e WORKSPACE_ID=${workspace.id}`,
+      `-e WORKSPACE_OWNER_USER_ID=${workspace.userId}`,
       `-e SUPERVISOR_ENABLED=${workspace.config.supervisorEnabled ?? false}`,
       `-e MAX_AGENTS=${workspace.config.maxAgents ?? 10}`,
       `-e REPOSITORIES=${(workspace.config.repositories ?? []).join(',')}`,

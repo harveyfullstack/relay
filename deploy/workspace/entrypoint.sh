@@ -16,6 +16,28 @@ PORT="${AGENT_RELAY_DASHBOARD_PORT:-${PORT:-3888}}"
 export AGENT_RELAY_DASHBOARD_PORT="${PORT}"
 export PORT="${PORT}"
 
+# ============================================================================
+# Per-user credential storage setup
+# Create user-specific HOME on persistent volume (/data)
+# This enables multi-user workspaces where each user has their own credentials
+# ============================================================================
+DATA_DIR="${AGENT_RELAY_DATA_DIR:-/data}"
+if [[ -n "${WORKSPACE_OWNER_USER_ID:-}" ]]; then
+  USER_HOME="${DATA_DIR}/users/${WORKSPACE_OWNER_USER_ID}"
+  log "Setting up per-user HOME at ${USER_HOME}"
+  mkdir -p "${USER_HOME}"
+  mkdir -p "${USER_HOME}/.claude"
+  mkdir -p "${USER_HOME}/.codex"
+  mkdir -p "${USER_HOME}/.config/gcloud"
+  mkdir -p "${USER_HOME}/.config/gh"
+  export HOME="${USER_HOME}"
+  export XDG_CONFIG_HOME="${USER_HOME}/.config"
+  export AGENT_RELAY_USER_ID="${WORKSPACE_OWNER_USER_ID}"
+  log "HOME set to ${HOME} (user: ${WORKSPACE_OWNER_USER_ID})"
+else
+  log "No WORKSPACE_OWNER_USER_ID set, using default HOME: ${HOME}"
+fi
+
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 REPO_LIST="${REPOSITORIES:-}"
 
