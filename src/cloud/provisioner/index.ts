@@ -7,7 +7,6 @@
 import * as crypto from 'crypto';
 import { getConfig } from '../config.js';
 import { db, Workspace, PlanType } from '../db/index.js';
-import { vault } from '../vault/index.js';
 import { nangoService } from '../services/nango.js';
 import {
   canAutoScale,
@@ -102,20 +101,6 @@ async function getGithubAppTokenForUser(userId: string): Promise<string | null> 
     console.error(`[provisioner] Failed to get GitHub App token for user ${userId}:`, error);
     return null;
   }
-}
-
-async function loadCredentialToken(userId: string, provider: string): Promise<string | null> {
-  try {
-    const cred = await vault.getCredential(userId, provider);
-    if (cred?.accessToken) {
-      return cred.accessToken;
-    }
-  } catch (error) {
-    console.warn(`Failed to decrypt ${provider} credential from vault; trying raw storage fallback`, error);
-    const raw = await db.credentials.findByUserAndProvider(userId, provider);
-    return raw?.accessToken ?? null;
-  }
-  return null;
 }
 
 async function wait(ms: number): Promise<void> {
@@ -1636,6 +1621,38 @@ export class WorkspaceProvisioner {
     // Auto-accept the creator's membership
     await db.workspaceMembers.acceptInvite(workspace.id, config.userId);
 
+    // Link repositories to this workspace
+    // This enables auto-access for users with GitHub access to these repos
+    for (const repoFullName of config.repositories) {
+      try {
+        // Find the user's repo record (may not exist if user didn't import it first)
+        const userRepos = await db.repositories.findByUserId(config.userId);
+        const repoRecord = userRepos.find(
+          r => r.githubFullName.toLowerCase() === repoFullName.toLowerCase()
+        );
+        if (repoRecord) {
+          await db.repositories.assignToWorkspace(repoRecord.id, workspace.id);
+          console.log(`[provisioner] Linked repo ${repoFullName} to workspace ${workspace.id.substring(0, 8)}`);
+        } else {
+          // Create a placeholder repo record if it doesn't exist
+          // This ensures the repo is tracked for workspace access checks
+          console.log(`[provisioner] Creating repo record for ${repoFullName}`);
+          const newRepo = await db.repositories.upsert({
+            userId: config.userId,
+            githubFullName: repoFullName,
+            githubId: 0, // Will be updated when actually synced
+            defaultBranch: 'main',
+            isPrivate: true, // Assume private, will be updated
+            workspaceId: workspace.id,
+          });
+          console.log(`[provisioner] Created and linked repo ${repoFullName} (id: ${newRepo.id.substring(0, 8)})`);
+        }
+      } catch (err) {
+        console.warn(`[provisioner] Failed to link repo ${repoFullName}:`, err);
+        // Continue with other repos
+      }
+    }
+
     // Initialize stage tracking immediately
     updateProvisioningStage(workspace.id, 'creating');
 
@@ -1655,14 +1672,11 @@ export class WorkspaceProvisioner {
    * Run the actual provisioning work asynchronously
    */
   private async runProvisioningAsync(workspace: Workspace, config: ProvisionConfig): Promise<void> {
-    // Get credentials
+    // Build credentials map for workspace provisioning
+    // Note: Provider tokens (Claude, Codex, etc.) are no longer stored centrally.
+    // CLI tools authenticate directly on workspace instances.
+    // Only GitHub App tokens are obtained from Nango for repository cloning.
     const credentials = new Map<string, string>();
-    for (const provider of config.providers) {
-      const token = await loadCredentialToken(config.userId, provider);
-      if (token) {
-        credentials.set(provider, token);
-      }
-    }
 
     // GitHub token is required for cloning repositories
     // Use direct token if provided (for testing), otherwise get from Nango

@@ -473,6 +473,34 @@ workspacesRouter.post('/', checkWorkspaceLimit, async (req: Request, res: Respon
     return res.status(400).json({ error: 'Repositories array is required' });
   }
 
+  // Check if any of the repos already have a workspace the user can access
+  // This prevents creating duplicate workspaces for the same repo
+  for (const repoFullName of repositories as string[]) {
+    const existingRepos = await db.repositories.findByGithubFullName(repoFullName);
+    for (const existingRepo of existingRepos) {
+      if (existingRepo.workspaceId) {
+        const accessResult = await checkWorkspaceAccess(userId, existingRepo.workspaceId);
+        if (accessResult.hasAccess) {
+          const existingWorkspace = await db.workspaces.findById(existingRepo.workspaceId);
+          if (existingWorkspace) {
+            console.log(`[workspaces/create] User ${userId.substring(0, 8)} has access to existing workspace ${existingWorkspace.id.substring(0, 8)} for repo ${repoFullName}`);
+            return res.status(409).json({
+              error: 'A workspace already exists for one of these repositories',
+              existingWorkspace: {
+                id: existingWorkspace.id,
+                name: existingWorkspace.name,
+                publicUrl: existingWorkspace.publicUrl,
+                accessType: accessResult.accessType,
+              },
+              conflictingRepo: repoFullName,
+              message: `You already have ${accessResult.accessType} access to workspace "${existingWorkspace.name}" which includes ${repoFullName}.`,
+            });
+          }
+        }
+      }
+    }
+  }
+
   // Verify user has credentials for all providers
   const credentials = await db.credentials.findByUserId(userId);
   const connectedProviders = new Set(credentials.map((c) => c.provider));
@@ -989,6 +1017,141 @@ workspacesRouter.post('/:id/repos', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/workspaces/:id/repos
+ * List repositories linked to a workspace
+ */
+workspacesRouter.get('/:id/repos', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { id } = req.params;
+
+  try {
+    const workspace = await db.workspaces.findById(id);
+
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+
+    // Check access (owner, member, or contributor)
+    const accessResult = await checkWorkspaceAccess(userId, id);
+    if (!accessResult.hasAccess) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Get repos linked to this workspace
+    const repos = await db.repositories.findByWorkspaceId(id);
+
+    res.json({
+      repositories: repos.map(r => ({
+        id: r.id,
+        githubFullName: r.githubFullName,
+        defaultBranch: r.defaultBranch,
+        isPrivate: r.isPrivate,
+        syncStatus: r.syncStatus,
+        lastSyncedAt: r.lastSyncedAt,
+      })),
+    });
+  } catch (error) {
+    console.error('Error listing workspace repos:', error);
+    res.status(500).json({ error: 'Failed to list repositories' });
+  }
+});
+
+/**
+ * DELETE /api/workspaces/:id/repos/:repoId
+ * Remove a repository from a workspace
+ */
+workspacesRouter.delete('/:id/repos/:repoId', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { id, repoId } = req.params;
+
+  try {
+    const workspace = await db.workspaces.findById(id);
+
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+
+    // Only owner can remove repos
+    if (workspace.userId !== userId) {
+      return res.status(403).json({ error: 'Only workspace owner can remove repositories' });
+    }
+
+    // Unlink repo from workspace (set workspaceId to null)
+    await db.repositories.assignToWorkspace(repoId, null);
+
+    // Also update workspace config to remove from repositories array
+    const currentRepos = workspace.config.repositories || [];
+    const repo = await db.repositories.findById(repoId);
+    if (repo) {
+      const updatedRepos = currentRepos.filter(
+        r => r.toLowerCase() !== repo.githubFullName.toLowerCase()
+      );
+      await db.workspaces.update(id, {
+        config: { ...workspace.config, repositories: updatedRepos },
+      });
+    }
+
+    res.json({ success: true, message: 'Repository removed from workspace' });
+  } catch (error) {
+    console.error('Error removing repo from workspace:', error);
+    res.status(500).json({ error: 'Failed to remove repository' });
+  }
+});
+
+/**
+ * PATCH /api/workspaces/:id
+ * Update workspace settings (name, etc.)
+ */
+workspacesRouter.patch('/:id', async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { id } = req.params;
+  const { name } = req.body;
+
+  try {
+    const workspace = await db.workspaces.findById(id);
+
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+
+    // Only owner can rename
+    if (workspace.userId !== userId) {
+      return res.status(403).json({ error: 'Only workspace owner can update settings' });
+    }
+
+    // Validate name if provided
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim().length === 0) {
+        return res.status(400).json({ error: 'Name must be a non-empty string' });
+      }
+      if (name.length > 100) {
+        return res.status(400).json({ error: 'Name must be 100 characters or less' });
+      }
+    }
+
+    // Update workspace
+    await db.workspaces.update(id, {
+      ...(name && { name: name.trim() }),
+    });
+
+    const updated = await db.workspaces.findById(id);
+
+    res.json({
+      success: true,
+      workspace: {
+        id: updated!.id,
+        name: updated!.name,
+        status: updated!.status,
+        publicUrl: updated!.publicUrl,
+      },
+    });
+  } catch (error) {
+    console.error('Error updating workspace:', error);
+    res.status(500).json({ error: 'Failed to update workspace' });
+  }
+});
+
+/**
  * POST /api/workspaces/:id/autoscale
  * Trigger auto-scaling based on current agent count
  * Supports both user session auth and workspace token auth
@@ -1435,6 +1598,30 @@ workspacesRouter.post('/quick', checkWorkspaceLimit, async (req: Request, res: R
   }
 
   try {
+    // Check if a workspace already exists for this repo
+    // If so, check if user has access and return it instead of creating a duplicate
+    const existingRepos = await db.repositories.findByGithubFullName(repositoryFullName);
+    for (const existingRepo of existingRepos) {
+      if (existingRepo.workspaceId) {
+        // Check if user has access to this workspace
+        const accessResult = await checkWorkspaceAccess(userId, existingRepo.workspaceId);
+        if (accessResult.hasAccess) {
+          const existingWorkspace = await db.workspaces.findById(existingRepo.workspaceId);
+          if (existingWorkspace) {
+            console.log(`[workspaces/quick] User ${userId.substring(0, 8)} has access to existing workspace ${existingWorkspace.id.substring(0, 8)} for repo ${repositoryFullName}`);
+            return res.status(200).json({
+              workspaceId: existingWorkspace.id,
+              status: existingWorkspace.status,
+              publicUrl: existingWorkspace.publicUrl,
+              existingWorkspace: true,
+              accessType: accessResult.accessType,
+              message: `You already have ${accessResult.accessType} access to a workspace for this repository.`,
+            });
+          }
+        }
+      }
+    }
+
     // Get user's connected providers (optional now)
     const credentials = await db.credentials.findByUserId(userId);
     const providers = credentials

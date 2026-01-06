@@ -289,14 +289,13 @@ export const githubInstallationQueries: GitHubInstallationQueries = {
 };
 
 // ============================================================================
-// Credential Queries
+// Credential Queries (connected provider registry - no token storage)
 // ============================================================================
 
 export interface CredentialQueries {
   findByUserId(userId: string): Promise<schema.Credential[]>;
   findByUserAndProvider(userId: string, provider: string): Promise<schema.Credential | null>;
   upsert(data: schema.NewCredential): Promise<schema.Credential>;
-  updateTokens(userId: string, provider: string, accessToken: string, refreshToken?: string, expiresAt?: Date): Promise<void>;
   delete(userId: string, provider: string): Promise<void>;
 }
 
@@ -323,9 +322,6 @@ export const credentialQueries: CredentialQueries = {
       .onConflictDoUpdate({
         target: [schema.credentials.userId, schema.credentials.provider],
         set: {
-          accessToken: data.accessToken,
-          refreshToken: data.refreshToken ?? sql`credentials.refresh_token`,
-          tokenExpiresAt: data.tokenExpiresAt,
           scopes: data.scopes,
           providerAccountId: data.providerAccountId,
           providerAccountEmail: data.providerAccountEmail,
@@ -334,30 +330,6 @@ export const credentialQueries: CredentialQueries = {
       })
       .returning();
     return result[0];
-  },
-
-  async updateTokens(
-    userId: string,
-    provider: string,
-    accessToken: string,
-    refreshToken?: string,
-    expiresAt?: Date
-  ): Promise<void> {
-    const db = getDb();
-    const updates: Record<string, unknown> = {
-      accessToken,
-      updatedAt: new Date(),
-    };
-    if (refreshToken !== undefined) {
-      updates.refreshToken = refreshToken;
-    }
-    if (expiresAt !== undefined) {
-      updates.tokenExpiresAt = expiresAt;
-    }
-    await db
-      .update(schema.credentials)
-      .set(updates)
-      .where(and(eq(schema.credentials.userId, userId), eq(schema.credentials.provider, provider)));
   },
 
   async delete(userId: string, provider: string): Promise<void> {
@@ -378,6 +350,7 @@ export interface WorkspaceQueries {
   findByCustomDomain(domain: string): Promise<schema.Workspace | null>;
   findAll(): Promise<schema.Workspace[]>;
   create(data: schema.NewWorkspace): Promise<schema.Workspace>;
+  update(id: string, data: Partial<Pick<schema.Workspace, 'name' | 'config'>>): Promise<void>;
   updateStatus(
     id: string,
     status: string,
@@ -431,6 +404,14 @@ export const workspaceQueries: WorkspaceQueries = {
     const db = getDb();
     const result = await db.insert(schema.workspaces).values(data).returning();
     return result[0];
+  },
+
+  async update(id: string, data: Partial<Pick<schema.Workspace, 'name' | 'config'>>): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.workspaces)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(schema.workspaces.id, id));
   },
 
   async updateStatus(
@@ -967,7 +948,7 @@ export interface RepositoryQueries {
   findByWorkspaceId(workspaceId: string): Promise<schema.Repository[]>;
   findByProjectGroupId(projectGroupId: string): Promise<schema.Repository[]>;
   upsert(data: schema.NewRepository): Promise<schema.Repository>;
-  assignToWorkspace(repoId: string, workspaceId: string): Promise<void>;
+  assignToWorkspace(repoId: string, workspaceId: string | null): Promise<void>;
   assignToGroup(repoId: string, projectGroupId: string | null): Promise<void>;
   updateProjectAgent(id: string, config: schema.ProjectAgentConfig): Promise<void>;
   updateSyncStatus(id: string, status: string, lastSyncedAt?: Date): Promise<void>;
@@ -1043,7 +1024,7 @@ export const repositoryQueries: RepositoryQueries = {
     return result[0];
   },
 
-  async assignToWorkspace(repoId: string, workspaceId: string): Promise<void> {
+  async assignToWorkspace(repoId: string, workspaceId: string | null): Promise<void> {
     const db = getDb();
     await db
       .update(schema.repositories)
