@@ -274,7 +274,7 @@ export class RepoManager extends EventEmitter {
 
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
-        if (entry.name === 'repos.json' || entry.name.startsWith('.')) continue;
+        if (entry.name === DEFAULT_CONFIG_FILE || entry.name.startsWith('.')) continue;
 
         const repoPath = path.join(this.workspaceDir, entry.name);
         const gitDir = path.join(repoPath, '.git');
@@ -291,9 +291,9 @@ export class RepoManager extends EventEmitter {
           }).trim();
 
           // Parse GitHub URL: https://github.com/owner/repo.git or git@github.com:owner/repo.git
-          const match = remoteUrl.match(/github\.com[/:]([\w-]+\/[\w.-]+?)(?:\.git)?$/);
+          const match = remoteUrl.match(/github\.com[/:]([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?$/);
           if (match) {
-            fullName = match[1];
+            fullName = `${match[1]}/${match[2]}`;
           }
         } catch {
           // Couldn't get remote, use directory name

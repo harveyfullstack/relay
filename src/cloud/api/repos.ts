@@ -46,7 +46,14 @@ async function callWorkspaceApi(
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    const data = await response.json().catch(() => null) as { error?: string } | null;
+    const data = await response.json().catch((parseError) => {
+      console.error('Failed to parse JSON from workspace response', {
+        url,
+        status: response.status,
+        error: parseError instanceof Error ? parseError.message : parseError,
+      });
+      return null;
+    }) as { error?: string } | null;
 
     return {
       ok: response.ok,
