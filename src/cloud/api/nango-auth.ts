@@ -246,7 +246,7 @@ async function handleAuthWebhook(payload: {
 
 /**
  * Check user's repo access and auto-add them to workspaces
- * Uses GitHub user OAuth to query accessible repos
+ * Uses GitHub user OAuth to query accessible repos and persists them to database
  */
 async function checkAndAutoAddToWorkspaces(userId: string, connectionId: string): Promise<void> {
   try {
@@ -263,8 +263,21 @@ async function checkAndAutoAddToWorkspaces(userId: string, connectionId: string)
 
     const workspacesToJoin = new Set<string>();
 
-    // For each repo, check if it's linked to a workspace
+    // Persist repos to database and check for workspace memberships
     for (const repo of repositories) {
+      // Upsert repo to database (cache it)
+      await db.repositories.upsert({
+        userId: user.id,
+        githubFullName: repo.fullName,
+        githubId: repo.id,
+        isPrivate: repo.isPrivate,
+        defaultBranch: repo.defaultBranch,
+        nangoConnectionId: connectionId,
+        syncStatus: 'synced',
+        lastSyncedAt: new Date(),
+      });
+
+      // Check if any user has this repo linked to a workspace
       const allRepoRecords = await db.repositories.findByGithubFullName(repo.fullName);
       for (const record of allRepoRecords) {
         if (record.workspaceId) {
@@ -291,7 +304,7 @@ async function checkAndAutoAddToWorkspaces(userId: string, connectionId: string)
       }
     }
 
-    console.log(`[nango-webhook] Auto-add check complete: ${user.githubUsername} added to ${workspacesToJoin.size} workspaces`);
+    console.log(`[nango-webhook] Synced ${repositories.length} repos, auto-added ${user.githubUsername} to ${workspacesToJoin.size} workspaces`);
   } catch (error) {
     console.error(`[nango-webhook] Error checking workspace auto-add:`, error);
     // Non-fatal - don't throw
