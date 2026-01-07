@@ -329,12 +329,49 @@ async function handleLoginWebhook(
 /**
  * Handle Nango forward webhook (GitHub events forwarded by Nango)
  */
-async function handleForwardWebhook(payload: unknown): Promise<void> {
-  // Log the full payload structure for debugging
-  console.log('[nango-webhook] Forward event payload:', JSON.stringify(payload, null, 2));
+async function handleForwardWebhook(payload: {
+  type: 'forward';
+  connectionId: string;
+  providerConfigKey: string;
+  payload: {
+    action?: string;
+    installation?: {
+      id: number;
+      account: { login: string; id: number; type: string };
+      permissions: Record<string, string>;
+      events: string[];
+    };
+    repositories?: Array<{ id: number; full_name: string; private: boolean }>;
+    repositories_added?: Array<{ id: number; full_name: string; private: boolean }>;
+    repositories_removed?: Array<{ id: number; full_name: string }>;
+    sender?: { id: number; login: string };
+  };
+}): Promise<void> {
+  const githubPayload = payload.payload;
 
-  // For now, just log and return - we'll implement once we see the structure
-  console.log('[nango-webhook] Forward event received - payload structure logged for analysis');
+  console.log(`[nango-webhook] Forward event: action=${githubPayload.action} from ${payload.providerConfigKey}`);
+
+  // Only process GitHub App events
+  if (payload.providerConfigKey !== NANGO_INTEGRATIONS.GITHUB_APP) {
+    console.log('[nango-webhook] Ignoring forward event from non-GitHub-App integration');
+    return;
+  }
+
+  try {
+    // Determine event type from payload structure
+    if (githubPayload.installation && githubPayload.action === 'created' && githubPayload.repositories) {
+      // Installation created event
+      await handleInstallationForward(githubPayload, payload.connectionId);
+    } else if (githubPayload.repositories_added || githubPayload.repositories_removed) {
+      // Installation repositories added/removed
+      await handleInstallationRepositoriesForward(githubPayload, payload.connectionId);
+    } else {
+      console.log(`[nango-webhook] Unhandled forward event structure: action=${githubPayload.action}`);
+    }
+  } catch (error) {
+    console.error(`[nango-webhook] Error processing forward event:`, error);
+    throw error;
+  }
 }
 
 /**
