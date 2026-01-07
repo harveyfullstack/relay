@@ -34,6 +34,9 @@ Organization: Acme Corp (Team Plan)
 5. [Implementation Roadmap](#5-implementation-roadmap)
 6. [Pricing Model](#6-pricing-model)
 7. [Technical Specifications](#7-technical-specifications)
+8. [Appendix A: Migration Path](#appendix-a-migration-path)
+9. [Appendix B: Critical Insights from PR #8](#appendix-b-critical-insights-from-pr-8)
+10. [Appendix C: Comparison Summary](#appendix-c-comparison-summary)
 
 ---
 
@@ -654,14 +657,310 @@ DELETE /api/orgs/:orgId/agents/:name
 
 ---
 
-## Appendix B: Comparison with PR #8
+## Appendix B: Critical Insights from PR #8
+
+PR #8's federation proposal and its review identified critical distributed systems challenges that MUST be addressed. This section preserves those insights.
+
+### B.1 End-to-End Delivery Confirmation (🔴 Critical)
+
+**Problem identified in PR #8 review:**
+```
+Alice@A → Daemon A → Daemon B → ??? → Bob receives?
+         ↑           ↑
+         ACK         ACK
+         (local)     (peer)
+
+But does Bob's agent actually SEE the message?
+```
+
+Peer-level ACKs don't confirm:
+- `tmux send-keys` succeeded
+- Agent wasn't in a blocking state
+- Agent didn't ignore the message (prompt too long)
+
+**Solution adopted:**
+```typescript
+// End-to-end confirmation flow
+interface DeliveryConfirmation {
+  type: 'DELIVERY_CONFIRMED';
+  messageId: string;
+  agentName: string;
+  injectedAt: number;        // When send-keys executed
+  detectedAt: number;        // When "Relay message" appeared in output
+}
+
+// TmuxWrapper detects successful injection
+async function confirmDelivery(messageId: string): Promise<boolean> {
+  // After send-keys, poll capture-pane for "Relay message from..."
+  const output = await capturePane();
+  if (output.includes(`Relay message`) && output.includes(messageId.slice(0, 8))) {
+    await sendDeliveryConfirmation(messageId);
+    return true;
+  }
+  return false;
+}
+```
+
+### B.2 Registry Consistency (🔴 Critical)
+
+**Problem identified in PR #8 review:**
+```
+Time 0:  Server A has no "Bob", Server B has no "Bob"
+Time 1:  Alice on A starts "Bob", Carol on B starts "Bob"
+Time 2:  Both send PEER_SYNC: "Bob joined" (messages cross)
+Time 3:  Split-brain: both think THEIR Bob is real
+```
+
+**Solution adopted:** Cloud as authoritative registry with Lamport timestamps for local ordering.
+
+```typescript
+// Registration with conflict detection
+async function registerAgent(name: string, orgId: string): Promise<Result> {
+  // Atomic check-and-set in PostgreSQL
+  const result = await db.query(`
+    INSERT INTO global_agents (org_id, name, daemon_id, registered_at)
+    VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (org_id, name) DO NOTHING
+    RETURNING id
+  `, [orgId, name, daemonId]);
+
+  if (result.rowCount === 0) {
+    const existing = await db.query(
+      'SELECT daemon_id FROM global_agents WHERE org_id = $1 AND name = $2',
+      [orgId, name]
+    );
+    return {
+      success: false,
+      error: `Name "${name}" already registered on daemon ${existing.rows[0].daemon_id}`,
+      suggestion: `${name}-${daemonId.slice(0, 4)}`
+    };
+  }
+  return { success: true };
+}
+```
+
+### B.3 Message Deduplication (🔴 Critical)
+
+**Problem identified:** No replay protection allows attackers to replay captured messages.
+
+**Solution adopted:**
+```typescript
+// Dedup using message IDs with TTL
+class MessageDeduplicator {
+  private seen = new Map<string, number>();  // messageId -> timestamp
+  private readonly TTL_MS = 300_000;  // 5 minutes
+
+  isDuplicate(messageId: string): boolean {
+    this.cleanup();
+    if (this.seen.has(messageId)) {
+      return true;
+    }
+    this.seen.set(messageId, Date.now());
+    return false;
+  }
+
+  private cleanup(): void {
+    const now = Date.now();
+    for (const [id, ts] of this.seen) {
+      if (now - ts > this.TTL_MS) {
+        this.seen.delete(id);
+      }
+    }
+  }
+}
+```
+
+### B.4 Backpressure & Flow Control (🟡 High)
+
+**Problem identified:** Slow peers can cause OOM via unbounded queues.
+
+**Solution adopted:** Credit-based flow control with PEER_BUSY/PEER_READY signals.
+
+```typescript
+// Flow control protocol
+interface PeerBusy {
+  type: 'PEER_BUSY';
+  queueDepth: number;        // Current queue size
+  resumeAt?: number;         // Estimated resume time
+}
+
+interface PeerReady {
+  type: 'PEER_READY';
+  credits: number;           // Messages we can accept
+}
+
+// Bounded queue with drop policy
+class BoundedMessageQueue {
+  private queue: Message[] = [];
+  private readonly MAX_SIZE = 1000;
+  private readonly DROP_POLICY: 'oldest' | 'newest' = 'oldest';
+
+  enqueue(msg: Message): boolean {
+    if (this.queue.length >= this.MAX_SIZE) {
+      if (this.DROP_POLICY === 'oldest') {
+        const dropped = this.queue.shift();
+        this.emitDropped(dropped);
+      } else {
+        this.emitDropped(msg);
+        return false;
+      }
+    }
+    this.queue.push(msg);
+    return true;
+  }
+}
+```
+
+### B.5 Distributed Tracing (🟡 High)
+
+**Problem identified:** "My message never arrived. Why?" is impossible to debug without tracing.
+
+**Solution adopted:** Correlation IDs on all messages, queryable trace API.
+
+```typescript
+// All messages include correlation ID
+interface TracedMessage {
+  id: string;                // Unique message ID
+  correlationId: string;     // Groups related messages
+  parentId?: string;         // For request/response chains
+  hops: TraceHop[];          // Servers traversed
+}
+
+interface TraceHop {
+  serverId: string;
+  action: 'received' | 'queued' | 'delivered' | 'dropped';
+  timestamp: number;
+  error?: string;
+}
+
+// CLI command for debugging
+// $ agent-relay trace abc123
+// → Shows full journey of message abc123 across servers
+```
+
+### B.6 NAT/Firewall Traversal (🟡 Medium)
+
+**Problem identified:** Many servers are behind NATs or firewalls.
+
+**Solution adopted:** Hybrid topology with relay fallback.
+
+```
+Topology Decision Tree:
+
+1. Both peers have public IPs?
+   → Direct P2P WebSocket
+
+2. One peer behind NAT?
+   → NAT peer initiates connection to public peer
+   → Use connection reversal
+
+3. Both peers behind NAT?
+   → Use cloud as relay
+   → Or: TURN-style relay server
+
+4. Corporate firewall blocking WebSocket?
+   → Fall back to cloud polling (current behavior)
+```
+
+### B.7 Clock Skew Handling (🟡 Medium)
+
+**Problem identified:** TTL expiration fails with clock drift between servers.
+
+**Solution adopted:** Relative TTLs applied at receipt time.
+
+```typescript
+// Message uses relative TTL, not absolute expiry
+interface Message {
+  // ...
+  ttl_ms: number;           // e.g., 3600000 (1 hour)
+  // NOT: expires_at: timestamp
+}
+
+// Receiving server applies TTL
+function isExpired(msg: Message, receivedAt: number): boolean {
+  return Date.now() > receivedAt + msg.ttl_ms;
+}
+```
+
+### B.8 Detailed Protocol Specification
+
+**From PR #8 - preserved for implementation:**
+
+```typescript
+// Complete peer protocol from PR #8
+type PeerMessageType =
+  | 'PEER_HELLO'      // Initial handshake
+  | 'PEER_WELCOME'    // Handshake response
+  | 'PEER_SYNC'       // Registry synchronization
+  | 'PEER_ROUTE'      // Route message to agent
+  | 'PEER_BROADCAST'  // Broadcast to all local agents
+  | 'PEER_ACK'        // Acknowledge receipt
+  | 'PEER_NACK'       // Negative acknowledgment
+  | 'PEER_BUSY'       // Backpressure signal
+  | 'PEER_READY'      // Resume signal
+  | 'PEER_PING'       // Heartbeat
+  | 'PEER_PONG'       // Heartbeat response
+  | 'PEER_BYE';       // Graceful disconnect
+
+interface PeerEnvelope<T = unknown> {
+  v: 1;                      // Protocol version
+  type: PeerMessageType;
+  id: string;                // Message UUID
+  correlationId?: string;    // For tracing
+  ts: number;                // Timestamp
+  from_server: string;       // Origin server ID
+  ttl_ms: number;            // Time to live
+  payload: T;
+}
+
+// Connection state machine
+// DISCONNECTED → CONNECTING → HANDSHAKING → ACTIVE → RECONNECTING
+// Reconnection: exponential backoff 1s → 2s → 4s → 8s → 16s → 30s (max)
+```
+
+### B.9 Network Topology Recommendation
+
+**From PR #8 - hybrid approach:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     HYBRID TOPOLOGY (RECOMMENDED)                            │
+│                                                                              │
+│                         ┌─────────────┐                                     │
+│              ┌─────────►│  Cloud Hub  │◄─────────┐                         │
+│              │          │ (discovery) │          │                         │
+│              │          └─────────────┘          │                         │
+│              │                                   │                         │
+│              ▼                                   ▼                         │
+│          ServerA ◄────────────────────────► ServerB                        │
+│              ▲              P2P                  ▲                         │
+│              │                                   │                         │
+│              └──────────► ServerC ◄──────────────┘                         │
+│                                                                              │
+│  • Hub provides discovery and registry sync                                 │
+│  • Daemons establish direct P2P connections                                 │
+│  • Messages route directly (low latency)                                    │
+│  • Hub failure doesn't break existing P2P connections                       │
+│  • Hub serves as fallback for NAT'd peers                                   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Appendix C: Comparison Summary
 
 | Aspect | PR #8 Proposal | This Document |
 |--------|----------------|---------------|
 | **Scope** | Pure federation (P2P only) | Full org model + federation |
-| **Auth** | Ed25519 per-message signing | API keys + TLS (simpler) |
+| **Auth** | Ed25519 per-message signing | API keys + TLS (simpler for v1) |
 | **Registry** | Quorum consensus | Cloud as source of truth |
 | **Timeline** | 8-10 weeks federation only | 9 weeks for complete vision |
 | **Billing** | Not addressed | Per-user team pricing |
+| **E2E Delivery** | ✅ Identified as critical | ✅ Adopted |
+| **Deduplication** | ✅ Identified as critical | ✅ Adopted |
+| **Backpressure** | ✅ Credit-based | ✅ Adopted (PEER_BUSY/READY) |
+| **Tracing** | ✅ Correlation IDs | ✅ Adopted |
+| **NAT Traversal** | ✅ Identified as gap | ✅ Hybrid topology |
 
-**This document supersedes PR #8's federation proposal** with a more realistic, incremental approach that builds on what's already working.
+**This document incorporates PR #8's critical insights** while taking a more pragmatic, incremental approach that builds on what's already working.
