@@ -28,6 +28,7 @@ import type { ServerInfo } from './ServerCard';
 import { TypingIndicator } from './TypingIndicator';
 import { OnlineUsersIndicator } from './OnlineUsersIndicator';
 import { UserProfilePanel } from './UserProfilePanel';
+import { DirectMessageModal } from './DirectMessageModal';
 import { CoordinatorPanel } from './CoordinatorPanel';
 import { BillingResult } from './BillingResult';
 import { UsageBanner } from './UsageBanner';
@@ -183,6 +184,9 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   // User profile panel state
   const [selectedUserProfile, setSelectedUserProfile] = useState<UserPresence | null>(null);
+
+  // Direct message modal state
+  const [dmUser, setDmUser] = useState<UserPresence | null>(null);
 
   // View mode state
   const [viewMode, setViewMode] = useState<'local' | 'fleet'>('local');
@@ -599,6 +603,12 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     setIsFullSettingsOpen(true);
   }, []);
 
+  // Handle billing click - opens full settings page with billing tab
+  const handleBillingClick = useCallback(() => {
+    setSettingsInitialTab('billing');
+    setIsFullSettingsOpen(true);
+  }, []);
+
   // Handle history click
   const handleHistoryClick = useCallback(() => {
     setIsHistoryOpen(true);
@@ -995,7 +1005,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           hasUnreadNotifications={hasUnreadMessages}
         />
         {/* Usage banner for free tier users */}
-        <UsageBanner onUpgradeClick={handleSettingsClick} />
+        <UsageBanner onUpgradeClick={handleBillingClick} />
         </div>
         {/* Spacer for fixed header on mobile - matches header height (52px) */}
         <div className="h-[52px] flex-shrink-0 md:hidden" />
@@ -1291,6 +1301,23 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           // For now, just close the panel
           setSelectedUserProfile(null);
         }}
+        onSendMessage={(user) => {
+          setDmUser(user);
+        }}
+      />
+
+      {/* Direct Message Modal */}
+      <DirectMessageModal
+        user={dmUser}
+        onClose={() => setDmUser(null)}
+        messages={data?.messages ?? []}
+        agents={agents}
+        humanUsers={humanUsers}
+        onSend={sendMessage}
+        onTyping={sendTyping}
+        isSending={isSending}
+        sendError={sendError}
+        currentUser={currentUser}
       />
 
       {/* Coordinator Panel */}
