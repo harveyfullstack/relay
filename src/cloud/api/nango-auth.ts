@@ -210,8 +210,7 @@ nangoAuthRouter.post('/webhook', async (req: Request, res: Response) => {
         break;
 
       case 'forward':
-        // Nango forwards events from providers - typically not needed for our flow
-        console.log('[nango-webhook] Forward event from provider (ignored)');
+        await handleForwardWebhook(payload);
         break;
 
       default:
@@ -328,6 +327,233 @@ async function handleLoginWebhook(
 }
 
 /**
+ * Handle Nango forward webhook (GitHub events forwarded by Nango)
+ */
+async function handleForwardWebhook(payload: {
+  type: 'forward';
+  connectionId: string;
+  providerConfigKey: string;
+  payload: {
+    headers: Record<string, string>;
+    body: {
+      action?: string;
+      installation?: {
+        id: number;
+        account: { login: string; id: number; type: string };
+        permissions: Record<string, string>;
+        events: string[];
+      };
+      repositories?: Array<{ id: number; full_name: string; private: boolean }>;
+      repositories_added?: Array<{ id: number; full_name: string; private: boolean }>;
+      repositories_removed?: Array<{ id: number; full_name: string }>;
+      sender?: { id: number; login: string };
+    };
+  };
+}): Promise<void> {
+  const githubEvent = payload.payload.headers['x-github-event'];
+  const githubBody = payload.payload.body;
+
+  console.log(`[nango-webhook] Forward event: ${githubEvent} from ${payload.providerConfigKey}`);
+
+  // Only process GitHub App events
+  if (payload.providerConfigKey !== NANGO_INTEGRATIONS.GITHUB_APP) {
+    console.log('[nango-webhook] Ignoring forward event from non-GitHub-App integration');
+    return;
+  }
+
+  try {
+    switch (githubEvent) {
+      case 'installation':
+        await handleInstallationForward(githubBody, payload.connectionId);
+        break;
+
+      case 'installation_repositories':
+        await handleInstallationRepositoriesForward(githubBody, payload.connectionId);
+        break;
+
+      default:
+        console.log(`[nango-webhook] Unhandled GitHub event: ${githubEvent}`);
+    }
+  } catch (error) {
+    console.error(`[nango-webhook] Error processing forward event:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Handle GitHub installation events forwarded by Nango
+ */
+async function handleInstallationForward(
+  body: {
+    action?: string;
+    installation?: {
+      id: number;
+      account: { login: string; id: number; type: string };
+      permissions: Record<string, string>;
+      events: string[];
+    };
+    repositories?: Array<{ id: number; full_name: string; private: boolean }>;
+    sender?: { id: number; login: string };
+  },
+  connectionId: string
+): Promise<void> {
+  const { action, installation, repositories, sender } = body;
+  if (!installation || !sender) return;
+
+  const installationId = String(installation.id);
+  console.log(`[nango-webhook] Installation ${action}: ${installation.account.login} (${installationId})`);
+
+  if (action === 'created') {
+    // Find user by GitHub ID
+    const user = await db.users.findByGithubId(String(sender.id));
+
+    // Create/update installation record
+    await db.githubInstallations.upsert({
+      installationId,
+      accountType: installation.account.type.toLowerCase(),
+      accountLogin: installation.account.login,
+      accountId: String(installation.account.id),
+      installedById: user?.id ?? null,
+      permissions: installation.permissions,
+      events: installation.events,
+    });
+
+    // Sync repositories if provided
+    if (repositories && user) {
+      const dbInstallation = await db.githubInstallations.findByInstallationId(installationId);
+      if (dbInstallation) {
+        const workspacesToJoin = new Set<string>();
+
+        for (const repo of repositories) {
+          const syncedRepo = await db.repositories.upsert({
+            userId: user.id,
+            githubFullName: repo.full_name,
+            githubId: repo.id,
+            isPrivate: repo.private,
+            installationId: dbInstallation.id,
+            nangoConnectionId: connectionId,
+            syncStatus: 'synced',
+            lastSyncedAt: new Date(),
+          });
+
+          // Check if repo is part of an existing workspace
+          if (syncedRepo.workspaceId) {
+            workspacesToJoin.add(syncedRepo.workspaceId);
+          }
+        }
+
+        // Auto-join user to workspaces for repos they have access to
+        for (const workspaceId of workspacesToJoin) {
+          const existingMembership = await db.workspaceMembers.findMembership(workspaceId, user.id);
+          if (!existingMembership) {
+            const workspace = await db.workspaces.findById(workspaceId);
+            if (workspace) {
+              console.log(`[nango-webhook] Auto-adding ${user.githubUsername} to workspace ${workspace.name}`);
+              await db.workspaceMembers.addMember({
+                workspaceId,
+                userId: user.id,
+                role: 'member',
+                invitedBy: workspace.userId,
+              });
+              await db.workspaceMembers.acceptInvite(workspaceId, user.id);
+            }
+          }
+        }
+
+        console.log(`[nango-webhook] Installation created for ${installation.account.login}, auto-joined ${workspacesToJoin.size} workspaces`);
+      }
+    }
+  }
+}
+
+/**
+ * Handle installation_repositories events forwarded by Nango
+ */
+async function handleInstallationRepositoriesForward(
+  body: {
+    action?: string;
+    installation?: { id: number; account: { login: string } };
+    repositories_added?: Array<{ id: number; full_name: string; private: boolean }>;
+    repositories_removed?: Array<{ id: number; full_name: string }>;
+    sender?: { id: number; login: string };
+  },
+  connectionId: string
+): Promise<void> {
+  const { action, installation, repositories_added, repositories_removed, sender } = body;
+  if (!installation || !sender) return;
+
+  const installationId = String(installation.id);
+  console.log(`[nango-webhook] Repositories ${action} for ${installation.account.login}`);
+
+  // Find installation in database
+  const dbInstallation = await db.githubInstallations.findByInstallationId(installationId);
+  if (!dbInstallation) {
+    console.error(`[nango-webhook] Installation ${installationId} not found in database`);
+    return;
+  }
+
+  // Find user who triggered this
+  const user = await db.users.findByGithubId(String(sender.id));
+  if (!user) {
+    console.error(`[nango-webhook] User ${sender.login} not found in database`);
+    return;
+  }
+
+  if (action === 'added' && repositories_added) {
+    const workspacesToJoin = new Set<string>();
+
+    for (const repo of repositories_added) {
+      const syncedRepo = await db.repositories.upsert({
+        userId: user.id,
+        githubFullName: repo.full_name,
+        githubId: repo.id,
+        isPrivate: repo.private,
+        installationId: dbInstallation.id,
+        nangoConnectionId: connectionId,
+        syncStatus: 'synced',
+        lastSyncedAt: new Date(),
+      });
+
+      // Check if repo is part of an existing workspace
+      if (syncedRepo.workspaceId) {
+        workspacesToJoin.add(syncedRepo.workspaceId);
+      }
+    }
+
+    // Auto-join user to workspaces for repos they have access to
+    for (const workspaceId of workspacesToJoin) {
+      const existingMembership = await db.workspaceMembers.findMembership(workspaceId, user.id);
+      if (!existingMembership) {
+        const workspace = await db.workspaces.findById(workspaceId);
+        if (workspace) {
+          console.log(`[nango-webhook] Auto-adding ${user.githubUsername} to workspace ${workspace.name}`);
+          await db.workspaceMembers.addMember({
+            workspaceId,
+            userId: user.id,
+            role: 'member',
+            invitedBy: workspace.userId,
+          });
+          await db.workspaceMembers.acceptInvite(workspaceId, user.id);
+        }
+      }
+    }
+
+    console.log(`[nango-webhook] Added ${repositories_added.length} repositories, auto-joined ${workspacesToJoin.size} workspaces`);
+  }
+
+  if (action === 'removed' && repositories_removed) {
+    for (const repo of repositories_removed) {
+      const repos = await db.repositories.findByUserId(user.id);
+      const existingRepo = repos.find(r => r.githubFullName === repo.full_name);
+      if (existingRepo) {
+        await db.repositories.updateSyncStatus(existingRepo.id, 'access_removed');
+      }
+    }
+    console.log(`[nango-webhook] Removed access to ${repositories_removed.length} repositories`);
+  }
+}
+
+/**
  * Handle GitHub App OAuth webhook (repo access)
  */
 async function handleRepoAuthWebhook(
@@ -391,9 +617,12 @@ async function handleRepoAuthWebhook(
     // Fetch repos the user has access to
     const { repositories: repos } = await nangoService.listGithubAppRepos(connectionId);
 
+    // Track workspaces to auto-join
+    const workspacesToJoin = new Set<string>();
+
     // Sync repos to database
     for (const repo of repos) {
-      await db.repositories.upsert({
+      const syncedRepo = await db.repositories.upsert({
         userId: user.id,
         githubFullName: repo.full_name,
         githubId: repo.id,
@@ -404,12 +633,39 @@ async function handleRepoAuthWebhook(
         syncStatus: 'synced',
         lastSyncedAt: new Date(),
       });
+
+      // Check if this repo is part of an existing workspace
+      // If so, automatically add the user as a member
+      if (syncedRepo.workspaceId) {
+        workspacesToJoin.add(syncedRepo.workspaceId);
+      }
+    }
+
+    // Auto-join user to workspaces for repos they have access to
+    for (const workspaceId of workspacesToJoin) {
+      // Check if already a member
+      const existingMembership = await db.workspaceMembers.findMembership(workspaceId, user.id);
+      if (!existingMembership) {
+        // Get workspace owner to use as invitedBy
+        const workspace = await db.workspaces.findById(workspaceId);
+        if (workspace) {
+          console.log(`[nango-webhook] Auto-adding ${user.githubUsername} to workspace ${workspace.name}`);
+          await db.workspaceMembers.addMember({
+            workspaceId,
+            userId: user.id,
+            role: 'member',
+            invitedBy: workspace.userId, // Workspace owner invited them
+          });
+          // Auto-accept since they have GitHub repo access
+          await db.workspaceMembers.acceptInvite(workspaceId, user.id);
+        }
+      }
     }
 
     // Clear any pending installation request
     await db.users.clearPendingInstallationRequest(user.id);
 
-    console.log(`[nango-webhook] Synced ${repos.length} repos for ${user.githubUsername} (installation: ${githubInstallationId || 'unknown'})`);
+    console.log(`[nango-webhook] Synced ${repos.length} repos for ${user.githubUsername} (installation: ${githubInstallationId || 'unknown'}), auto-joined ${workspacesToJoin.size} workspaces`);
 
     // Note: We intentionally do NOT auto-provision workspaces here.
     // Users should go through the onboarding flow at /app to:
