@@ -107,13 +107,29 @@ export function DirectMessageModal({
     });
   }, [messages, participantAgents, selfName, user]);
 
-  // De-duplicate messages (some human sends can arrive twice from different sources)
+  // De-duplicate messages (some human sends can arrive multiple times from different sources)
   const uniqueDmMessages = useMemo(() => {
-    const seen = new Set<string>();
+    const seenIds = new Set<string>();
+    const seenFingerprints = new Map<string, number>(); // fingerprint -> first timestamp
+    const WINDOW_MS = 30_000; // collapse near-duplicate copies within 30s
+
     return dmMessages.filter((msg) => {
-      const key = msg.id || `${msg.from?.toLowerCase()}::${msg.to?.toLowerCase()}::${msg.thread ?? ''}::${msg.content}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
+      const ts = new Date(msg.timestamp).getTime();
+
+      // Prefer id-based de-dupe
+      if (msg.id) {
+        if (seenIds.has(msg.id)) return false;
+        seenIds.add(msg.id);
+      }
+
+      const fingerprint = `${msg.from?.toLowerCase() ?? ''}::${msg.to?.toLowerCase() ?? ''}::${msg.thread ?? ''}::${msg.content}`;
+      const firstSeen = seenFingerprints.get(fingerprint);
+      if (firstSeen !== undefined && Math.abs(ts - firstSeen) < WINDOW_MS) {
+        return false;
+      }
+      if (firstSeen === undefined) {
+        seenFingerprints.set(fingerprint, ts);
+      }
       return true;
     });
   }, [dmMessages]);
