@@ -89,6 +89,8 @@ export interface MessageListProps {
   agents?: Agent[];
   /** Current user info (for cloud mode - shows avatar/username instead of "Dashboard") */
   currentUser?: CurrentUser;
+  /** Skip channel filtering - messages are already filtered (for DM views) */
+  skipChannelFilter?: boolean;
 }
 
 export function MessageList({
@@ -99,6 +101,7 @@ export function MessageList({
   currentThread,
   agents = [],
   currentUser,
+  skipChannelFilter = false,
 }: MessageListProps) {
   // Build a map of agent name -> processing state for quick lookup
   const processingAgents = new Map<string, { isProcessing: boolean; processingStartedAt?: number }>();
@@ -129,6 +132,11 @@ export function MessageList({
     if (currentThread) {
       // Show the original message (id matches thread) or replies (thread field matches)
       return msg.id === currentThread || msg.thread === currentThread;
+    }
+
+    // Skip channel filtering if messages are already filtered (e.g., DM views)
+    if (skipChannelFilter) {
+      return true;
     }
 
     if (currentChannel === 'general') {
