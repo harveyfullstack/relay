@@ -3306,6 +3306,7 @@ export async function startDashboard(
       cli = 'claude',
       task = '',
       team,
+      interactive,
       shadowMode,
       shadowAgent,
       shadowOf,
@@ -3326,6 +3327,7 @@ export async function startDashboard(
         cli,
         task,
         team: team || undefined, // Optional team name
+        interactive, // Disables auto-accept for auth setup flows
         shadowMode,
         shadowAgent,
         shadowOf,

@@ -42,8 +42,8 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
 
-# Copy docs folder (contains relay snippets for agent spawning)
-COPY docs ./docs
+# Copy relay snippets for agent spawning (only what's needed)
+COPY docs/agent-relay-snippet.md docs/agent-relay-protocol.md docs/agent-policy-snippet.md ./docs/
 
 COPY deploy/workspace/entrypoint.sh /entrypoint.sh
 COPY deploy/workspace/git-credential-relay /usr/local/bin/git-credential-relay
@@ -66,7 +66,8 @@ ENV AGENT_RELAY_DASHBOARD_PORT=3888
 ENV PATH="/home/workspace/.local/bin:$PATH"
 
 # Expose ports
-EXPOSE 3888 3889
+# 3888: Dashboard/API, 3889: Daemon, 1455: Codex OAuth callback, 2222: SSH (for tunneling)
+EXPOSE 3888 3889 1455 2222
 
 # Volume for persistent data
 VOLUME ["/data", "/workspace"]

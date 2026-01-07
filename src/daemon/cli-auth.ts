@@ -476,10 +476,19 @@ export async function submitAuthCode(
 
           return { success: true };
         } else {
+          // Try to get error details from response body
+          let errorBody = '';
+          try {
+            errorBody = await response.text();
+          } catch {
+            // Ignore
+          }
           logger.warn('Codex CLI localhost server returned error', {
             sessionId,
             status: response.status,
             statusText: response.statusText,
+            errorBody: errorBody.substring(0, 500), // Limit log size
+            callbackUrl: callbackUrl.replace(/code=[^&]+/, 'code=***'), // Redact code
           });
           // Fall through to PTY write as fallback
         }
@@ -735,6 +744,24 @@ async function extractCredentials(
     return token ? { token } : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Check if a provider is authenticated (credentials exist)
+ * Used by the auth check endpoint for SSH tunnel flow
+ */
+export async function checkProviderAuth(provider: string): Promise<boolean> {
+  const config = CLI_AUTH_CONFIG[provider];
+  if (!config) {
+    return false;
+  }
+
+  try {
+    const creds = await extractCredentials(provider, config);
+    return !!creds?.token;
+  } catch {
+    return false;
   }
 }
 

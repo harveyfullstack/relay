@@ -10,6 +10,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { cloudApi } from '../../lib/cloudApi';
 import { ProviderAuthFlow } from '../ProviderAuthFlow';
+import { TerminalProviderSetup } from '../TerminalProviderSetup';
 import { RepoAccessPanel } from '../RepoAccessPanel';
 
 export interface WorkspaceSettingsPanelProps {
@@ -142,6 +143,11 @@ export function WorkspaceSettingsPanel({
   const [showApiKeyFallback, setShowApiKeyFallback] = useState<Record<string, boolean>>({});
   // Device flow preference for providers that support it
   const [useDeviceFlow, setUseDeviceFlow] = useState<Record<string, boolean>>({});
+  // Use terminal-based setup (default for Claude and Codex)
+  const [useTerminalSetup, setUseTerminalSetup] = useState<Record<string, boolean>>({
+    anthropic: true, // Default to terminal for Claude
+    codex: true, // Default to terminal for Codex - same experience as onboarding
+  });
 
   // Repo sync state
   const [syncingRepoId, setSyncingRepoId] = useState<string | null>(null);
@@ -188,11 +194,8 @@ export function WorkspaceSettingsPanel({
           }
         });
         setProviderStatus(connected);
-        // Auto-enable device flow for Codex in cloud workspaces
-        // Standard OAuth uses localhost callback which isn't accessible from containers
-        if (wsResult.data.computeProvider === 'fly') {
-          setUseDeviceFlow(prev => ({ ...prev, codex: true }));
-        }
+        // Note: Device flow auto-enable removed. SSH tunnel approach handles localhost
+        // callback forwarding for cloud workspaces, so standard OAuth flow works everywhere.
       } else {
         setError(wsResult.error);
       }
@@ -596,29 +599,60 @@ export function WorkspaceSettingsPanel({
                   {!providerStatus[provider.id] && (
                     <div className="mt-5 pt-5 border-t border-border-subtle">
                       {connectingProvider === provider.id ? (
-                        <ProviderAuthFlow
-                          provider={{
-                            id: provider.id,
-                            name: provider.name,
-                            displayName: provider.displayName,
-                            color: provider.color,
-                            requiresUrlCopy: provider.id === 'codex',
-                          }}
-                          workspaceId={workspaceId}
-                          csrfToken={csrfToken}
-                          useDeviceFlow={useDeviceFlow[provider.id] || false}
-                          onSuccess={() => {
-                            setProviderStatus(prev => ({ ...prev, [provider.id]: true }));
-                            setConnectingProvider(null);
-                          }}
-                          onCancel={() => {
-                            setConnectingProvider(null);
-                          }}
-                          onError={(err) => {
-                            setProviderError(err);
-                            setConnectingProvider(null);
-                          }}
-                        />
+                        useTerminalSetup[provider.id] ? (
+                          <TerminalProviderSetup
+                            provider={{
+                              id: provider.id,
+                              name: provider.name,
+                              displayName: provider.displayName,
+                              color: provider.color,
+                            }}
+                            workspaceId={workspaceId}
+                            csrfToken={csrfToken}
+                            maxHeight="350px"
+                            onSuccess={() => {
+                              setProviderStatus(prev => ({ ...prev, [provider.id]: true }));
+                              setConnectingProvider(null);
+                            }}
+                            onCancel={() => {
+                              setConnectingProvider(null);
+                            }}
+                            onError={(err) => {
+                              setProviderError(err);
+                              setConnectingProvider(null);
+                            }}
+                            onConnectAnother={() => {
+                              // Mark current provider as connected and clear selection
+                              // User can then click another provider to connect
+                              setProviderStatus(prev => ({ ...prev, [provider.id]: true }));
+                              setConnectingProvider(null);
+                            }}
+                          />
+                        ) : (
+                          <ProviderAuthFlow
+                            provider={{
+                              id: provider.id,
+                              name: provider.name,
+                              displayName: provider.displayName,
+                              color: provider.color,
+                              requiresUrlCopy: provider.id === 'codex',
+                            }}
+                            workspaceId={workspaceId}
+                            csrfToken={csrfToken}
+                            useDeviceFlow={useDeviceFlow[provider.id] || false}
+                            onSuccess={() => {
+                              setProviderStatus(prev => ({ ...prev, [provider.id]: true }));
+                              setConnectingProvider(null);
+                            }}
+                            onCancel={() => {
+                              setConnectingProvider(null);
+                            }}
+                            onError={(err) => {
+                              setProviderError(err);
+                              setConnectingProvider(null);
+                            }}
+                          />
+                        )
                       ) : showApiKeyFallback[provider.id] ? (
                         <div className="space-y-4">
                           <div className="flex gap-3">

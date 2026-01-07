@@ -16,6 +16,7 @@ import {
 } from '../services/planLimits.js';
 
 const WORKSPACE_PORT = 3888;
+const CODEX_OAUTH_PORT = 1455; // Codex CLI OAuth callback port - must be mapped for local dev
 const FETCH_TIMEOUT_MS = 10_000;
 const WORKSPACE_IMAGE = process.env.WORKSPACE_IMAGE || 'ghcr.io/agentworkforce/relay-workspace:latest';
 
@@ -335,6 +336,7 @@ interface ComputeProvisioner {
   provision(workspace: Workspace, credentials: Map<string, string>): Promise<{
     computeId: string;
     publicUrl: string;
+    sshPort?: number; // Host SSH port for tunneling (Docker only)
   }>;
   deprovision(workspace: Workspace): Promise<void>;
   getStatus(workspace: Workspace): Promise<WorkspaceStatus>;
@@ -520,7 +522,7 @@ class FlyProvisioner implements ComputeProvisioner {
   async provision(
     workspace: Workspace,
     credentials: Map<string, string>
-  ): Promise<{ computeId: string; publicUrl: string }> {
+  ): Promise<{ computeId: string; publicUrl: string; sshPort?: number }> {
     const appName = `ar-${workspace.id.substring(0, 8)}`;
 
     // Stage: Creating workspace
@@ -711,6 +713,9 @@ class FlyProvisioner implements ComputeProvisioner {
               // Git gateway configuration
               CLOUD_API_URL: this.cloudApiUrl,
               WORKSPACE_TOKEN: this.generateWorkspaceToken(workspace.id),
+              // SSH for CLI tunneling (Codex OAuth callback forwarding)
+              ENABLE_SSH: 'true',
+              SSH_PASSWORD: process.env.WORKSPACE_SSH_PASSWORD || 'devpassword',
             },
             services: [
               {
@@ -1184,7 +1189,7 @@ class RailwayProvisioner implements ComputeProvisioner {
   async provision(
     workspace: Workspace,
     credentials: Map<string, string>
-  ): Promise<{ computeId: string; publicUrl: string }> {
+  ): Promise<{ computeId: string; publicUrl: string; sshPort?: number }> {
     // Create project
     const projectResponse = await fetchWithRetry('https://backboard.railway.app/graphql/v2', {
       method: 'POST',
@@ -1485,7 +1490,7 @@ class DockerProvisioner implements ComputeProvisioner {
   async provision(
     workspace: Workspace,
     credentials: Map<string, string>
-  ): Promise<{ computeId: string; publicUrl: string }> {
+  ): Promise<{ computeId: string; publicUrl: string; sshPort?: number }> {
     const containerName = `ar-${workspace.id.substring(0, 8)}`;
 
     // Build environment variables
@@ -1513,6 +1518,9 @@ class DockerProvisioner implements ComputeProvisioner {
     // Run container
     const { execSync } = await import('child_process');
     const hostPort = 3000 + Math.floor(Math.random() * 1000);
+    // SSH port for tunneling (Codex OAuth callback forwarding)
+    // Derive from hostPort to avoid collisions: API port 3500 -> SSH port 22500
+    const sshHostPort = 22000 + (hostPort - 3000);
 
     // When running in Docker, connect to the same network for container-to-container communication
     const runningInDocker = process.env.RUNNING_IN_DOCKER === 'true';
@@ -1529,8 +1537,20 @@ class DockerProvisioner implements ComputeProvisioner {
     }
 
     try {
+      // Map workspace API port and SSH port (for tunneling)
+      // SSH is used by CLI to forward localhost:1455 to workspace container for Codex OAuth
+      // Set CODEX_DIRECT_PORT=true to also map port 1455 directly (for debugging only)
+      const directCodexPort = process.env.CODEX_DIRECT_PORT === 'true';
+      const portMappings = directCodexPort
+        ? `-p ${hostPort}:${WORKSPACE_PORT} -p ${sshHostPort}:2222 -p ${CODEX_OAUTH_PORT}:${CODEX_OAUTH_PORT}`
+        : `-p ${hostPort}:${WORKSPACE_PORT} -p ${sshHostPort}:2222`;
+
+      // Enable SSH in the container for tunneling
+      envArgs.push('-e ENABLE_SSH=true');
+      envArgs.push(`-e SSH_PASSWORD=${process.env.WORKSPACE_SSH_PASSWORD || 'devpassword'}`);
+
       execSync(
-        `docker run -d --user root --name ${containerName} ${networkArg} ${volumeArgs} -p ${hostPort}:${WORKSPACE_PORT} ${envArgs.join(' ')} ${WORKSPACE_IMAGE}`,
+        `docker run -d --user root --name ${containerName} ${networkArg} ${volumeArgs} ${portMappings} ${envArgs.join(' ')} ${WORKSPACE_IMAGE}`,
         { stdio: 'pipe' }
       );
 
@@ -1546,6 +1566,7 @@ class DockerProvisioner implements ComputeProvisioner {
       return {
         computeId: containerName,
         publicUrl,
+        sshPort: sshHostPort,
       };
     } catch (error) {
       // Clean up container if it was created but health check failed

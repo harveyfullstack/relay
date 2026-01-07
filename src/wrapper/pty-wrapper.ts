@@ -50,6 +50,8 @@ export interface PtyWrapperConfig extends BaseWrapperConfig {
   hooks?: LifecycleHooks;
   /** Enable trajectory tracking hooks (default: true if task provided) */
   trajectoryTracking?: boolean;
+  /** Interactive mode - disables auto-accept of permission prompts (for auth setup flows) */
+  interactive?: boolean;
   /**
    * Summary reminder configuration. Set to false to disable.
    * Default: { intervalMinutes: 15, minOutputs: 50 }
@@ -133,6 +135,11 @@ export class PtyWrapper extends BaseWrapper {
   constructor(config: PtyWrapperConfig) {
     super(config);
     this.config = config;
+
+    // Log interactive mode status
+    if (config.interactive) {
+      console.log(`[pty:${config.name}] Starting in INTERACTIVE mode - auto-accept disabled`);
+    }
 
     // Auto-detect agent role from .claude/agents/ or .openagents/ if task not provided
     let detectedTask = config.task;
@@ -276,17 +283,20 @@ export class PtyWrapper extends BaseWrapper {
     this.running = true;
     this.sessionStartTime = Date.now();
 
-    // Dispatch session start hook (handles trajectory initialization)
-    this.hookRegistry.dispatchSessionStart().catch(err => {
-      console.error(`[pty:${this.config.name}] Session start hook error:`, err);
-    });
-
-    // Initialize continuity and get agentId, then inject context
-    this.initializeAgentId()
-      .then(() => this.injectContinuityContext())
-      .catch(err => {
-        console.error(`[pty:${this.config.name}] Agent ID/continuity initialization error:`, err);
+    // Skip hooks and continuity in interactive mode - user handles all prompts directly
+    if (!this.config.interactive) {
+      // Dispatch session start hook (handles trajectory initialization)
+      this.hookRegistry.dispatchSessionStart().catch(err => {
+        console.error(`[pty:${this.config.name}] Session start hook error:`, err);
       });
+
+      // Initialize continuity and get agentId, then inject context
+      this.initializeAgentId()
+        .then(() => this.injectContinuityContext())
+        .catch(err => {
+          console.error(`[pty:${this.config.name}] Agent ID/continuity initialization error:`, err);
+        });
+    }
 
     // Capture output
     this.ptyProcess.onData((data: string) => {
@@ -302,11 +312,16 @@ export class PtyWrapper extends BaseWrapper {
     });
 
     // Inject initial instructions after a delay, then mark ready for messages
+    // Skip in interactive mode - user handles all prompts directly
     setTimeout(() => {
-      this.injectInstructions();
+      if (!this.config.interactive) {
+        this.injectInstructions();
+      }
       this.readyForMessages = true;
-      // Process any messages that arrived while waiting
-      this.processMessageQueue();
+      // Process any messages that arrived while waiting (skip in interactive mode)
+      if (!this.config.interactive) {
+        this.processMessageQueue();
+      }
     }, 2000);
   }
 
@@ -462,10 +477,13 @@ export class PtyWrapper extends BaseWrapper {
     this.parseRelayCommands();
 
     // Dispatch output hook (handles phase detection, etc.)
+    // Skip in interactive mode - no hooks should inject content
     const cleanData = stripAnsi(data);
-    this.hookRegistry.dispatchOutput(cleanData, data).catch(err => {
-      console.error(`[pty:${this.config.name}] Output hook error:`, err);
-    });
+    if (!this.config.interactive) {
+      this.hookRegistry.dispatchOutput(cleanData, data).catch(err => {
+        console.error(`[pty:${this.config.name}] Output hook error:`, err);
+      });
+    }
 
     // Check for [[SUMMARY]] and [[SESSION_END]] blocks and emit events
     // This allows cloud services to handle persistence without hardcoding storage
@@ -480,7 +498,8 @@ export class PtyWrapper extends BaseWrapper {
     // Use rawBuffer (accumulated content) not immediate chunk, since multi-line
     // fenced commands like ->continuity:save <<<...>>> span multiple output events
     // Optimization: Only parse new content with lookback for incomplete fenced commands
-    if (cleanContent.length > this.lastContinuityParsedLength) {
+    // Skip in interactive mode - no continuity features needed
+    if (!this.config.interactive && cleanContent.length > this.lastContinuityParsedLength) {
       const lookbackStart = Math.max(0, this.lastContinuityParsedLength - 500);
       const contentToParse = cleanContent.substring(lookbackStart);
       // Join continuation lines for multi-line fenced commands
@@ -603,6 +622,12 @@ export class PtyWrapper extends BaseWrapper {
    */
   private handleAutoAcceptPrompts(data: string): void {
     if (!this.ptyProcess || !this.running) return;
+
+    // Skip auto-accept in interactive mode - user responds to prompts directly
+    if (this.config.interactive) {
+      console.log(`[pty:${this.config.name}] Interactive mode - skipping auto-accept`);
+      return;
+    }
 
     const cleanData = stripAnsi(data);
 
@@ -1502,6 +1527,8 @@ export class PtyWrapper extends BaseWrapper {
    * Works with any CLI (Claude, Gemini, Codex, etc.)
    */
   private trackOutputAndRemind(data: string): void {
+    // Skip in interactive mode - user handles all prompts directly
+    if (this.config.interactive) return;
     // Disabled if config.summaryReminder === false or env RELAY_SUMMARY_REMINDER_ENABLED=false
     if (this.config.summaryReminder === false) return;
     if (process.env.RELAY_SUMMARY_REMINDER_ENABLED === 'false') return;
