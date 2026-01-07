@@ -1014,6 +1014,8 @@ export async function startDashboard(
       }
 
       if (allSent) {
+        // Broadcast updated data to all connected clients so they see the sent message
+        broadcastData().catch((err) => console.error('[dashboard] Failed to broadcast after send:', err));
         res.json({ success: true, sentTo: targets.length > 1 ? targets : targets[0] });
       } else {
         res.status(500).json({ error: 'Failed to send message to some recipients' });
