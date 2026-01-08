@@ -135,11 +135,20 @@ export function SpawnModal({
   }, [isCloudMode, selectedTemplate.providerId, connectedProviders]);
 
   // Provider setup URL for CTA
+  // Note: /providers/setup/ only supports 'claude' and 'codex'
+  // Other providers should go to /providers page
   const providerSetupUrl = useMemo(() => {
     if (!selectedTemplate.providerId) return null;
     const command = selectedTemplate.command;
-    const base = `/providers/setup/${command}`;
-    return workspaceId ? `${base}?workspace=${workspaceId}` : base;
+    const supportedSetupPages = ['claude', 'codex'];
+
+    if (supportedSetupPages.includes(command)) {
+      const base = `/providers/setup/${command}`;
+      return workspaceId ? `${base}?workspace=${workspaceId}` : base;
+    } else {
+      // For other providers, go to main providers page
+      return workspaceId ? `/providers?workspace=${workspaceId}` : '/providers';
+    }
   }, [selectedTemplate, workspaceId]);
 
   // Fetch connected providers when modal opens in cloud mode
