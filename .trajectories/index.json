@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-07T16:17:39.299Z",
+  "lastUpdated": "2026-01-07T21:41:49.091Z",
   "trajectories": {
     "traj_ozd98si6a7ns": {
       "title": "Fix thinking indicator showing on all messages",
@@ -470,6 +470,34 @@
       "startedAt": "2026-01-07T16:17:28.232Z",
       "completedAt": "2026-01-07T16:17:39.267Z",
       "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_c9izbh2snpzf.json"
+    },
+    "traj_ax8uungxz2qh": {
+      "title": "Fix DM participant toggle (removal not working)",
+      "status": "completed",
+      "startedAt": "2026-01-07T19:10:39.600Z",
+      "completedAt": "2026-01-07T19:26:00.289Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_ax8uungxz2qh.json"
+    },
+    "traj_1g7yx6qtg4ai": {
+      "title": "Inline DM conversation with agent invites",
+      "status": "completed",
+      "startedAt": "2026-01-07T19:32:42.245Z",
+      "completedAt": "2026-01-07T19:32:52.650Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_1g7yx6qtg4ai.json"
+    },
+    "traj_yvfkwnkdiso2": {
+      "title": "DM invite button sticky + command palette",
+      "status": "completed",
+      "startedAt": "2026-01-07T19:46:11.952Z",
+      "completedAt": "2026-01-07T19:46:25.825Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_yvfkwnkdiso2.json"
+    },
+    "traj_lgtodco7dp1n": {
+      "title": "DM routing/flow cleanup",
+      "status": "completed",
+      "startedAt": "2026-01-07T21:41:28.024Z",
+      "completedAt": "2026-01-07T21:41:49.080Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_lgtodco7dp1n.json"
     }
   }
 }

@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import type { Agent, Project } from '../types';
+import type { Agent, Project, Message } from '../types';
 import { Sidebar } from './layout/Sidebar';
 import { Header } from './layout/Header';
 import { MessageList } from './MessageList';
@@ -28,7 +28,7 @@ import type { ServerInfo } from './ServerCard';
 import { TypingIndicator } from './TypingIndicator';
 import { OnlineUsersIndicator } from './OnlineUsersIndicator';
 import { UserProfilePanel } from './UserProfilePanel';
-import { DirectMessageModal } from './DirectMessageModal';
+import { useDirectMessage } from './hooks/useDirectMessage';
 import { CoordinatorPanel } from './CoordinatorPanel';
 import { BillingResult } from './BillingResult';
 import { UsageBanner } from './UsageBanner';
@@ -185,9 +185,6 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   // User profile panel state
   const [selectedUserProfile, setSelectedUserProfile] = useState<UserPresence | null>(null);
 
-  // Direct message modal state
-  const [dmUser, setDmUser] = useState<UserPresence | null>(null);
-
   // View mode state
   const [viewMode, setViewMode] = useState<'local' | 'fleet'>('local');
 
@@ -220,6 +217,10 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   // New conversation modal state
   const [isNewConversationOpen, setIsNewConversationOpen] = useState(false);
+
+  // DM participant selections (human -> invited agents) and removals
+  const [dmSelectedAgentsByHuman, setDmSelectedAgentsByHuman] = useState<Record<string, string[]>>({});
+  const [dmRemovedAgentsByHuman, setDmRemovedAgentsByHuman] = useState<Record<string, string[]>>({});
 
   // Log viewer panel state
   const [logViewerAgent, setLogViewerAgent] = useState<Agent | null>(null);
@@ -335,6 +336,33 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     senderName: currentUser?.displayName,
   });
 
+  // Human context (DM inline view)
+  const currentHuman = useMemo(() => {
+    if (!currentChannel) return null;
+    return combinedAgents.find(
+      (a) => a.isHuman && a.name.toLowerCase() === currentChannel.toLowerCase()
+    ) || null;
+  }, [combinedAgents, currentChannel]);
+
+  const selectedDmAgents = useMemo(
+    () => (currentHuman ? dmSelectedAgentsByHuman[currentHuman.name] ?? [] : []),
+    [currentHuman, dmSelectedAgentsByHuman]
+  );
+  const removedDmAgents = useMemo(
+    () => (currentHuman ? dmRemovedAgentsByHuman[currentHuman.name] ?? [] : []),
+    [currentHuman, dmRemovedAgentsByHuman]
+  );
+
+  // Use DM hook for message filtering and deduplication
+  const { visibleMessages: dedupedVisibleMessages, participantAgents: dmParticipantAgents } = useDirectMessage({
+    currentHuman,
+    currentUserName: currentUser?.displayName ?? null,
+    messages,
+    agents,
+    selectedDmAgents,
+    removedDmAgents,
+  });
+
   // Extract human users from messages (users who are not agents)
   // This enables @ mentioning other human users in cloud mode
   const humanUsers = useMemo((): HumanUser[] => {
@@ -392,12 +420,16 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     return counts;
   }, [combinedAgents, currentUser, data?.messages, dmSeenAt]);
 
-  // When DM modal opens, mark that conversation as seen for unread tracking
+  // Mark DM as seen when actively viewing a human channel
   useEffect(() => {
-    if (dmUser?.username) {
-      markDmSeen(dmUser.username);
+    if (!currentUser || !currentChannel) return;
+    const humanNameSet = new Set(
+      combinedAgents.filter((a) => a.isHuman).map((a) => a.name.toLowerCase())
+    );
+    if (humanNameSet.has(currentChannel.toLowerCase())) {
+      markDmSeen(currentChannel);
     }
-  }, [dmUser?.username, markDmSeen]);
+  }, [combinedAgents, currentChannel, currentUser, markDmSeen]);
 
   // Track unread messages when sidebar is closed on mobile
   useEffect(() => {
@@ -685,15 +717,70 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   // Open a DM with a human user from the sidebar
   const handleHumanSelect = useCallback((human: Agent) => {
-    setDmUser({
-      username: human.name,
-      avatarUrl: human.avatarUrl,
-      connectedAt: new Date().toISOString(),
-      lastSeen: new Date().toISOString(),
-    });
+    setCurrentChannel(human.name);
     markDmSeen(human.name);
     closeSidebarOnMobile();
-  }, [closeSidebarOnMobile, markDmSeen]);
+  }, [closeSidebarOnMobile, markDmSeen, setCurrentChannel]);
+
+  const handleDmAgentToggle = useCallback((agentName: string) => {
+    if (!currentHuman) return;
+    const humanName = currentHuman.name;
+    const isSelected = (dmSelectedAgentsByHuman[humanName] ?? []).includes(agentName);
+
+    setDmSelectedAgentsByHuman((prev) => {
+      const currentList = prev[humanName] ?? [];
+      const nextList = isSelected
+        ? currentList.filter((a) => a !== agentName)
+        : [...currentList, agentName];
+      return { ...prev, [humanName]: nextList };
+    });
+
+    setDmRemovedAgentsByHuman((prev) => {
+      const currentList = prev[humanName] ?? [];
+      if (isSelected) {
+        // Mark as removed so derived participants don't auto-readd
+        return currentList.includes(agentName)
+          ? prev
+          : { ...prev, [humanName]: [...currentList, agentName] };
+      }
+      // Re-adding clears removal
+      return { ...prev, [humanName]: currentList.filter((a) => a !== agentName) };
+    });
+  }, [currentHuman, dmSelectedAgentsByHuman]);
+
+  const handleDmSend = useCallback(async (_to: string, content: string): Promise<boolean> => {
+    if (!currentHuman) return false;
+    const humanName = currentHuman.name;
+
+    // Always send to the human
+    await sendMessage(humanName, content);
+
+    // Only send to agents if they were explicitly selected for this conversation
+    // Don't send to agents in pure 1:1 human conversations
+    if (selectedDmAgents.length > 0) {
+      for (const agent of selectedDmAgents) {
+        await sendMessage(agent, content);
+      }
+    }
+
+    return true;
+  }, [currentHuman, selectedDmAgents, sendMessage]);
+
+  const dmInviteCommands = useMemo(() => {
+    if (!currentHuman) return [];
+    return agents
+      .filter((a) => !a.isHuman)
+      .map((agent) => {
+        const isSelected = (dmSelectedAgentsByHuman[currentHuman.name] ?? []).includes(agent.name);
+        return {
+          id: `dm-toggle-${currentHuman.name}-${agent.name}`,
+          label: `${isSelected ? 'Remove' : 'Invite'} ${agent.name} in DM`,
+          description: `DM with ${currentHuman.name}`,
+          category: 'actions' as const,
+          action: () => handleDmAgentToggle(agent.name),
+        };
+      });
+  }, [agents, currentHuman, dmSelectedAgentsByHuman, handleDmAgentToggle]);
 
   // Handle send from new conversation modal - select the channel after sending
   const handleNewConversationSend = useCallback(async (to: string, content: string): Promise<boolean> => {
@@ -1097,6 +1184,37 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         <div className="flex-1 flex overflow-hidden min-h-0">
           {/* Message List */}
           <div className={`flex-1 min-h-0 overflow-y-auto ${currentThread ? 'hidden md:block md:flex-[2]' : ''}`}>
+            {currentHuman && (
+              <div className="px-4 py-2 border-b border-border-subtle bg-bg-secondary flex flex-col gap-2 sticky top-0 z-10">
+                <div className="text-xs text-text-muted">
+                  DM with <span className="font-semibold text-text-primary">{currentHuman.name}</span>. Invite agents:
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {agents
+                    .filter((a) => !a.isHuman)
+                    .map((agent) => {
+                      const isSelected = (dmSelectedAgentsByHuman[currentHuman.name] ?? []).includes(agent.name);
+                      return (
+                        <button
+                          key={agent.name}
+                          onClick={() => handleDmAgentToggle(agent.name)}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                            isSelected
+                              ? 'bg-accent-cyan text-bg-deep'
+                              : 'bg-bg-tertiary text-text-secondary hover:bg-bg-tertiary/80'
+                          }`}
+                          title={agent.name}
+                        >
+                          {isSelected ? '✓ ' : ''}{agent.name}
+                        </button>
+                      );
+                    })}
+                  {agents.filter((a) => !a.isHuman).length === 0 && (
+                    <span className="text-xs text-text-muted">No agents available</span>
+                  )}
+                </div>
+              </div>
+            )}
             {wsError ? (
               <div className="flex flex-col items-center justify-center h-full text-text-muted text-center px-4">
                 <ErrorIcon />
@@ -1130,13 +1248,14 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
               </div>
             ) : (
               <MessageList
-                messages={messages}
+                messages={dedupedVisibleMessages}
                 currentChannel={currentChannel}
                 currentThread={currentThread}
                 onThreadClick={(messageId) => setCurrentThread(messageId)}
                 highlightedMessageId={currentThread ?? undefined}
                 agents={combinedAgents}
                 currentUser={currentUser}
+                skipChannelFilter={currentHuman !== null}
               />
             )}
           </div>
@@ -1196,7 +1315,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
             recipient={currentChannel === 'general' ? '*' : currentChannel}
             agents={agents}
             humanUsers={humanUsers}
-            onSend={sendMessage}
+            onSend={currentHuman ? handleDmSend : sendMessage}
             onTyping={sendTyping}
             isSending={isSending}
             error={sendError}
@@ -1219,6 +1338,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           selectAgent(null);
           setCurrentChannel('general');
         }}
+        customCommands={dmInviteCommands}
       />
 
       {/* Spawn Modal */}
@@ -1376,22 +1496,10 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           setSelectedUserProfile(null);
         }}
         onSendMessage={(user) => {
-          setDmUser(user);
+          setCurrentChannel(user.username);
+          markDmSeen(user.username);
+          setSelectedUserProfile(null);
         }}
-      />
-
-      {/* Direct Message Modal */}
-      <DirectMessageModal
-        user={dmUser}
-        onClose={() => setDmUser(null)}
-        messages={data?.messages ?? []}
-        agents={agents}
-        humanUsers={humanUsers}
-        onSend={sendMessage}
-        onTyping={sendTyping}
-        isSending={isSending}
-        sendError={sendError}
-        currentUser={currentUser}
       />
 
       {/* Coordinator Panel */}
