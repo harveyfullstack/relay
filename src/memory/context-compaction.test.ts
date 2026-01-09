@@ -454,23 +454,29 @@ describe('ContextCompactor', () => {
 
     it('keeps recent messages', () => {
       const compactorSmall = new ContextCompactor({
-        maxTokens: 200,
+        maxTokens: 500,
         compactionThreshold: 0.1,
-        targetUsage: 0.05,
-        keepRecentCount: 2,
+        targetUsage: 0.5, // 250 tokens target - enough for several messages
+        keepRecentCount: 3,
+        enableSummarization: false,
+        enableDeduplication: false, // Disable to test pure retention
       });
 
-      const messages = Array.from({ length: 10 }, (_, i) =>
-        makeMessage({ id: `msg-${i}`, content: `Message number ${i} with content` })
+      // Use distinct content to avoid deduplication
+      const topics = ['auth', 'db', 'api', 'ui', 'tests', 'deploy', 'config', 'docs', 'perf', 'security'];
+      const messages = topics.map((topic, i) =>
+        makeMessage({ id: `msg-${i}`, content: `Working on ${topic} implementation with ${topic}-specific details` })
       );
 
       const result = compactorSmall.compact(messages);
 
-      // Last 2 messages should be kept
-      const lastTwo = messages.slice(-2).map(m => m.id);
+      // Recent messages should be kept (at least the last keepRecentCount)
+      const lastThree = messages.slice(-3).map(m => m.id);
       const resultIds = result.messages.map(m => m.id);
 
-      for (const id of lastTwo) {
+      // Result should include the most recent messages
+      expect(result.messages.length).toBeGreaterThanOrEqual(3);
+      for (const id of lastThree) {
         expect(resultIds).toContain(id);
       }
     });

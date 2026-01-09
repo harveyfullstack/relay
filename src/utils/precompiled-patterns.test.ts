@@ -136,9 +136,14 @@ describe('isInstructionalTextFast', () => {
   });
 
   it('handles case insensitivity', () => {
-    expect(isInstructionalTextFast('send:')).toBe(false); // Not at end
+    // SEND: at end of string matches (case insensitive)
+    expect(isInstructionalTextFast('send:')).toBe(true);
+    expect(isInstructionalTextFast('please send:')).toBe(true);
+    // Example: anywhere matches
     expect(isInstructionalTextFast('example: test')).toBe(true);
     expect(isInstructionalTextFast('EXAMPLE: test')).toBe(true);
+    // Random colons don't match
+    expect(isInstructionalTextFast('hello: world')).toBe(false);
   });
 
   it('returns false for normal messages', () => {

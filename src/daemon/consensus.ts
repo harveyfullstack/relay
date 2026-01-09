@@ -427,7 +427,9 @@ export class ConsensusEngine extends EventEmitter {
 
     switch (proposal.consensusType) {
       case 'unanimous': {
-        // All participants must approve
+        // All participants must approve - any reject makes it impossible
+        const hasReject = proposal.votes.some(v => v.value === 'reject');
+        if (hasReject) return 'rejected';
         if (proposal.votes.length < proposal.participants.length) {
           return 'no_consensus';
         }
