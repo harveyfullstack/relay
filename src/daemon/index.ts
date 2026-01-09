@@ -10,3 +10,8 @@ export * from './types.js';
 export * from './orchestrator.js';
 export * from './workspace-manager.js';
 export * from './agent-manager.js';
+
+// Enhanced features (performance, reliability, coordination)
+export * from './enhanced-features.js';
+export * from './agent-signing.js';
+export * from './consensus.js';
