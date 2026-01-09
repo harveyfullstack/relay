@@ -77,6 +77,66 @@ Status check: [task]?>>>
 ->relay:release AgentName
 ```
 
+## Agent-Relay CLI for Direct Visibility
+
+Don't just rely on agent messages - use `agent-relay` CLI directly for real-time insight:
+
+**List Active Agents:**
+```bash
+agent-relay agents
+# Shows: NAME, STATUS, CLI, TEAM
+```
+
+**View Agent Logs:**
+```bash
+agent-relay agents:logs <name>
+# Tail output from spawned agent directly
+```
+
+**Check Daemon Status:**
+```bash
+agent-relay status
+# See if relay daemon is running
+```
+
+**View Full Help:**
+```bash
+agent-relay -h
+# All available commands
+```
+
+**When to Use:**
+- Agent goes silent → check logs: `agent-relay agents:logs AgentName`
+- Need real-time visibility → `agent-relay agents`
+- Verify daemon healthy → `agent-relay status`
+- Tail logs while monitoring → `agent-relay agents:logs <name>` in separate terminal
+
+**Tail Agent Logs (Most Useful):**
+```bash
+# View last 50 lines of agent output
+agent-relay agents:logs <name>
+
+# View last N lines
+agent-relay agents:logs <name> -n 100
+
+# Follow output in real-time (like tail -f)
+agent-relay agents:logs <name> --follow
+agent-relay agents:logs <name> -f
+
+# Use in separate terminal while agent works for live monitoring
+```
+
+**Common Pattern:**
+```bash
+# Terminal 1: Monitor agent progress live
+agent-relay agents:logs TrailDocumentor -f
+
+# Terminal 2: Send task to agent
+->relay:TrailDocumentor <<<task details>>>
+```
+
+This gives you real-time visibility into what agents are actually doing, bypassing relay message delays.
+
 ## Anti-Patterns
 
 ❌ Reading 500-line files to understand architecture → ✅ Delegate reading task
