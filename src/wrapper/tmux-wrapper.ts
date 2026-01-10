@@ -50,7 +50,7 @@ import {
   INJECTION_CONSTANTS,
   CLI_QUIRKS,
 } from './shared.js';
-import { UniversalIdleDetector, getTmuxPanePid } from './idle-detector.js';
+import { getTmuxPanePid } from './idle-detector.js';
 
 const execAsync = promisify(exec);
 
@@ -141,7 +141,6 @@ export class TmuxWrapper extends BaseWrapper {
   private authRevoked = false; // Track if auth has been revoked
   private lastAuthCheck = 0; // Timestamp of last auth check (throttle)
   private readonly AUTH_CHECK_INTERVAL = 5000; // Check auth status every 5 seconds max
-  private idleDetector: UniversalIdleDetector; // Universal idle detection for injection timing
 
   constructor(config: TmuxWrapperConfig) {
     // Merge defaults with config
@@ -182,12 +181,6 @@ export class TmuxWrapper extends BaseWrapper {
     }
 
     this.parser = new OutputParser({ prefix: this.relayPrefix });
-
-    // Initialize universal idle detector for robust injection timing
-    this.idleDetector = new UniversalIdleDetector({
-      minSilenceMs: mergedConfig.idleBeforeInjectMs ?? 1500,
-      confidenceThreshold: 0.7,
-    });
 
     // Initialize inbox if using file-based messaging
     if (config.useInbox) {
@@ -533,7 +526,7 @@ export class TmuxWrapper extends BaseWrapper {
     try {
       const pid = await getTmuxPanePid(this.tmuxPath, this.sessionName);
       if (pid) {
-        this.idleDetector.setPid(pid);
+        this.setIdleDetectorPid(pid);
         this.logStderr(`Idle detector initialized with PID ${pid}`);
       } else {
         this.logStderr('Could not get pane PID for idle detection (will use output analysis)');
@@ -752,7 +745,7 @@ export class TmuxWrapper extends BaseWrapper {
 
         // Feed new output to idle detector for more robust idle detection
         const newOutput = stdout.substring(this.processedOutputLength);
-        this.idleDetector.onOutput(newOutput);
+        this.feedIdleDetectorOutput(newOutput);
 
         this.processedOutputLength = stdout.length;
 
@@ -1404,17 +1397,15 @@ export class TmuxWrapper extends BaseWrapper {
 
   /**
    * Check if we should inject a message.
-   * Uses UniversalIdleDetector for robust cross-CLI idle detection.
+   * Uses UniversalIdleDetector (from BaseWrapper) for robust cross-CLI idle detection.
    */
   private checkForInjectionOpportunity(): void {
     if (this.messageQueue.length === 0) return;
     if (this.isInjecting) return;
     if (!this.running) return;
 
-    // Use universal idle detector for more reliable detection
-    const idleResult = this.idleDetector.checkIdle({
-      minSilenceMs: this.config.idleBeforeInjectMs ?? 1500,
-    });
+    // Use universal idle detector for more reliable detection (inherited from BaseWrapper)
+    const idleResult = this.checkIdleForInjection();
 
     if (!idleResult.isIdle) {
       // Not idle yet, retry later
