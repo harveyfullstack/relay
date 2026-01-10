@@ -2629,7 +2629,15 @@ export async function startDashboard(
 
       const creds = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
       // Check if we have a valid access token or API key
-      const hasToken = !!(creds.access_token || creds.token || creds.api_key || creds.OPENAI_API_KEY);
+      // Codex stores tokens in a nested 'tokens' object: { tokens: { access_token, refresh_token } }
+      const hasToken = !!(
+        creds.access_token ||
+        creds.token ||
+        creds.api_key ||
+        creds.OPENAI_API_KEY ||
+        creds.tokens?.access_token ||
+        creds.tokens?.refresh_token
+      );
 
       res.json({ authenticated: hasToken });
     } catch (_error) {
