@@ -16,6 +16,7 @@ The multi-agent AI landscape has exploded in 2025-2026, with 86% of copilot spen
 
 | Category | Tools | agent-relay Overlap |
 |----------|-------|---------------------|
+| **Autonomous Coding Platforms** | Auto-Claude | Different scope (complete vs composable) |
 | **Orchestration Frameworks** | LangGraph, CrewAI, AutoGen | Integrates with, doesn't replace |
 | **Agent-to-Agent Messaging** | mcp_agent_mail, swarm-mail | Direct competitor |
 | **Desktop Orchestrators** | Maestro, AI Maestro | Complementary (UI layer) |
@@ -26,7 +27,52 @@ The multi-agent AI landscape has exploded in 2025-2026, with 86% of copilot spen
 
 ## Detailed Comparisons
 
-### 1. Orchestration Frameworks
+### 1. Autonomous Coding Platforms
+
+#### Auto-Claude
+
+[Auto-Claude](https://github.com/AndyMik90/Auto-Claude) is an autonomous multi-agent coding framework that handles the full development lifecycle from specification to deployment.
+
+| Aspect | Auto-Claude | agent-relay |
+|--------|-------------|-------------|
+| **Scope** | Complete autonomous coding platform | Messaging layer only |
+| **Architecture** | Monolithic (Python backend + Electron frontend) | Composable CLI tool |
+| **Agent Types** | Planner, Coder, QA Reviewer, QA Fixer | Any CLI agent |
+| **Concurrency** | Up to 12 parallel agent terminals | ~50 concurrent agents |
+| **Interface** | Desktop app (Kanban, terminals, roadmap) | CLI + web dashboard |
+| **Memory** | Graphiti + LadybugDB knowledge graphs | SQLite message history |
+| **Git Integration** | Worktree isolation, AI merge resolution | None (pair with git tools) |
+| **QA** | Self-validating loops with automated fixing | None (pair with QA tools) |
+| **Setup** | Python 3.12+, Node.js, OAuth token | Node.js 20+, tmux |
+| **Integrations** | GitHub, GitLab, Linear | Any CLI, bridge mode |
+| **Communication** | Internal agent coordination | `->relay:` patterns |
+
+**Key Differences:**
+- Auto-Claude is a **complete solution** handling planning, coding, QA, and merging
+- agent-relay is a **focused messaging layer** that integrates with other tools
+- Auto-Claude uses Claude Agent SDK exclusively; agent-relay wraps any CLI agent
+- Auto-Claude has built-in memory/knowledge graphs; agent-relay is stateless
+- Auto-Claude requires desktop app or Python CLI; agent-relay is pure CLI
+
+**When to choose Auto-Claude:**
+- You want an all-in-one autonomous coding solution
+- You need built-in QA validation and auto-fixing
+- You want visual task management (Kanban, roadmap)
+- You're building with Claude exclusively
+- You need cross-session memory and knowledge graphs
+
+**When to choose agent-relay:**
+- You want to compose your own toolchain
+- You need real-time (<5ms) messaging between agents
+- You're using heterogeneous agents (Claude, Codex, Gemini, etc.)
+- You prefer CLI-native workflows without desktop apps
+- You want to integrate with existing orchestration tools
+
+**Verdict:** Auto-Claude and agent-relay serve different philosophies. Auto-Claude is a batteries-included platform for autonomous development. agent-relay is a Unix-philosophy building block. **They can work together:** Use Auto-Claude for autonomous task execution, agent-relay to coordinate Auto-Claude instances across projects or with other agent types.
+
+---
+
+### 2. Orchestration Frameworks
 
 #### LangGraph
 
@@ -68,7 +114,7 @@ The multi-agent AI landscape has exploded in 2025-2026, with 86% of copilot spen
 
 ---
 
-### 2. Agent-to-Agent Messaging (Direct Competitors)
+### 3. Agent-to-Agent Messaging (Direct Competitors)
 
 #### mcp_agent_mail
 
@@ -114,7 +160,7 @@ The multi-agent AI landscape has exploded in 2025-2026, with 86% of copilot spen
 
 ---
 
-### 3. Desktop Orchestrators
+### 4. Desktop Orchestrators
 
 #### Maestro (runmaestro.ai)
 
@@ -142,7 +188,7 @@ The multi-agent AI landscape has exploded in 2025-2026, with 86% of copilot spen
 
 ---
 
-### 4. Development Platforms
+### 5. Development Platforms
 
 #### OpenAI Swarm
 
@@ -169,7 +215,7 @@ The multi-agent AI landscape has exploded in 2025-2026, with 86% of copilot spen
 
 ---
 
-### 5. Memory & Knowledge Systems
+### 6. Memory & Knowledge Systems
 
 #### Mimir
 
@@ -185,19 +231,22 @@ The multi-agent AI landscape has exploded in 2025-2026, with 86% of copilot spen
 
 ## Feature Matrix
 
-| Feature | agent-relay | mcp_agent_mail | swarm-mail | CrewAI | LangGraph |
-|---------|-------------|----------------|------------|--------|-----------|
-| **Setup Time** | 1 min | 5 min | 10 min | 15 min | 30 min |
-| **Latency** | <5ms | ~100ms | ~50ms | Varies | Varies |
-| **CLI Wrapping** | Any CLI | MCP agents | OpenCode | Python | Python |
-| **File Reservations** | No | Yes | Yes | No | No |
-| **Message Persistence** | Yes | Yes | Yes | No | Yes |
-| **Learning/Adaptation** | No | No | Yes | No | No |
-| **Multi-Project** | Bridge mode | Sibling detection | .hive/ | Manual | Manual |
-| **Web Dashboard** | Yes | Yes | No | No | LangSmith |
-| **Agent Modification** | Not required | MCP required | Plugin req. | Code req. | Code req. |
-| **Model Agnostic** | Yes | Yes | OpenCode | Yes | Yes |
-| **Open Source** | Yes | Yes | Yes | Partial | Yes |
+| Feature | agent-relay | Auto-Claude | mcp_agent_mail | swarm-mail | CrewAI | LangGraph |
+|---------|-------------|-------------|----------------|------------|--------|-----------|
+| **Setup Time** | 1 min | 15 min | 5 min | 10 min | 15 min | 30 min |
+| **Latency** | <5ms | N/A (internal) | ~100ms | ~50ms | Varies | Varies |
+| **CLI Wrapping** | Any CLI | Claude only | MCP agents | OpenCode | Python | Python |
+| **File Reservations** | No | Git worktrees | Yes | Yes | No | No |
+| **Message Persistence** | Yes | Internal | Yes | Yes | No | Yes |
+| **Learning/Adaptation** | No | Cross-session memory | No | Yes | No | No |
+| **Multi-Project** | Bridge mode | Per-project | Sibling detection | .hive/ | Manual | Manual |
+| **Web Dashboard** | Yes | Desktop app | Yes | No | No | LangSmith |
+| **Agent Modification** | Not required | N/A (built-in) | MCP required | Plugin req. | Code req. | Code req. |
+| **Model Agnostic** | Yes | Claude only | Yes | OpenCode | Yes | Yes |
+| **Open Source** | Yes | Yes | Yes | Yes | Partial | Yes |
+| **Built-in QA** | No | Yes (auto-fix) | No | No | No | No |
+| **Desktop UI** | No | Yes (Electron) | No | No | No | No |
+| **Concurrent Agents** | ~50 | 12 terminals | ~20 | ~10 | Varies | Varies |
 
 ---
 
@@ -225,6 +274,15 @@ The multi-agent AI landscape has exploded in 2025-2026, with 86% of copilot spen
 - You want learning from past executions
 - You need context survival across compaction
 - You're using OpenCode exclusively
+
+### Choose Auto-Claude when:
+
+- You want autonomous end-to-end development (spec → code → QA → merge)
+- You need visual task management (Kanban, roadmap)
+- You want built-in QA with self-healing loops
+- You're working exclusively with Claude models
+- You need cross-session memory and knowledge graphs
+- You prefer a polished desktop experience
 
 ### Choose orchestration frameworks (CrewAI/LangGraph) when:
 
@@ -260,6 +318,12 @@ Best for: Teams needing file coordination and full audit trails
 CrewAI (orchestration) + LangGraph (workflows) + agent-relay (real-time)
 ```
 Best for: Large teams with complex workflows
+
+### Stack 5: Autonomous Development
+```
+Auto-Claude (autonomous coding) + agent-relay (cross-instance coordination)
+```
+Best for: Hands-off autonomous development with multi-project coordination
 
 ---
 
@@ -346,6 +410,7 @@ agent-relay occupies a unique position in the multi-agent ecosystem: **the faste
 
 ## References
 
+- [Auto-Claude](https://github.com/AndyMik90/Auto-Claude) - Autonomous multi-agent coding framework
 - [LangGraph](https://github.com/langchain-ai/langgraph) - State machine-based agent workflows
 - [CrewAI](https://www.crewai.com/) - Role-based multi-agent framework
 - [AutoGen](https://github.com/microsoft/autogen) - Microsoft's multi-agent conversation framework
