@@ -255,7 +255,7 @@ export class SyncQueue {
   /**
    * Send messages to cloud API with optional compression.
    */
-  private async sendToCloud(messages: StoredMessage[], estimatedBytes: number): Promise<SyncResult> {
+  private async sendToCloud(messages: StoredMessage[], _estimatedBytes: number): Promise<SyncResult> {
     // Transform to API format
     const syncPayload = {
       messages: messages.map((msg) => ({

@@ -10,7 +10,7 @@ import { Pool } from 'pg';
 import { eq, and, sql, desc, lt, isNull, isNotNull, inArray } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { getConfig } from '../config.js';
-import { DEFAULT_POOL_CONFIG, type PoolConfig } from './bulk-ingest.js';
+import { DEFAULT_POOL_CONFIG } from './bulk-ingest.js';
 
 // Types
 export type {

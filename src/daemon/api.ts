@@ -26,7 +26,7 @@ import {
   cancelAuthSession,
   getSupportedProviders,
 } from './cli-auth.js';
-import { getRepoManager, initRepoManager, type RepoInfo } from './repo-manager.js';
+import { getRepoManager, initRepoManager } from './repo-manager.js';
 
 const logger = createLogger('daemon-api');
 

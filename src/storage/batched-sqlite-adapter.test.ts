@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BatchedSqliteAdapter, DEFAULT_BATCH_CONFIG } from './batched-sqlite-adapter.js';
+import { BatchedSqliteAdapter } from './batched-sqlite-adapter.js';
 import type { StoredMessage } from './adapter.js';
 
 const makeMessage = (overrides: Partial<StoredMessage> = {}): StoredMessage => ({

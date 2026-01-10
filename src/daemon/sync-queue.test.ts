@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { SyncQueue, DEFAULT_SYNC_QUEUE_CONFIG } from './sync-queue.js';
+import { SyncQueue } from './sync-queue.js';
 import type { StoredMessage } from '../storage/adapter.js';
 
 const makeMessage = (overrides: Partial<StoredMessage> = {}): StoredMessage => ({
@@ -380,7 +380,7 @@ describe('SyncQueue', () => {
       await queue.enqueue(makeMessage({ id: 'close-msg' }));
 
       // Stats should show message queued but not synced yet
-      let stats = queue.getStats();
+      const stats = queue.getStats();
       expect(stats.queuedMessages).toBe(1);
       expect(stats.totalSynced).toBe(0);
 

@@ -2601,7 +2601,7 @@ export async function startDashboard(
       const hasToken = !!(creds.access_token || creds.token || creds.api_key || creds.OPENAI_API_KEY);
 
       res.json({ authenticated: hasToken });
-    } catch (error) {
+    } catch (_error) {
       // File doesn't exist or is invalid
       res.json({ authenticated: false });
     }
