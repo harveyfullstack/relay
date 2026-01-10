@@ -1,23 +1,33 @@
-# Git Push Workaround for Agent Relay Workspace
+# Git Push Configuration for Agent Relay Workspace
 
-## Problem
+## Problem (Now Fixed!)
 
-When trying to push from the agent relay workspace, git fails with:
+When trying to push from the agent relay workspace, git was failing with:
 ```
 fatal: could not read Username for 'https://github.com/AgentWorkforce/relay.git': terminal prompts disabled
 ```
 
-This happens because:
-1. Terminal prompts are disabled in the sandbox environment
-2. SSH host key verification fails (no SSH key available)
-3. Git credential helper (`git-credential-relay`) requires environment setup
+**Root Cause:** The user's `~/.gitconfig` had conflicting credential helper settings:
+```
+credential.helper = /usr/local/bin/git-credential-relay          # Global
+credential "https://github.com".helper = !/usr/bin/gh auth git-credential  # Overrides
+```
 
-## Solution
+The host-specific override forced git to use `gh auth git-credential`, which requires interactive terminal input.
 
-Use `gh` CLI to inject the token directly into the HTTPS URL:
+## Solution (Permanent Fix)
+
+Remove the conflicting `gh auth git-credential` overrides from your gitconfig:
 
 ```bash
-GH_TOKEN=$(gh auth token) git push https://${GH_TOKEN}@github.com/AgentWorkforce/relay.git <branch>:<branch>
+git config --global --unset-all 'credential.https://github.com.helper'
+git config --global --unset-all 'credential.https://gist.github.com.helper'
+```
+
+After this, plain `git push` just works:
+
+```bash
+git push origin feature/my-branch
 ```
 
 ### Full Example
