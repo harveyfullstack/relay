@@ -11,8 +11,16 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { createHash } from 'crypto';
 import { requireAuth } from './auth.js';
 import type { Proposal } from '../../daemon/consensus.js';
+
+/**
+ * Hash an API key for lookup
+ */
+function hashApiKey(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex');
+}
 
 export const consensusRouter = Router();
 
@@ -203,18 +211,25 @@ consensusRouter.get(
  * This endpoint receives state updates from the daemon and stores them
  * so the dashboard can display agent consensus activity.
  *
- * Authentication: Uses daemon API key (X-Daemon-Key header) or session auth
+ * Authentication: Uses daemon API key (Authorization: Bearer ar_live_xxx) or session auth
  */
 consensusRouter.post(
   '/workspaces/:workspaceId/consensus/sync',
   async (req: Request, res: Response) => {
     try {
-      // Check for daemon API key or session auth
-      const daemonKey = req.headers['x-daemon-key'];
-      const expectedKey = process.env.DAEMON_API_KEY;
+      // Check for daemon API key (Bearer token) or session auth
+      const authHeader = req.headers.authorization;
+      let hasDaemonAuth = false;
 
-      // Allow either daemon key auth OR session auth (for testing)
-      const hasDaemonAuth = expectedKey && daemonKey === expectedKey;
+      if (authHeader?.startsWith('Bearer ar_live_')) {
+        // Validate the API key against linked daemons
+        const apiKey = authHeader.replace('Bearer ', '');
+        const apiKeyHash = hashApiKey(apiKey);
+        const { db } = await import('../db/index.js');
+        const daemon = await db.linkedDaemons.findByApiKeyHash(apiKeyHash);
+        hasDaemonAuth = !!daemon;
+      }
+
       const hasSessionAuth = req.session?.userId;
 
       if (!hasDaemonAuth && !hasSessionAuth) {
@@ -251,18 +266,27 @@ consensusRouter.post(
  * DELETE /api/workspaces/:workspaceId/consensus/proposals/:proposalId
  * Remove a proposal from the sync cache (daemon cleanup)
  *
- * Authentication: Uses daemon API key (X-Daemon-Key header)
+ * Authentication: Uses daemon API key (Authorization: Bearer ar_live_xxx)
  */
 consensusRouter.delete(
   '/workspaces/:workspaceId/consensus/proposals/:proposalId',
   async (req: Request, res: Response) => {
     try {
-      // Check for daemon API key
-      const daemonKey = req.headers['x-daemon-key'];
-      const expectedKey = process.env.DAEMON_API_KEY;
+      // Check for daemon API key (Bearer token)
+      const authHeader = req.headers.authorization;
 
-      if (!expectedKey || daemonKey !== expectedKey) {
-        return res.status(401).json({ error: 'Unauthorized - daemon key required' });
+      if (!authHeader?.startsWith('Bearer ar_live_')) {
+        return res.status(401).json({ error: 'Unauthorized - daemon API key required' });
+      }
+
+      // Validate the API key
+      const apiKey = authHeader.replace('Bearer ', '');
+      const apiKeyHash = hashApiKey(apiKey);
+      const { db } = await import('../db/index.js');
+      const daemon = await db.linkedDaemons.findByApiKeyHash(apiKeyHash);
+
+      if (!daemon) {
+        return res.status(401).json({ error: 'Invalid API key' });
       }
 
       const { workspaceId, proposalId } = req.params;

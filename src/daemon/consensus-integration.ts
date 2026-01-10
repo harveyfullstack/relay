@@ -52,12 +52,12 @@ import { PROTOCOL_VERSION, type SendEnvelope } from '../protocol/types.js';
 // =============================================================================
 
 export interface CloudSyncConfig {
-  /** Cloud API base URL (e.g., http://localhost:8787/api) */
-  url: string;
-  /** Workspace ID to sync to */
-  workspaceId: string;
-  /** Daemon API key for authentication */
-  apiKey: string;
+  /** Cloud API base URL (defaults to AGENT_RELAY_CLOUD_URL or https://agent-relay.com) */
+  url?: string;
+  /** Workspace ID to sync to (auto-detected from git remote if not provided) */
+  workspaceId?: string;
+  /** Daemon API key for authentication (defaults to AGENT_RELAY_API_KEY) */
+  apiKey?: string;
 }
 
 export interface ConsensusIntegrationConfig {
@@ -280,23 +280,39 @@ export class ConsensusIntegration {
 
   /**
    * Sync a proposal to the cloud dashboard.
+   * Uses AGENT_RELAY_API_KEY and AGENT_RELAY_CLOUD_URL env vars if not configured.
    */
   private async syncToCloud(
     proposal: Proposal,
     event: 'created' | 'voted' | 'resolved' | 'expired' | 'cancelled'
   ): Promise<void> {
-    const cloudSync = this.config.cloudSync;
-    if (!cloudSync) {
-      return; // Cloud sync not configured
+    // Get cloud sync settings with defaults from env vars
+    const cloudUrl = this.config.cloudSync?.url
+      || process.env.AGENT_RELAY_CLOUD_URL
+      || 'https://agent-relay.com';
+    const apiKey = this.config.cloudSync?.apiKey
+      || process.env.AGENT_RELAY_API_KEY;
+    const workspaceId = this.config.cloudSync?.workspaceId
+      || process.env.AGENT_RELAY_WORKSPACE_ID;
+
+    // Skip if no API key (not linked to cloud)
+    if (!apiKey) {
+      return;
+    }
+
+    // Skip if no workspace ID (can't determine where to sync)
+    if (!workspaceId) {
+      this.log('Cloud sync skipped: no workspace ID configured');
+      return;
     }
 
     try {
-      const url = `${cloudSync.url}/workspaces/${cloudSync.workspaceId}/consensus/sync`;
+      const url = `${cloudUrl}/api/workspaces/${workspaceId}/consensus/sync`;
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Daemon-Key': cloudSync.apiKey,
+          'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({ proposal, event }),
       });
