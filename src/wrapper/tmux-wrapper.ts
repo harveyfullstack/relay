@@ -50,6 +50,7 @@ import {
   INJECTION_CONSTANTS,
   CLI_QUIRKS,
 } from './shared.js';
+import { UniversalIdleDetector, getTmuxPanePid } from './idle-detector.js';
 
 const execAsync = promisify(exec);
 
@@ -140,6 +141,7 @@ export class TmuxWrapper extends BaseWrapper {
   private authRevoked = false; // Track if auth has been revoked
   private lastAuthCheck = 0; // Timestamp of last auth check (throttle)
   private readonly AUTH_CHECK_INTERVAL = 5000; // Check auth status every 5 seconds max
+  private idleDetector: UniversalIdleDetector; // Universal idle detection for injection timing
 
   constructor(config: TmuxWrapperConfig) {
     // Merge defaults with config
@@ -180,6 +182,12 @@ export class TmuxWrapper extends BaseWrapper {
     }
 
     this.parser = new OutputParser({ prefix: this.relayPrefix });
+
+    // Initialize universal idle detector for robust injection timing
+    this.idleDetector = new UniversalIdleDetector({
+      minSilenceMs: mergedConfig.idleBeforeInjectMs ?? 1500,
+      confidenceThreshold: 0.7,
+    });
 
     // Initialize inbox if using file-based messaging
     if (config.useInbox) {
@@ -456,6 +464,9 @@ export class TmuxWrapper extends BaseWrapper {
     // Start background polling (silent - no stdout writes)
     this.startSilentPolling();
 
+    // Initialize idle detector with the tmux pane PID for process state inspection
+    this.initializeIdleDetectorPid();
+
     // Attach user to tmux session
     // This takes over stdin/stdout - user sees the real terminal
     this.attachToSession();
@@ -511,6 +522,24 @@ export class TmuxWrapper extends BaseWrapper {
       this.agentId = ledger.agentId;
     } catch (err: any) {
       this.logStderr(`Failed to initialize agent ID: ${err.message}`, true);
+    }
+  }
+
+  /**
+   * Initialize the idle detector with the tmux pane PID.
+   * This enables process state inspection on Linux for more reliable idle detection.
+   */
+  private async initializeIdleDetectorPid(): Promise<void> {
+    try {
+      const pid = await getTmuxPanePid(this.tmuxPath, this.sessionName);
+      if (pid) {
+        this.idleDetector.setPid(pid);
+        this.logStderr(`Idle detector initialized with PID ${pid}`);
+      } else {
+        this.logStderr('Could not get pane PID for idle detection (will use output analysis)');
+      }
+    } catch (err: any) {
+      this.logStderr(`Failed to initialize idle detector PID: ${err.message}`);
     }
   }
 
@@ -720,6 +749,11 @@ export class TmuxWrapper extends BaseWrapper {
       if (stdout.length !== this.processedOutputLength) {
         this.lastOutputTime = Date.now();
         this.markActivity();
+
+        // Feed new output to idle detector for more robust idle detection
+        const newOutput = stdout.substring(this.processedOutputLength);
+        this.idleDetector.onOutput(newOutput);
+
         this.processedOutputLength = stdout.length;
 
         // Stream new output to daemon for dashboard log viewing
@@ -1369,19 +1403,30 @@ export class TmuxWrapper extends BaseWrapper {
   }
 
   /**
-   * Check if we should inject a message
+   * Check if we should inject a message.
+   * Uses UniversalIdleDetector for robust cross-CLI idle detection.
    */
   private checkForInjectionOpportunity(): void {
     if (this.messageQueue.length === 0) return;
     if (this.isInjecting) return;
     if (!this.running) return;
 
-    // Wait for output to settle (agent might be busy)
-    const timeSinceOutput = Date.now() - this.lastOutputTime;
-    if (timeSinceOutput < (this.config.idleBeforeInjectMs ?? 1500)) {
+    // Use universal idle detector for more reliable detection
+    const idleResult = this.idleDetector.checkIdle({
+      minSilenceMs: this.config.idleBeforeInjectMs ?? 1500,
+    });
+
+    if (!idleResult.isIdle) {
+      // Not idle yet, retry later
       const retryMs = this.config.injectRetryMs ?? 500;
       setTimeout(() => this.checkForInjectionOpportunity(), retryMs);
       return;
+    }
+
+    // Log detection method in debug mode
+    if (this.config.debug && idleResult.signals.length > 0) {
+      const signalInfo = idleResult.signals.map(s => `${s.source}:${(s.confidence * 100).toFixed(0)}%`).join(', ');
+      this.logStderr(`Idle detected (${signalInfo})`);
     }
 
     this.injectNextMessage();
