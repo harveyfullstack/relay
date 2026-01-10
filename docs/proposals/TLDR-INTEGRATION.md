@@ -22,6 +22,420 @@ llm-tldr solves this by providing:
 
 **Goal**: Give agents seamless access to llm-tldr's analysis through the relay protocol.
 
+## Dependency Resolution (The Hard Problem)
+
+### The Ecosystem Mismatch
+
+| Component | agent-relay | llm-tldr |
+|-----------|-------------|----------|
+| Language | TypeScript | Python |
+| Runtime | Node.js ≥18 | Python ≥3.10 |
+| Package Manager | npm | pip |
+| Install Size | ~50MB | ~2GB (ML models) |
+| Heavy Deps | better-sqlite3 | sentence-transformers, faiss |
+
+**These are two different ecosystems.** The socket protocol is the easy part. Getting tldr installed and running is the real challenge.
+
+### Option Analysis
+
+#### Option 1: User Responsibility (Manual Install)
+
+**How it works:**
+```bash
+# User installs separately
+pip install llm-tldr
+tldr warm /path/to/project
+tldr daemon &
+
+# Relay auto-detects socket
+agent-relay up  # Finds /tmp/tldr-<hash>.sock
+```
+
+**Implementation:**
+```typescript
+// src/services/tldr-discovery.ts
+async function discoverTldr(projectPath: string): Promise<string | null> {
+  // tldr uses MD5 hash of project path for socket naming
+  const hash = crypto.createHash('md5').update(projectPath).digest('hex').slice(0, 8);
+  const socketPath = `/tmp/tldr-${hash}.sock`;
+
+  if (await socketExists(socketPath)) {
+    return socketPath;
+  }
+  return null;
+}
+```
+
+| Pros | Cons |
+|------|------|
+| Zero coupling | Bad UX - most users won't do it |
+| User controls versions | No visibility into why queries fail |
+| Simple to implement | Python env conflicts possible |
+
+**Verdict**: MVP baseline. Document it, detect it, but don't rely on it.
+
+---
+
+#### Option 2: Subprocess Management
+
+**How it works:**
+```typescript
+// src/services/tldr-manager.ts
+async function ensureTldr(projectPath: string): Promise<string> {
+  // Check for existing daemon
+  const existing = await discoverTldr(projectPath);
+  if (existing) return existing;
+
+  // Check if tldr is installed
+  try {
+    await execAsync('tldr --version');
+  } catch {
+    // Install it
+    await execAsync('pip install llm-tldr');
+  }
+
+  // Warm the index
+  await execAsync(`tldr warm ${projectPath}`);
+
+  // Start daemon
+  const proc = spawn('tldr', ['daemon', '--project', projectPath], {
+    detached: true,
+    stdio: 'ignore'
+  });
+  proc.unref();
+
+  // Wait for socket
+  return waitForSocket(projectPath);
+}
+```
+
+| Pros | Cons |
+|------|------|
+| Automatic for users | Python version conflicts |
+| "Just works" feel | 2GB surprise download |
+| We control lifecycle | Cross-platform shell differences |
+| | Which `pip`? System? Venv? |
+
+**Verdict**: Risky. Works on developer machines, breaks on servers.
+
+---
+
+#### Option 3: Docker Sidecar
+
+**How it works:**
+```yaml
+# docker-compose.tldr.yml
+services:
+  tldr:
+    image: ghcr.io/parcadei/llm-tldr:latest
+    volumes:
+      - ${PROJECT_PATH}:/workspace:ro
+      - tldr-cache:/cache
+      - /tmp:/tmp  # Share socket
+    command: ["daemon", "--project", "/workspace", "--socket", "/tmp/tldr.sock"]
+
+volumes:
+  tldr-cache:
+```
+
+```typescript
+// src/services/tldr-docker.ts
+async function ensureTldrContainer(projectPath: string): Promise<string> {
+  const containerName = 'agent-relay-tldr';
+
+  // Check if running
+  const running = await execAsync(`docker ps -q -f name=${containerName}`);
+  if (running.stdout.trim()) {
+    return '/tmp/tldr.sock';
+  }
+
+  // Start container
+  await execAsync(`docker compose -f docker-compose.tldr.yml up -d`, {
+    env: { PROJECT_PATH: projectPath }
+  });
+
+  return '/tmp/tldr.sock';
+}
+```
+
+| Pros | Cons |
+|------|------|
+| Isolated, reproducible | Requires Docker |
+| No Python conflicts | ~3GB image size |
+| Easy version pinning | Volume mount complexity |
+| Works on any platform | Extra resource overhead |
+
+**Verdict**: Best for teams/production. Add to existing `docker-compose.dev.yml`.
+
+---
+
+#### Option 4: npm Wrapper Package
+
+**How it works:**
+```bash
+npm install @agent-relay/tldr
+```
+
+```typescript
+// @agent-relay/tldr/src/index.ts
+import { PythonShell } from 'python-shell';
+import { join } from 'path';
+
+export class TldrService {
+  private pythonPath: string;
+
+  async install(): Promise<void> {
+    // Create isolated venv in node_modules
+    const venvPath = join(__dirname, '..', '.venv');
+    await execAsync(`python3 -m venv ${venvPath}`);
+
+    this.pythonPath = join(venvPath, 'bin', 'python');
+    await execAsync(`${this.pythonPath} -m pip install llm-tldr`);
+  }
+
+  async startDaemon(projectPath: string): Promise<string> {
+    // Spawn daemon with our venv Python
+    spawn(this.pythonPath, ['-m', 'tldr', 'daemon', '--project', projectPath]);
+    return waitForSocket(projectPath);
+  }
+}
+```
+
+| Pros | Cons |
+|------|------|
+| npm install experience | Still needs Python 3.10+ |
+| Isolated venv | 2GB in node_modules |
+| Version locked | Cross-platform Python path hell |
+| | postinstall script failures |
+
+**Verdict**: Appealing UX, but fragile. Python-in-npm is notoriously problematic.
+
+---
+
+#### Option 5: Cloud-Hosted Service
+
+**How it works:**
+```
+agent-relay → WebSocket → tldr.agentworkforce.com → tldr daemon
+```
+
+```typescript
+// src/services/tldr-cloud.ts
+export class TldrCloudClient {
+  private ws: WebSocket;
+
+  constructor(private apiKey: string) {
+    this.ws = new WebSocket('wss://tldr.agentworkforce.com/v1/ws', {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+  }
+
+  async semantic(query: string, projectId: string): Promise<SearchResult[]> {
+    // Project must be pre-indexed via CI/CD or webhook
+    return this.send({ cmd: 'semantic', query, project: projectId });
+  }
+}
+```
+
+| Pros | Cons |
+|------|------|
+| Zero local install | 50-200ms latency (defeats purpose) |
+| Central index management | Requires uploading code |
+| Works everywhere | Monthly hosting costs |
+| | Privacy concerns |
+
+**Verdict**: Only for cloud-hosted agent-relay. Not for local.
+
+---
+
+#### Option 6: Native TypeScript Port (Long-term)
+
+**How it works:**
+- tree-sitter has Node.js bindings (`tree-sitter`, `tree-sitter-typescript`, etc.)
+- Embeddings via `@xenova/transformers` (ONNX runtime)
+- FAISS alternative: `hnswlib-node` or `vectra`
+
+```typescript
+// @agent-relay/code-analysis (hypothetical)
+import Parser from 'tree-sitter';
+import TypeScript from 'tree-sitter-typescript';
+import { pipeline } from '@xenova/transformers';
+
+export class CodeAnalyzer {
+  private parser: Parser;
+  private embedder: any;
+
+  async init(): Promise<void> {
+    this.parser = new Parser();
+    this.parser.setLanguage(TypeScript.typescript);
+    this.embedder = await pipeline('feature-extraction', 'Xenova/bge-large-en-v1.5');
+  }
+
+  async extractSignatures(code: string): Promise<Signature[]> {
+    const tree = this.parser.parse(code);
+    // Walk AST, extract functions/classes
+  }
+
+  async semanticSearch(query: string): Promise<SearchResult[]> {
+    const embedding = await this.embedder(query);
+    // Search HNSW index
+  }
+}
+```
+
+| Pros | Cons |
+|------|------|
+| First-class integration | Massive effort (months) |
+| Single runtime | Must maintain parity with llm-tldr |
+| npm native | Model loading still heavy |
+| No Python | Different behavior possible |
+
+**Verdict**: Strategic investment. Consider if llm-tldr becomes critical.
+
+---
+
+### Recommended Approach: Tiered Strategy
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Tier 1: Detection Only                   │
+│  • Auto-discover running tldr daemon                        │
+│  • Document manual installation                             │
+│  • Graceful "tldr not available" messaging                  │
+│  • Zero dependencies added                                  │
+│  Timeline: Immediate                                        │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                  Tier 2: Docker Integration                 │
+│  • Add tldr to docker-compose.dev.yml                       │
+│  • CLI: `agent-relay services up tldr`                      │
+│  • Auto-start container if Docker available                 │
+│  • Share socket via /tmp mount                              │
+│  Timeline: +2 weeks                                         │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                Tier 3: Managed Installation                 │
+│  • `agent-relay tldr install` command                       │
+│  • Creates isolated Python venv                             │
+│  • `agent-relay tldr daemon` lifecycle management           │
+│  • Fallback when Docker unavailable                         │
+│  Timeline: +4 weeks                                         │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│              Tier 4: Evaluate Native Port                   │
+│  • Prototype tree-sitter + transformers.js                  │
+│  • Benchmark against Python implementation                  │
+│  • Decision: port vs. maintain bridge                       │
+│  Timeline: +3 months (evaluation only)                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Tier 1 Implementation (MVP)
+
+```typescript
+// src/services/tldr-service.ts
+
+export type TldrAvailability =
+  | { available: true; socketPath: string; version: string }
+  | { available: false; reason: string; suggestion: string };
+
+export async function checkTldrAvailability(
+  projectPath: string
+): Promise<TldrAvailability> {
+  // 1. Check for running daemon via socket
+  const socketPath = await discoverTldrSocket(projectPath);
+  if (socketPath) {
+    const version = await pingTldrDaemon(socketPath);
+    if (version) {
+      return { available: true, socketPath, version };
+    }
+  }
+
+  // 2. Check if tldr CLI is installed
+  try {
+    const { stdout } = await execAsync('tldr --version');
+    return {
+      available: false,
+      reason: 'tldr installed but daemon not running',
+      suggestion: `Run: tldr daemon --project ${projectPath}`
+    };
+  } catch {
+    // Not installed
+  }
+
+  // 3. Check if Docker is available
+  try {
+    await execAsync('docker --version');
+    return {
+      available: false,
+      reason: 'tldr not installed',
+      suggestion: 'Run: agent-relay services up tldr (requires Docker)'
+    };
+  } catch {
+    // No Docker
+  }
+
+  // 4. Fallback: manual install instructions
+  return {
+    available: false,
+    reason: 'tldr not installed and Docker not available',
+    suggestion: 'Install with: pip install llm-tldr && tldr warm . && tldr daemon'
+  };
+}
+```
+
+### Tier 2 Implementation (Docker)
+
+```yaml
+# Additions to docker-compose.dev.yml
+
+services:
+  # ... existing postgres, redis ...
+
+  tldr:
+    image: ghcr.io/parcadei/llm-tldr:1.0
+    profiles: ["tldr"]  # Only start with --profile tldr
+    volumes:
+      - ${TLDR_PROJECT_PATH:-.}:/workspace:ro
+      - tldr-index:/root/.tldr
+      - /tmp/agent-relay:/tmp/agent-relay  # Socket sharing
+    environment:
+      - TLDR_SOCKET_PATH=/tmp/agent-relay/tldr.sock
+    command: >
+      sh -c "tldr warm /workspace && tldr daemon --socket /tmp/agent-relay/tldr.sock"
+    healthcheck:
+      test: ["CMD", "tldr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  tldr-index:
+```
+
+```typescript
+// src/cli/commands/services.ts
+
+program
+  .command('services')
+  .argument('<action>', 'up | down | status')
+  .argument('[service...]', 'postgres, redis, tldr')
+  .action(async (action, services) => {
+    if (action === 'up' && services.includes('tldr')) {
+      const projectPath = process.cwd();
+      await execAsync(
+        `TLDR_PROJECT_PATH=${projectPath} docker compose -f docker-compose.dev.yml --profile tldr up -d tldr`
+      );
+      console.log('tldr service starting... waiting for index build');
+      await waitForHealthy('tldr');
+      console.log('tldr ready at /tmp/agent-relay/tldr.sock');
+    }
+  });
+```
+
 ## Architecture Overview
 
 ```
