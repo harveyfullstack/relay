@@ -636,6 +636,11 @@ describe('Bulk-Ingest Message Sync API Integration', () => {
 
   describe('Authentication', () => {
     it('should reject sync without authentication', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/api/daemons/messages/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -647,6 +652,11 @@ describe('Bulk-Ingest Message Sync API Integration', () => {
     });
 
     it('should reject sync with invalid API key', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/api/daemons/messages/sync`, {
         method: 'POST',
         headers: {
@@ -661,6 +671,11 @@ describe('Bulk-Ingest Message Sync API Integration', () => {
     });
 
     it('should reject sync with malformed API key', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/api/daemons/messages/sync`, {
         method: 'POST',
         headers: {

@@ -145,6 +145,11 @@ describe('Cloud Monitoring API Integration', () => {
 
   describe('Health Check', () => {
     it('should return healthy status', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/health`);
       expect(res.ok).toBe(true);
 
@@ -194,6 +199,11 @@ describe('Cloud Monitoring API Integration', () => {
     });
 
     it('should reject metrics without authentication', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/api/monitoring/metrics`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -205,6 +215,11 @@ describe('Cloud Monitoring API Integration', () => {
     });
 
     it('should reject metrics with invalid API key', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/api/monitoring/metrics`, {
         method: 'POST',
         headers: {
@@ -290,21 +305,41 @@ describe('Cloud Monitoring API Integration', () => {
 
   describe('Dashboard API (requires auth)', () => {
     it('should return 401 for overview without session', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/api/monitoring/overview`);
       expect(res.status).toBe(401);
     });
 
     it('should return 401 for crashes without session', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/api/monitoring/crashes`);
       expect(res.status).toBe(401);
     });
 
     it('should return 401 for alerts without session', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/api/monitoring/alerts`);
       expect(res.status).toBe(401);
     });
 
     it('should return 401 for insights without session', async () => {
+      if (!cloudAvailable) {
+        console.warn('Skipping: cloud server not available');
+        return;
+      }
+
       const res = await fetch(`${CLOUD_API_URL}/api/monitoring/insights`);
       expect(res.status).toBe(401);
     });
