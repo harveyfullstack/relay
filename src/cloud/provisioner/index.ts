@@ -38,13 +38,15 @@ function hashApiKey(apiKey: string): string {
 
 /**
  * Create a linked daemon record for a workspace during provisioning
+ * @param preGeneratedApiKey - Pre-generated API key (if not provided, one will be generated)
  */
 async function createLinkedDaemon(
   userId: string,
   workspaceId: string,
   machineId: string,
+  preGeneratedApiKey?: string,
 ): Promise<{ daemonId: string; apiKey: string }> {
-  const apiKey = generateDaemonApiKey();
+  const apiKey = preGeneratedApiKey ?? generateDaemonApiKey();
   const apiKeyHash = hashApiKey(apiKey);
 
   const daemon = await db.linkedDaemons.create({
@@ -696,6 +698,10 @@ class FlyProvisioner implements ComputeProvisioner {
     // Stage: Machine (includes volume creation)
     updateProvisioningStage(workspace.id, 'machine');
 
+    // Generate API key for cloud message sync BEFORE creating the machine
+    // The key is set as an env var on the machine and stored hashed in linkedDaemons
+    const machineApiKey = generateDaemonApiKey();
+
     // Create volume with automatic daily snapshots before machine
     // Fly.io takes daily snapshots automatically; we configure retention
     const volume = await this.createVolume(appName);
@@ -849,11 +855,12 @@ class FlyProvisioner implements ComputeProvisioner {
     const machine = (await machineResponse.json()) as { id: string };
 
     // Create linked daemon for cloud message sync
-    // This generates an API key and registers the daemon in the linkedDaemons table
-    const { daemonId, apiKey: machineApiKey } = await createLinkedDaemon(
+    // Pass the pre-generated API key so it matches what was set in the machine env vars
+    const { daemonId } = await createLinkedDaemon(
       workspace.userId,
       workspace.id,
       machine.id, // Use Fly machine ID as daemon's machine ID
+      machineApiKey, // Pass the pre-generated key
     );
     console.log(`[fly] Created linked daemon ${daemonId.substring(0, 8)} for workspace ${workspace.id.substring(0, 8)}`);
 
@@ -1346,6 +1353,15 @@ class RailwayProvisioner implements ComputeProvisioner {
     const serviceData = await serviceResponse.json() as { data: { serviceCreate: { id: string } } };
     const serviceId = serviceData.data.serviceCreate.id;
 
+    // Create linked daemon for cloud message sync
+    // This generates an API key and registers the daemon in the linkedDaemons table
+    const { daemonId, apiKey: railwayApiKey } = await createLinkedDaemon(
+      workspace.userId,
+      workspace.id,
+      serviceId, // Use Railway service ID as daemon's machine ID
+    );
+    console.log(`[railway] Created linked daemon ${daemonId.substring(0, 8)} for workspace ${workspace.id.substring(0, 8)}`);
+
     // Set environment variables
     const envVars: Record<string, string> = {
       WORKSPACE_ID: workspace.id,
@@ -1360,6 +1376,9 @@ class RailwayProvisioner implements ComputeProvisioner {
       WORKSPACE_DIR: '/data/repos',
       CLOUD_API_URL: this.cloudApiUrl,
       WORKSPACE_TOKEN: this.generateWorkspaceToken(workspace.id),
+      // Daemon API key for cloud message sync
+      // Auto-generated during provisioning, stored in linkedDaemons table
+      AGENT_RELAY_API_KEY: railwayApiKey,
     };
 
     for (const [provider, token] of credentials) {
@@ -1594,6 +1613,16 @@ class DockerProvisioner implements ComputeProvisioner {
   ): Promise<{ computeId: string; publicUrl: string; sshPort?: number }> {
     const containerName = `ar-${workspace.id.substring(0, 8)}`;
 
+    // Create linked daemon for cloud message sync
+    // This generates an API key and registers the daemon in the linkedDaemons table
+    // Use container name as daemon's machine ID (will be updated to actual container ID after creation)
+    const { daemonId, apiKey: dockerApiKey } = await createLinkedDaemon(
+      workspace.userId,
+      workspace.id,
+      containerName,
+    );
+    console.log(`[docker] Created linked daemon ${daemonId.substring(0, 8)} for workspace ${workspace.id.substring(0, 8)}`);
+
     // Build environment variables
     const envArgs: string[] = [
       `-e WORKSPACE_ID=${workspace.id}`,
@@ -1608,6 +1637,9 @@ class DockerProvisioner implements ComputeProvisioner {
       `-e WORKSPACE_DIR=/data/repos`,
       `-e CLOUD_API_URL=${this.cloudApiUrlForContainer}`,
       `-e WORKSPACE_TOKEN=${this.generateWorkspaceToken(workspace.id)}`,
+      // Daemon API key for cloud message sync
+      // Auto-generated during provisioning, stored in linkedDaemons table
+      `-e AGENT_RELAY_API_KEY=${dockerApiKey}`,
     ];
 
     for (const [provider, token] of credentials) {
