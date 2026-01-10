@@ -61,7 +61,7 @@ export interface CloudSyncConfig {
 }
 
 export interface ConsensusIntegrationConfig {
-  /** Enable consensus feature (default: false) */
+  /** Enable consensus feature (default: true) */
   enabled: boolean;
   /** Consensus engine configuration */
   consensus?: Partial<ConsensusConfig>;
@@ -88,7 +88,7 @@ export interface ProposalOptions {
 }
 
 const DEFAULT_CONFIG: ConsensusIntegrationConfig = {
-  enabled: false,
+  enabled: true,
   autoBroadcast: true,
   autoResultBroadcast: true,
   logEvents: true,
@@ -281,35 +281,45 @@ export class ConsensusIntegration {
   /**
    * Sync a proposal to the cloud dashboard.
    *
-   * For self-hosted: Set cloudSync.url to your cloud URL
-   * For remote cloud: Uses AGENT_RELAY_API_KEY env var
+   * Auto-detects cloud settings from workspace env vars:
+   * - CLOUD_API_URL / AGENT_RELAY_CLOUD_URL - cloud URL
+   * - WORKSPACE_ID / AGENT_RELAY_WORKSPACE_ID - workspace ID
+   * - WORKSPACE_TOKEN / AGENT_RELAY_API_KEY - auth token
    */
   private async syncToCloud(
     proposal: Proposal,
     event: 'created' | 'voted' | 'resolved' | 'expired' | 'cancelled'
   ): Promise<void> {
-    // Get cloud sync settings with defaults from env vars
+    // Get cloud sync settings - check workspace env vars first, then agent-relay vars
     const cloudUrl = this.config.cloudSync?.url
+      || process.env.CLOUD_API_URL
       || process.env.AGENT_RELAY_CLOUD_URL;
-    const apiKey = this.config.cloudSync?.apiKey
-      || process.env.AGENT_RELAY_API_KEY;
     const workspaceId = this.config.cloudSync?.workspaceId
+      || process.env.WORKSPACE_ID
       || process.env.AGENT_RELAY_WORKSPACE_ID;
+    const token = this.config.cloudSync?.apiKey
+      || process.env.WORKSPACE_TOKEN
+      || process.env.AGENT_RELAY_API_KEY;
 
     // Skip if no cloud URL configured
     if (!cloudUrl) {
       return;
     }
 
+    // Skip if no workspace ID
+    if (!workspaceId) {
+      return;
+    }
+
     try {
       const url = `${cloudUrl}/api/daemons/consensus/sync`;
 
-      // Build headers - API key is optional for self-hosted
+      // Build headers - token is optional for localhost
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
 
       const response = await fetch(url, {

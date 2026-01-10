@@ -36,7 +36,7 @@ export interface DaemonConfig extends ConnectionConfig {
   cloudSync?: boolean;
   /** Cloud API URL (defaults to https://agent-relay.com) */
   cloudUrl?: string;
-  /** Enable consensus mechanism for multi-agent decisions */
+  /** Consensus mechanism for multi-agent decisions (enabled by default, set to false to disable) */
   consensus?: boolean | Partial<ConsensusIntegrationConfig>;
 }
 
@@ -147,11 +147,11 @@ export class Daemon {
       },
     });
 
-    // Initialize consensus if enabled
-    if (this.config.consensus) {
-      const consensusConfig = typeof this.config.consensus === 'boolean'
-        ? { enabled: true }
-        : { enabled: true, ...this.config.consensus };
+    // Initialize consensus (enabled by default, can be disabled with consensus: false)
+    if (this.config.consensus !== false) {
+      const consensusConfig = typeof this.config.consensus === 'object'
+        ? this.config.consensus
+        : {};
 
       this.consensus = createConsensusIntegration(this.router, consensusConfig);
       log.info('Consensus mechanism enabled');
