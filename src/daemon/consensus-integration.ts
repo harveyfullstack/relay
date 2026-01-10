@@ -54,8 +54,6 @@ import { PROTOCOL_VERSION, type SendEnvelope } from '../protocol/types.js';
 export interface CloudSyncConfig {
   /** Cloud API base URL (defaults to AGENT_RELAY_CLOUD_URL or https://agent-relay.com) */
   url?: string;
-  /** Workspace ID to sync to (auto-detected from git remote if not provided) */
-  workspaceId?: string;
   /** Daemon API key for authentication (defaults to AGENT_RELAY_API_KEY) */
   apiKey?: string;
 }
@@ -280,7 +278,8 @@ export class ConsensusIntegration {
 
   /**
    * Sync a proposal to the cloud dashboard.
-   * Uses AGENT_RELAY_API_KEY and AGENT_RELAY_CLOUD_URL env vars if not configured.
+   * Uses AGENT_RELAY_API_KEY and AGENT_RELAY_CLOUD_URL env vars.
+   * Workspace is derived from the linked daemon record on the cloud side.
    */
   private async syncToCloud(
     proposal: Proposal,
@@ -292,22 +291,15 @@ export class ConsensusIntegration {
       || 'https://agent-relay.com';
     const apiKey = this.config.cloudSync?.apiKey
       || process.env.AGENT_RELAY_API_KEY;
-    const workspaceId = this.config.cloudSync?.workspaceId
-      || process.env.AGENT_RELAY_WORKSPACE_ID;
 
     // Skip if no API key (not linked to cloud)
     if (!apiKey) {
       return;
     }
 
-    // Skip if no workspace ID (can't determine where to sync)
-    if (!workspaceId) {
-      this.log('Cloud sync skipped: no workspace ID configured');
-      return;
-    }
-
     try {
-      const url = `${cloudUrl}/api/workspaces/${workspaceId}/consensus/sync`;
+      // Use the daemon-focused endpoint - workspace is derived from API key
+      const url = `${cloudUrl}/api/daemons/consensus/sync`;
       const response = await fetch(url, {
         method: 'POST',
         headers: {

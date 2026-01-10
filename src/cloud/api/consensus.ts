@@ -201,42 +201,43 @@ consensusRouter.get(
 );
 
 // ============================================================================
-// Sync Endpoint (daemon -> cloud, uses daemon API key auth)
+// Sync Endpoint (daemon -> cloud)
 // ============================================================================
 
 /**
- * POST /api/workspaces/:workspaceId/consensus/sync
+ * POST /api/daemons/consensus/sync
  * Sync consensus state from daemon (called by daemon on proposal events)
  *
  * This endpoint receives state updates from the daemon and stores them
  * so the dashboard can display agent consensus activity.
  *
- * Authentication: Uses daemon API key (Authorization: Bearer ar_live_xxx) or session auth
+ * Authentication: Uses daemon API key (Authorization: Bearer ar_live_xxx)
+ * Workspace is derived from the linked daemon's record.
  */
 consensusRouter.post(
-  '/workspaces/:workspaceId/consensus/sync',
+  '/daemons/consensus/sync',
   async (req: Request, res: Response) => {
     try {
-      // Check for daemon API key (Bearer token) or session auth
+      // Authenticate daemon via API key
       const authHeader = req.headers.authorization;
-      let hasDaemonAuth = false;
 
-      if (authHeader?.startsWith('Bearer ar_live_')) {
-        // Validate the API key against linked daemons
-        const apiKey = authHeader.replace('Bearer ', '');
-        const apiKeyHash = hashApiKey(apiKey);
-        const { db } = await import('../db/index.js');
-        const daemon = await db.linkedDaemons.findByApiKeyHash(apiKeyHash);
-        hasDaemonAuth = !!daemon;
+      if (!authHeader?.startsWith('Bearer ar_live_')) {
+        return res.status(401).json({ error: 'Unauthorized - daemon API key required' });
       }
 
-      const hasSessionAuth = req.session?.userId;
+      const apiKey = authHeader.replace('Bearer ', '');
+      const apiKeyHash = hashApiKey(apiKey);
+      const { db } = await import('../db/index.js');
+      const daemon = await db.linkedDaemons.findByApiKeyHash(apiKeyHash);
 
-      if (!hasDaemonAuth && !hasSessionAuth) {
-        return res.status(401).json({ error: 'Unauthorized' });
+      if (!daemon) {
+        return res.status(401).json({ error: 'Invalid API key' });
       }
 
-      const { workspaceId } = req.params;
+      if (!daemon.workspaceId) {
+        return res.status(400).json({ error: 'Daemon not associated with a workspace' });
+      }
+
       const { proposal, event } = req.body as {
         proposal: Proposal;
         event: 'created' | 'voted' | 'resolved' | 'expired' | 'cancelled';
@@ -246,15 +247,15 @@ consensusRouter.post(
         return res.status(400).json({ error: 'Missing proposal or event' });
       }
 
-      // Store/update the proposal
-      const proposalsMap = getProposalsForWorkspace(workspaceId);
+      // Store/update the proposal using workspace from daemon record
+      const proposalsMap = getProposalsForWorkspace(daemon.workspaceId);
       proposalsMap.set(proposal.id, proposal);
 
       console.log(
-        `[consensus] Synced ${event} for proposal "${proposal.title}" (${proposal.id}) in workspace ${workspaceId}`
+        `[consensus] Synced ${event} for proposal "${proposal.title}" (${proposal.id}) in workspace ${daemon.workspaceId}`
       );
 
-      res.json({ success: true });
+      res.json({ success: true, workspaceId: daemon.workspaceId });
     } catch (error) {
       console.error('Error syncing consensus:', error);
       res.status(500).json({ error: 'Failed to sync consensus' });
@@ -263,13 +264,14 @@ consensusRouter.post(
 );
 
 /**
- * DELETE /api/workspaces/:workspaceId/consensus/proposals/:proposalId
+ * DELETE /api/daemons/consensus/proposals/:proposalId
  * Remove a proposal from the sync cache (daemon cleanup)
  *
  * Authentication: Uses daemon API key (Authorization: Bearer ar_live_xxx)
+ * Workspace is derived from the linked daemon's record.
  */
 consensusRouter.delete(
-  '/workspaces/:workspaceId/consensus/proposals/:proposalId',
+  '/daemons/consensus/proposals/:proposalId',
   async (req: Request, res: Response) => {
     try {
       // Check for daemon API key (Bearer token)
@@ -289,16 +291,20 @@ consensusRouter.delete(
         return res.status(401).json({ error: 'Invalid API key' });
       }
 
-      const { workspaceId, proposalId } = req.params;
+      if (!daemon.workspaceId) {
+        return res.status(400).json({ error: 'Daemon not associated with a workspace' });
+      }
 
-      const proposalsMap = getProposalsForWorkspace(workspaceId);
+      const { proposalId } = req.params;
+
+      const proposalsMap = getProposalsForWorkspace(daemon.workspaceId);
       const deleted = proposalsMap.delete(proposalId);
 
       if (!deleted) {
         return res.status(404).json({ error: 'Proposal not found' });
       }
 
-      console.log(`[consensus] Removed proposal ${proposalId} from workspace ${workspaceId}`);
+      console.log(`[consensus] Removed proposal ${proposalId} from workspace ${daemon.workspaceId}`);
 
       res.json({ success: true });
     } catch (error) {
