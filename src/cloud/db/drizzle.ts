@@ -2112,6 +2112,8 @@ export interface ChannelReadStateQueries {
   markReadUpTo(channelId: string, userId: string, lastMessageId: string): Promise<number>;
   getUnreadCount(channelId: string, userId: string): Promise<number>;
   getUnreadCountsForUser(userId: string, channelIds: string[]): Promise<Map<string, number>>;
+  hasMentionsForUser(channelId: string, userId: string): Promise<boolean>;
+  getMentionsStatusForUser(userId: string, channelIds: string[]): Promise<Map<string, boolean>>;
   deleteByChannel(channelId: string): Promise<void>;
 }
 
@@ -2271,6 +2273,78 @@ export const channelReadStateQueries: ChannelReadStateQueries = {
     }
 
     return counts;
+  },
+
+  async hasMentionsForUser(channelId: string, userId: string): Promise<boolean> {
+    const db = getDb();
+
+    // Get user's read state for this channel
+    const readState = await db
+      .select()
+      .from(schema.channelReadState)
+      .where(and(eq(schema.channelReadState.channelId, channelId), eq(schema.channelReadState.userId, userId)))
+      .limit(1);
+
+    // Build query to find unread messages mentioning this user
+    const conditions = [
+      eq(schema.channelMessages.channelId, channelId),
+      sql`${userId} = ANY(${schema.channelMessages.mentions})`,
+    ];
+
+    // If user has read state, only count messages after last read
+    if (readState[0]) {
+      conditions.push(gt(schema.channelMessages.createdAt, readState[0].lastReadAt));
+    }
+
+    const result = await db
+      .select({ count: count() })
+      .from(schema.channelMessages)
+      .where(and(...conditions));
+
+    return Number(result[0]?.count ?? 0) > 0;
+  },
+
+  async getMentionsStatusForUser(userId: string, channelIds: string[]): Promise<Map<string, boolean>> {
+    const db = getDb();
+    const mentionsMap = new Map<string, boolean>();
+
+    if (channelIds.length === 0) {
+      return mentionsMap;
+    }
+
+    // Get all read states for this user
+    const readStates = await db
+      .select()
+      .from(schema.channelReadState)
+      .where(eq(schema.channelReadState.userId, userId));
+
+    const readStateMap = new Map<string, Date>();
+    for (const rs of readStates) {
+      readStateMap.set(rs.channelId, rs.lastReadAt);
+    }
+
+    // For each channel, check for unread mentions
+    for (const channelId of channelIds) {
+      const lastReadAt = readStateMap.get(channelId);
+
+      const conditions = [
+        eq(schema.channelMessages.channelId, channelId),
+        sql`${userId} = ANY(${schema.channelMessages.mentions})`,
+      ];
+
+      if (lastReadAt) {
+        conditions.push(gt(schema.channelMessages.createdAt, lastReadAt));
+      }
+
+      const result = await db
+        .select({ count: count() })
+        .from(schema.channelMessages)
+        .where(and(...conditions));
+
+      mentionsMap.set(channelId, Number(result[0]?.count ?? 0) > 0);
+    }
+
+    return mentionsMap;
   },
 
   async deleteByChannel(channelId: string): Promise<void> {

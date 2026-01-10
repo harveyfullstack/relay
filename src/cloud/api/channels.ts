@@ -112,9 +112,12 @@ channelsRouter.get('/workspaces/:workspaceId/channels', async (req: Request, res
       (c: Channel | null): c is Channel => c !== null
     );
 
-    // Get unread counts for all visible channels in one batch
+    // Get unread counts and mention status for all visible channels in one batch
     const channelIds = filteredChannels.map((c: Channel) => c.id);
-    const unreadCounts = await db.channelReadState.getUnreadCountsForUser(userId, channelIds);
+    const [unreadCounts, mentionsStatus] = await Promise.all([
+      db.channelReadState.getUnreadCountsForUser(userId, channelIds),
+      db.channelReadState.getMentionsStatusForUser(userId, channelIds),
+    ]);
 
     res.json({
       channels: filteredChannels.map((c: Channel) => ({
@@ -128,7 +131,7 @@ channelsRouter.get('/workspaces/:workspaceId/channels', async (req: Request, res
         lastActivityAt: c.lastActivityAt,
         createdAt: c.createdAt,
         unreadCount: unreadCounts.get(c.id) ?? 0,
-        hasMentions: false, // TODO: Implement mention tracking in Task 6
+        hasMentions: mentionsStatus.get(c.id) ?? false,
       })),
     });
   } catch (error) {
@@ -167,8 +170,11 @@ channelsRouter.get('/workspaces/:workspaceId/channels/:channelId', async (req: R
     // Get user's membership in this channel
     const membership = await db.channelMembers.findMembership(channelId, userId, 'user');
 
-    // Get unread count for this channel
-    const unreadCount = await db.channelReadState.getUnreadCount(channelId, userId);
+    // Get unread count and mention status for this channel
+    const [unreadCount, hasMentions] = await Promise.all([
+      db.channelReadState.getUnreadCount(channelId, userId),
+      db.channelReadState.hasMentionsForUser(channelId, userId),
+    ]);
 
     res.json({
       channel: {
@@ -184,7 +190,7 @@ channelsRouter.get('/workspaces/:workspaceId/channels/:channelId', async (req: R
         createdAt: channel.createdAt,
         updatedAt: channel.updatedAt,
         unreadCount,
-        hasMentions: false, // TODO: Implement mention tracking in Task 6
+        hasMentions,
       },
       membership: membership
         ? {
@@ -842,8 +848,11 @@ channelsRouter.get('/workspaces/:workspaceId/channels/:channelId/messages', asyn
       });
     }
 
-    // Get user's read state
-    const readState = await db.channelReadState.findByChannelAndUser(channelId, userId);
+    // Get user's read state and unread count
+    const [readState, unreadCount] = await Promise.all([
+      db.channelReadState.findByChannelAndUser(channelId, userId),
+      db.channelReadState.getUnreadCount(channelId, userId),
+    ]);
 
     res.json({
       messages: messages.map((m) => ({
@@ -861,12 +870,10 @@ channelsRouter.get('/workspaces/:workspaceId/channels/:channelId/messages', asyn
         isRead: readState ? m.createdAt <= readState.lastReadAt : true,
       })),
       hasMore: messages.length >= parseInt(limit as string),
-      unread: readState
-        ? {
-            count: 0, // TODO: Calculate actual unread count
-            lastReadTimestamp: readState.lastReadAt.toISOString(),
-          }
-        : { count: 0 },
+      unread: {
+        count: unreadCount,
+        lastReadTimestamp: readState?.lastReadAt.toISOString() ?? null,
+      },
     });
   } catch (error) {
     console.error('Error getting channel messages:', error);
