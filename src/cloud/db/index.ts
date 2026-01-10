@@ -114,15 +114,16 @@ import {
   STANDARD_REACTIONS,
 } from './drizzle.js';
 
-// Import bulk ingest utilities
-import {
-  bulkInsertMessages,
-  streamingBulkInsert,
-  optimizedBulkInsert,
-  getPoolStats,
-  checkPoolHealth,
-  type BulkInsertResult,
-} from './bulk-ingest.js';
+// TODO: Bulk ingest utilities deferred - waiting for NewAgentMessage schema (beads-bulk-ingest-1)
+// See: docs/CHANNELS_V1_BEADS_TASKS.md for agent messaging implementation plan
+// import {
+//   bulkInsertMessages,
+//   streamingBulkInsert,
+//   optimizedBulkInsert,
+//   getPoolStats,
+//   checkPoolHealth,
+//   type BulkInsertResult,
+// } from './bulk-ingest.js';
 
 // Legacy type aliases for backwards compatibility
 export type PlanType = 'free' | 'pro' | 'team' | 'enterprise';
@@ -159,14 +160,14 @@ export const db = {
   channelReadState: channelReadStateQueries,
   // Message reactions
   messageReactions: messageReactionQueries,
-  // Bulk ingest utilities (optimized high-volume operations)
-  bulk: {
-    insertMessages: bulkInsertMessages,
-    streamingInsert: streamingBulkInsert,
-    optimizedInsert: optimizedBulkInsert,
-    getPoolStats: () => getPoolStats(getRawPool()),
-    checkHealth: () => checkPoolHealth(getRawPool()),
-  },
+  // TODO: Bulk ingest utilities deferred - waiting for NewAgentMessage schema
+  // bulk: {
+  //   insertMessages: bulkInsertMessages,
+  //   streamingInsert: streamingBulkInsert,
+  //   optimizedInsert: optimizedBulkInsert,
+  //   getPoolStats: () => getPoolStats(getRawPool()),
+  //   checkHealth: () => checkPoolHealth(getRawPool()),
+  // },
   // Database utilities
   getDb,
   getRawPool,
@@ -205,15 +206,15 @@ export type { ReactionSummary, StandardEmoji } from './drizzle.js';
 // Export database utilities
 export { getDb, closeDb, runMigrations, getRawPool };
 
-// Export bulk ingest utilities
-export {
-  bulkInsertMessages,
-  streamingBulkInsert,
-  optimizedBulkInsert,
-  getPoolStats,
-  checkPoolHealth,
-  type BulkInsertResult,
-};
+// TODO: Bulk ingest utilities deferred - waiting for NewAgentMessage schema
+// export {
+//   bulkInsertMessages,
+//   streamingBulkInsert,
+//   optimizedBulkInsert,
+//   getPoolStats,
+//   checkPoolHealth,
+//   type BulkInsertResult,
+// };
 
 // Legacy function - use runMigrations instead
 export async function initializeDatabase(): Promise<void> {
