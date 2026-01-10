@@ -451,14 +451,21 @@ export class TmuxWrapper extends BaseWrapper {
     // Initialize continuity and get/create agentId
     this.initializeAgentId();
 
-    // Inject instructions for the agent (after a delay to let CLI initialize)
-    setTimeout(() => this.injectInstructions(), 3000);
-
     // Start background polling (silent - no stdout writes)
     this.startSilentPolling();
 
     // Initialize idle detector with the tmux pane PID for process state inspection
     this.initializeIdleDetectorPid();
+
+    // Wait for agent to be ready, then inject instructions
+    // This replaces the fixed 3-second delay with actual readiness detection
+    this.waitForAgentReady().then(() => {
+      this.injectInstructions();
+    }).catch(err => {
+      this.logStderr(`Failed to wait for agent ready: ${err.message}`, true);
+      // Fall back to injecting after a delay
+      setTimeout(() => this.injectInstructions(), 3000);
+    });
 
     // Attach user to tmux session
     // This takes over stdin/stdout - user sees the real terminal
@@ -533,6 +540,24 @@ export class TmuxWrapper extends BaseWrapper {
       }
     } catch (err: any) {
       this.logStderr(`Failed to initialize idle detector PID: ${err.message}`);
+    }
+  }
+
+  /**
+   * Wait for the agent to be ready for input.
+   * Uses idle detection instead of a fixed delay.
+   */
+  private async waitForAgentReady(): Promise<void> {
+    // Minimum wait to ensure the CLI process has started
+    await sleep(500);
+
+    // Wait for agent to become idle (CLI fully initialized)
+    const result = await this.waitForIdleState(10000, 200);
+
+    if (result.isIdle) {
+      this.logStderr(`Agent ready (confidence: ${(result.confidence * 100).toFixed(0)}%)`);
+    } else {
+      this.logStderr('Agent readiness timeout, proceeding anyway');
     }
   }
 

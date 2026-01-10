@@ -312,9 +312,9 @@ export class PtyWrapper extends BaseWrapper {
       this.client.destroy();
     });
 
-    // Inject initial instructions after a delay, then mark ready for messages
-    // Skip in interactive mode - user handles all prompts directly
-    setTimeout(() => {
+    // Wait for agent to be idle before injecting instructions
+    // This replaces the fixed 2-second delay with actual readiness detection
+    this.waitForAgentReady().then(() => {
       if (!this.config.interactive) {
         this.injectInstructions();
       }
@@ -323,7 +323,29 @@ export class PtyWrapper extends BaseWrapper {
       if (!this.config.interactive) {
         this.processMessageQueue();
       }
-    }, 2000);
+    }).catch(err => {
+      console.error(`[pty:${this.config.name}] Failed to wait for agent ready:`, err);
+      // Fall back to marking ready anyway to avoid blocking forever
+      this.readyForMessages = true;
+    });
+  }
+
+  /**
+   * Wait for the agent to be ready for input.
+   * Uses idle detection instead of a fixed delay.
+   */
+  private async waitForAgentReady(): Promise<void> {
+    // Minimum wait to ensure the CLI process has started
+    await sleep(500);
+
+    // Wait for agent to become idle (CLI fully initialized)
+    const result = await this.waitForIdleState(10000, 200);
+
+    if (result.isIdle) {
+      console.log(`[pty:${this.config.name}] Agent ready (confidence: ${(result.confidence * 100).toFixed(0)}%)`);
+    } else {
+      console.warn(`[pty:${this.config.name}] Agent readiness timeout, proceeding anyway`);
+    }
   }
 
   // Note: initializeAgentId() and getAgentId() are inherited from BaseWrapper
