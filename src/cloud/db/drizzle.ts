@@ -383,6 +383,7 @@ export interface WorkspaceQueries {
   findById(id: string): Promise<schema.Workspace | null>;
   findByUserId(userId: string): Promise<schema.Workspace[]>;
   findByCustomDomain(domain: string): Promise<schema.Workspace | null>;
+  findByRepoFullName(repoFullName: string): Promise<schema.Workspace | null>;
   findAll(): Promise<schema.Workspace[]>;
   create(data: schema.NewWorkspace): Promise<schema.Workspace>;
   update(id: string, data: Partial<Pick<schema.Workspace, 'name' | 'config'>>): Promise<void>;
@@ -425,6 +426,18 @@ export const workspaceQueries: WorkspaceQueries = {
       .from(schema.workspaces)
       .where(eq(schema.workspaces.customDomain, domain));
     return result[0] ?? null;
+  },
+
+  async findByRepoFullName(repoFullName: string): Promise<schema.Workspace | null> {
+    const db = getDb();
+    // Find repository by full name (case-insensitive), then get its workspace
+    const result = await db
+      .select({ workspace: schema.workspaces })
+      .from(schema.repositories)
+      .innerJoin(schema.workspaces, eq(schema.repositories.workspaceId, schema.workspaces.id))
+      .where(sql`LOWER(${schema.repositories.githubFullName}) = LOWER(${repoFullName})`)
+      .limit(1);
+    return result[0]?.workspace ?? null;
   },
 
   async findAll(): Promise<schema.Workspace[]> {

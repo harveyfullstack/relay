@@ -16,6 +16,7 @@ import { randomBytes } from 'crypto';
 import { createLogger } from '../utils/logger.js';
 import type { StorageAdapter, StoredMessage } from '../storage/adapter.js';
 import { SyncQueue, type SyncQueueConfig, type SyncQueueStats } from './sync-queue.js';
+import { getRepoFullNameFromPath } from '../utils/git-remote.js';
 
 const log = createLogger('cloud-sync');
 
@@ -34,6 +35,10 @@ export interface CloudSyncConfig {
   useOptimizedSync?: boolean;
   /** Sync queue configuration */
   syncQueue?: Partial<SyncQueueConfig>;
+
+  // Project context for workspace resolution
+  /** Project directory for git remote detection (defaults to cwd) */
+  projectDirectory?: string;
 }
 
 export interface RemoteAgent {
@@ -67,6 +72,10 @@ export class CloudSyncService extends EventEmitter {
   private lastMessageSyncTs: number = 0;
   private messageSyncInProgress = false;
 
+  // Project context for workspace resolution
+  private projectDirectory: string;
+  private repoFullName: string | null = null;
+
   // Optimized sync queue
   private syncQueue: SyncQueue | null = null;
 
@@ -80,10 +89,18 @@ export class CloudSyncService extends EventEmitter {
       enabled: config.enabled ?? true,
       useOptimizedSync: config.useOptimizedSync ?? true,
       syncQueue: config.syncQueue,
+      projectDirectory: config.projectDirectory,
     };
 
     // Generate or load machine ID for consistent identification
     this.machineId = this.getMachineId();
+
+    // Initialize project context for workspace resolution
+    this.projectDirectory = this.config.projectDirectory || process.cwd();
+    this.repoFullName = getRepoFullNameFromPath(this.projectDirectory);
+    if (this.repoFullName) {
+      log.info('Detected git repository', { repoFullName: this.repoFullName });
+    }
 
     // Initialize optimized sync queue if enabled and API key is available
     if (this.config.useOptimizedSync && this.config.apiKey) {
@@ -479,14 +496,17 @@ export class CloudSyncService extends EventEmitter {
         payload_meta: msg.payloadMeta,
       }));
 
-      // Post to cloud
+      // Post to cloud with repo context for workspace resolution
       const response = await fetch(`${this.config.cloudUrl}/api/daemons/messages/sync`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.config.apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ messages: syncPayload }),
+        body: JSON.stringify({
+          messages: syncPayload,
+          repoFullName: this.repoFullName,
+        }),
       });
 
       if (!response.ok) {

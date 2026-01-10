@@ -496,7 +496,7 @@ interface SyncMessageInput {
  */
 daemonsRouter.post('/messages/sync', requireDaemonAuth as any, async (req: Request, res: Response) => {
   const daemon = (req as any).daemon;
-  const { messages } = req.body as { messages: SyncMessageInput[] };
+  const { messages, repoFullName } = req.body as { messages: SyncMessageInput[]; repoFullName?: string };
 
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'messages array is required' });
@@ -511,11 +511,25 @@ daemonsRouter.post('/messages/sync', requireDaemonAuth as any, async (req: Reque
     return res.status(400).json({ error: 'Maximum batch size is 500 messages' });
   }
 
+  // Resolve workspace from git remote if not already linked
+  let workspaceId = daemon.workspaceId;
+  if (!workspaceId && repoFullName) {
+    // Try to find workspace by repository
+    const workspace = await db.workspaces.findByRepoFullName(repoFullName);
+    if (workspace) {
+      // Auto-link daemon to workspace
+      await db.linkedDaemons.update(daemon.id, { workspaceId: workspace.id });
+      workspaceId = workspace.id;
+      console.log(`[message-sync] Auto-linked daemon ${daemon.id} to workspace ${workspace.id} via repo ${repoFullName}`);
+    }
+  }
+
   // Require workspace to be linked
-  if (!daemon.workspaceId) {
-    return res.status(400).json({
-      error: 'Daemon must be linked to a workspace to sync messages. Re-link with a workspace ID.',
-    });
+  if (!workspaceId) {
+    const hint = repoFullName
+      ? `Repository '${repoFullName}' not found in any workspace. Link the repo in the dashboard first.`
+      : 'Daemon must be linked to a workspace to sync messages. Re-link with a workspace ID.';
+    return res.status(400).json({ error: hint });
   }
 
   try {
@@ -534,7 +548,7 @@ daemonsRouter.post('/messages/sync', requireDaemonAuth as any, async (req: Reque
 
     // Transform to NewAgentMessage format
     const dbMessages = messages.map((msg) => ({
-      workspaceId: daemon.workspaceId,
+      workspaceId,
       daemonId: daemon.id,
       originalId: msg.id,
       fromAgent: msg.from,
