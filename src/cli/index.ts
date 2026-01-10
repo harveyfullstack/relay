@@ -1546,6 +1546,65 @@ program
     }
   });
 
+// spawn - Spawn an agent via API (works from any context, no tmux required)
+program
+  .command('spawn', { hidden: true })
+  .description('Spawn an agent via dashboard API (no tmux required, works in containers)')
+  .argument('<name>', 'Agent name')
+  .argument('<cli>', 'CLI to use (claude, codex, gemini, etc.)')
+  .argument('[task]', 'Task description (can also be piped via stdin)')
+  .option('--port <port>', 'Dashboard port', DEFAULT_DASHBOARD_PORT)
+  .option('--team <team>', 'Team name for the agent')
+  .action(async (name: string, cli: string, task: string | undefined, options: { port?: string; team?: string }) => {
+    const port = options.port || DEFAULT_DASHBOARD_PORT;
+
+    // Read task from stdin if not provided as argument
+    let finalTask = task;
+    if (!finalTask && !process.stdin.isTTY) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk);
+      }
+      finalTask = Buffer.concat(chunks).toString('utf-8').trim();
+    }
+
+    if (!finalTask) {
+      console.error('Error: Task description required (as argument or via stdin)');
+      process.exit(1);
+    }
+
+    try {
+      const response = await fetch(`http://localhost:${port}/api/spawn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          cli,
+          task: finalTask,
+          team: options.team,
+        }),
+      });
+
+      const result = await response.json() as { success: boolean; pid?: number; error?: string };
+
+      if (result.success) {
+        console.log(`Spawned agent: ${name} (pid: ${result.pid})`);
+        process.exit(0);
+      } else {
+        console.error(`Failed to spawn ${name}: ${result.error || 'Unknown error'}`);
+        process.exit(1);
+      }
+    } catch (err: any) {
+      if (err.code === 'ECONNREFUSED') {
+        console.error(`Cannot connect to dashboard at port ${port}. Is the daemon running?`);
+        console.log(`Run 'agent-relay up' to start the daemon.`);
+      } else {
+        console.error(`Failed to spawn ${name}: ${err.message}`);
+      }
+      process.exit(1);
+    }
+  });
+
 // release - Release a spawned agent via API (works from any context, no terminal required)
 program
   .command('release')
