@@ -338,6 +338,24 @@ export class DaemonApi extends EventEmitter {
       return { status: 200, body: { success: true } };
     });
 
+    // Interrupt agent by ID (send Ctrl+C to break out of stuck loops)
+    this.routes.set('POST /agents/:id/interrupt', async (req): Promise<ApiResponse> => {
+      const interrupted = this.agentManager.interrupt(req.params.id);
+      if (!interrupted) {
+        return { status: 404, body: { error: 'Agent not found' } };
+      }
+      return { status: 200, body: { success: true } };
+    });
+
+    // Interrupt agent by name (for dashboard where only name is available)
+    this.routes.set('POST /agents/by-name/:name/interrupt', async (req): Promise<ApiResponse> => {
+      const interrupted = this.agentManager.interruptByName(req.params.name);
+      if (!interrupted) {
+        return { status: 404, body: { error: 'Agent not found' } };
+      }
+      return { status: 200, body: { success: true } };
+    });
+
     // === All Agents ===
 
     // List all agents
