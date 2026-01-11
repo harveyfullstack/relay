@@ -243,6 +243,7 @@ interface ProjectSectionProps {
   onAgentSelect?: (agent: Agent) => void;
   onReleaseClick?: (agent: Agent) => void;
   onLogsClick?: (agent: Agent) => void;
+  onProfileClick?: (agent: Agent) => void;
 }
 
 interface TeamGroup {
@@ -262,6 +263,7 @@ function ProjectSection({
   onAgentSelect,
   onReleaseClick,
   onLogsClick,
+  onProfileClick,
 }: ProjectSectionProps) {
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
 
