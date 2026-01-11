@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Socket } from 'node:net';
 import { Connection } from './connection.js';
-import { encodeFrame, FrameParser } from '../protocol/framing.js';
+import { encodeFrameLegacy, FrameParser } from '../protocol/framing.js';
 import { PROTOCOL_VERSION, type Envelope, type HelloPayload, type WelcomePayload } from '../protocol/types.js';
 
 class MockSocket {
@@ -92,7 +92,7 @@ describe('Connection', () => {
     const onActive = vi.fn();
     connection.onActive = onActive;
 
-    socket.emit('data', encodeFrame(makeHello('agent-a')));
+    socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
 
     expect(connection.state).toBe('ACTIVE');
     expect(onActive).toHaveBeenCalledTimes(1);
@@ -107,7 +107,7 @@ describe('Connection', () => {
     const onError = vi.fn();
     connection.onError = onError;
 
-    socket.emit('data', encodeFrame(makeHello('agent-a')));
+    socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
     expect(connection.state).toBe('ACTIVE');
 
     await new Promise((r) => setTimeout(r, 100));
@@ -118,6 +118,7 @@ describe('Connection', () => {
   it('accepts resume token when resumeHandler returns a session', async () => {
     const socket = new MockSocket();
     const parser = new FrameParser();
+    parser.setLegacyMode(true);
     const resumeHandler = vi.fn().mockResolvedValue({
       sessionId: 'session-resume',
       resumeToken: 'token-abc',
@@ -129,7 +130,7 @@ describe('Connection', () => {
 
     const hello = makeHello('agent-a');
     hello.payload.session = { resume_token: 'token-abc' };
-    socket.emit('data', encodeFrame(hello));
+    socket.emit('data', encodeFrameLegacy(hello));
 
     // Wait for the async resumeHandler to complete
     await vi.waitFor(() => {
@@ -161,7 +162,7 @@ describe('Connection', () => {
         const onError = vi.fn();
         connection.onError = onError;
 
-        socket.emit('data', encodeFrame(makeHello('agent-a')));
+        socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
         expect(connection.state).toBe('ACTIVE');
 
         // Wait less than timeout (20ms) - should still be alive
@@ -192,14 +193,14 @@ describe('Connection', () => {
         connection.onError = onError;
         connection.onPong = onPong;
 
-        socket.emit('data', encodeFrame(makeHello('agent-a')));
+        socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
         expect(connection.state).toBe('ACTIVE');
 
         // Simulate slow but valid pong responses every 40ms (within 60ms timeout)
         for (let i = 0; i < 3; i++) {
           await vi.advanceTimersByTimeAsync(40);
           // Send PONG before timeout expires
-          socket.emit('data', encodeFrame({
+          socket.emit('data', encodeFrameLegacy({
             v: PROTOCOL_VERSION,
             type: 'PONG',
             id: `pong-${i}`,
@@ -229,7 +230,7 @@ describe('Connection', () => {
         const onError = vi.fn();
         connection.onError = onError;
 
-        socket.emit('data', encodeFrame(makeHello('agent-a')));
+        socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
         expect(connection.state).toBe('ACTIVE');
 
         // Wait past timeout before sending pong
@@ -240,7 +241,7 @@ describe('Connection', () => {
         expect(socket.destroyed).toBe(true);
 
         // Late pong should have no effect (connection already dead)
-        socket.emit('data', encodeFrame({
+        socket.emit('data', encodeFrameLegacy({
           v: PROTOCOL_VERSION,
           type: 'PONG',
           id: 'late-pong',
@@ -267,7 +268,7 @@ describe('Connection', () => {
         const onError = vi.fn();
         connection.onError = onError;
 
-        socket.emit('data', encodeFrame(makeHello('agent-a')));
+        socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
         expect(connection.state).toBe('ACTIVE');
 
         // Wait 40ms - should still be alive (timeout is 60ms)
@@ -289,7 +290,7 @@ describe('Connection', () => {
       const socket = new MockSocket();
       const connection = new Connection(socket as unknown as Socket, { heartbeatMs: 50 });
 
-      socket.emit('data', encodeFrame(makeHello('agent-a')));
+      socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
       expect(connection.state).toBe('ACTIVE');
 
       // Wait for write queue to drain
@@ -306,7 +307,7 @@ describe('Connection', () => {
         maxWriteQueueSize: 5,
       });
 
-      socket.emit('data', encodeFrame(makeHello('agent-a')));
+      socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
 
       // Block the drain loop by making socket always return false
       socket.write = () => false;
@@ -340,7 +341,7 @@ describe('Connection', () => {
       const onBackpressure = vi.fn();
       connection.onBackpressure = onBackpressure;
 
-      socket.emit('data', encodeFrame(makeHello('agent-a')));
+      socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
 
       // Send enough to exceed high water mark
       for (let i = 0; i < 10; i++) {
@@ -375,7 +376,7 @@ describe('Connection', () => {
       const onBackpressure = vi.fn();
       connection.onBackpressure = onBackpressure;
 
-      socket.emit('data', encodeFrame(makeHello('agent-a')));
+      socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
 
       // Fill queue to trigger backpressure
       for (let i = 0; i < 10; i++) {
@@ -418,7 +419,7 @@ describe('Connection', () => {
 
       const connection = new Connection(socket as unknown as Socket, { heartbeatMs: 50 });
 
-      socket.emit('data', encodeFrame(makeHello('agent-a')));
+      socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
 
       // Queue multiple messages
       for (let i = 0; i < 5; i++) {
@@ -452,7 +453,7 @@ describe('Connection', () => {
 
       const connection = new Connection(socket as unknown as Socket, { heartbeatMs: 50 });
 
-      socket.emit('data', encodeFrame(makeHello('agent-a')));
+      socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
 
       // Queue some messages
       for (let i = 0; i < 5; i++) {
@@ -479,7 +480,7 @@ describe('Connection', () => {
       const socket = new MockSocket();
       const connection = new Connection(socket as unknown as Socket, { heartbeatMs: 50 });
 
-      socket.emit('data', encodeFrame(makeHello('agent-a')));
+      socket.emit('data', encodeFrameLegacy(makeHello('agent-a')));
       socket.emit('close');
 
       expect(connection.state).toBe('CLOSED');

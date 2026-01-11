@@ -7,7 +7,7 @@
  * - Direct messaging between any combination of users and agents
  */
 
-import { v4 as uuid } from 'uuid';
+import { generateId } from '../utils/id-generator.js';
 import { PROTOCOL_VERSION, type Envelope, type EntityType } from './types.js';
 
 // Re-export for convenience
@@ -183,7 +183,7 @@ export function createChannelJoinEnvelope(
   return {
     v: PROTOCOL_VERSION,
     type: 'CHANNEL_JOIN',
-    id: uuid(),
+    id: generateId(),
     ts: Date.now(),
     from,
     payload: {
@@ -205,7 +205,7 @@ export function createChannelLeaveEnvelope(
   return {
     v: PROTOCOL_VERSION,
     type: 'CHANNEL_LEAVE',
-    id: uuid(),
+    id: generateId(),
     ts: Date.now(),
     from,
     payload: {
@@ -232,7 +232,7 @@ export function createChannelMessageEnvelope(
   return {
     v: PROTOCOL_VERSION,
     type: 'CHANNEL_MESSAGE',
-    id: uuid(),
+    id: generateId(),
     ts: Date.now(),
     from,
     payload: {
