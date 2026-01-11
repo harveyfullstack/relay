@@ -78,6 +78,7 @@ async function proxyToUserWorkspace(
 
     // Proxy to workspace
     const targetUrl = `${runningWorkspace.publicUrl}${path}`;
+    console.log(`[workspace-proxy] ${options?.method || 'GET'} ${targetUrl}`);
     const fetchOptions: RequestInit = {
       method: options?.method || 'GET',
       headers: { 'Content-Type': 'application/json' },
@@ -86,6 +87,17 @@ async function proxyToUserWorkspace(
       fetchOptions.body = JSON.stringify(options.body);
     }
     const proxyRes = await fetch(targetUrl, fetchOptions);
+    const contentType = proxyRes.headers.get('content-type') || '';
+    console.log(`[workspace-proxy] Response: ${proxyRes.status} ${proxyRes.statusText}, content-type: ${contentType}`);
+
+    // Check if response is JSON
+    if (!contentType.includes('application/json')) {
+      const text = await proxyRes.text();
+      console.error(`[workspace-proxy] Non-JSON response: ${text.substring(0, 200)}`);
+      res.status(502).json({ error: 'Workspace returned non-JSON response', success: false });
+      return;
+    }
+
     const data = await proxyRes.json();
     res.status(proxyRes.status).json(data);
   } catch (error) {
@@ -339,34 +351,78 @@ export async function createServer(): Promise<CloudServer> {
     await proxyToUserWorkspace(req, res, '/api/trajectory/history');
   });
 
-  // Channel proxy routes - forward to user's workspace daemon
-  // These routes communicate with the local daemon, not cloud services
+  // Channel proxy routes - forward to local dashboard-server (not workspace)
+  // Channels talk to the local daemon, so they need the local dashboard-server
   // MUST be before teamsRouter to avoid being caught by its catch-all
+  const localDashboardUrl = config.localDashboardUrl || 'http://localhost:3888';
+
+  async function proxyToLocalDashboard(
+    req: Request,
+    res: Response,
+    path: string,
+    options?: { method?: string; body?: unknown }
+  ): Promise<void> {
+    try {
+      const targetUrl = `${localDashboardUrl}${path}`;
+      console.log(`[channel-proxy] ${options?.method || 'GET'} ${targetUrl}`);
+
+      const fetchOptions: RequestInit = {
+        method: options?.method || 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      };
+      if (options?.body) {
+        fetchOptions.body = JSON.stringify(options.body);
+      }
+
+      const proxyRes = await fetch(targetUrl, fetchOptions);
+      const contentType = proxyRes.headers.get('content-type') || '';
+
+      if (!contentType.includes('application/json')) {
+        const text = await proxyRes.text();
+        console.error(`[channel-proxy] Non-JSON response from ${targetUrl}: ${text.substring(0, 100)}`);
+        res.status(502).json({
+          error: 'Local dashboard not available or returned non-JSON response',
+          hint: 'Make sure the dashboard-server is running (agent-relay start)',
+        });
+        return;
+      }
+
+      const data = await proxyRes.json();
+      res.status(proxyRes.status).json(data);
+    } catch (error) {
+      console.error('[channel-proxy] Error:', error);
+      res.status(502).json({
+        error: 'Failed to connect to local dashboard',
+        hint: 'Make sure the dashboard-server is running (agent-relay start)',
+      });
+    }
+  }
+
   app.get('/api/channels', requireAuth, async (req, res) => {
     const queryString = req.query.username
       ? `?username=${encodeURIComponent(req.query.username as string)}`
       : '';
-    await proxyToUserWorkspace(req, res, `/api/channels${queryString}`);
+    await proxyToLocalDashboard(req, res, `/api/channels${queryString}`);
   });
 
   app.post('/api/channels', requireAuth, express.json(), async (req, res) => {
-    await proxyToUserWorkspace(req, res, '/api/channels', { method: 'POST', body: req.body });
+    await proxyToLocalDashboard(req, res, '/api/channels', { method: 'POST', body: req.body });
   });
 
   app.post('/api/channels/invite', requireAuth, express.json(), async (req, res) => {
-    await proxyToUserWorkspace(req, res, '/api/channels/invite', { method: 'POST', body: req.body });
+    await proxyToLocalDashboard(req, res, '/api/channels/invite', { method: 'POST', body: req.body });
   });
 
   app.post('/api/channels/join', requireAuth, express.json(), async (req, res) => {
-    await proxyToUserWorkspace(req, res, '/api/channels/join', { method: 'POST', body: req.body });
+    await proxyToLocalDashboard(req, res, '/api/channels/join', { method: 'POST', body: req.body });
   });
 
   app.post('/api/channels/leave', requireAuth, express.json(), async (req, res) => {
-    await proxyToUserWorkspace(req, res, '/api/channels/leave', { method: 'POST', body: req.body });
+    await proxyToLocalDashboard(req, res, '/api/channels/leave', { method: 'POST', body: req.body });
   });
 
   app.post('/api/channels/message', requireAuth, express.json(), async (req, res) => {
-    await proxyToUserWorkspace(req, res, '/api/channels/message', { method: 'POST', body: req.body });
+    await proxyToLocalDashboard(req, res, '/api/channels/message', { method: 'POST', body: req.body });
   });
 
   app.get('/api/channels/:channel/messages', requireAuth, async (req, res) => {
@@ -375,19 +431,19 @@ export async function createServer(): Promise<CloudServer> {
     if (req.query.limit) params.set('limit', req.query.limit as string);
     if (req.query.before) params.set('before', req.query.before as string);
     const queryString = params.toString() ? `?${params.toString()}` : '';
-    await proxyToUserWorkspace(req, res, `/api/channels/${channel}/messages${queryString}`);
+    await proxyToLocalDashboard(req, res, `/api/channels/${channel}/messages${queryString}`);
   });
 
   app.post('/api/channels/archive', requireAuth, express.json(), async (req, res) => {
-    await proxyToUserWorkspace(req, res, '/api/channels/archive', { method: 'POST', body: req.body });
+    await proxyToLocalDashboard(req, res, '/api/channels/archive', { method: 'POST', body: req.body });
   });
 
   app.post('/api/channels/unarchive', requireAuth, express.json(), async (req, res) => {
-    await proxyToUserWorkspace(req, res, '/api/channels/unarchive', { method: 'POST', body: req.body });
+    await proxyToLocalDashboard(req, res, '/api/channels/unarchive', { method: 'POST', body: req.body });
   });
 
   app.get('/api/channels/users', requireAuth, async (req, res) => {
-    await proxyToUserWorkspace(req, res, '/api/channels/users');
+    await proxyToLocalDashboard(req, res, '/api/channels/users');
   });
 
   // Test helper routes (only available in non-production)
