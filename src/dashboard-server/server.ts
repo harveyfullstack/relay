@@ -406,27 +406,177 @@ export async function startDashboard(
 
   console.log('Starting dashboard...');
 
-  const storage: StorageAdapter | undefined = dbPath
-    ? new SqliteStorageAdapter({ dbPath })
-    : undefined;
+  const disableStorage = process.env.RELAY_DISABLE_STORAGE === 'true';
+  const storage: StorageAdapter | undefined = disableStorage
+    ? undefined
+    : new SqliteStorageAdapter({
+        dbPath: dbPath ?? path.join(dataDir, 'dashboard.db'),
+      });
 
-  const persistChannelMembership = (channel: string, member: string, action: 'join' | 'leave' | 'invite', options?: { invitedBy?: string }) => {
+  const defaultWorkspaceId = process.env.RELAY_WORKSPACE_ID ?? process.env.AGENT_RELAY_WORKSPACE_ID;
+
+  const resolveWorkspaceId = (req: express.Request): string | undefined => {
+    const fromQuery = req.query.workspaceId as string | undefined;
+    const fromBody = (req.body as Record<string, unknown> | undefined)?.workspaceId as string | undefined;
+    const fromHeader = (req.headers['x-workspace-id'] as string | undefined);
+    return fromQuery || fromBody || fromHeader || defaultWorkspaceId;
+  };
+
+  interface ChannelRecord {
+    id: string;
+    visibility: 'public' | 'private';
+    status: 'active' | 'archived';
+    createdAt?: number;
+    createdBy?: string;
+    description?: string;
+    lastActivityAt: number;
+    lastMessage?: { content: string; from: string; timestamp: string };
+    members: Set<string>;
+    dmParticipants?: string[];
+  }
+
+  const loadChannelRecords = async (workspaceId?: string): Promise<Map<string, ChannelRecord>> => {
+    const map = new Map<string, ChannelRecord>();
+    if (!storage) {
+      return map;
+    }
+    const stored = await storage.getMessages({ order: 'asc' });
+
+    const ensureRecord = (id: string): ChannelRecord => {
+      let record = map.get(id);
+      if (!record) {
+        record = {
+          id,
+          visibility: 'public',
+          status: 'active',
+          lastActivityAt: 0,
+          members: new Set(),
+        };
+        if (id.startsWith('dm:')) {
+          const participants = id.split(':').slice(1).filter(Boolean);
+          if (participants.length > 0) {
+            participants.forEach((participant) => record!.members.add(participant));
+            record.dmParticipants = participants;
+          }
+        }
+        map.set(id, record);
+      }
+      return record;
+    };
+
+    const addMember = (record: ChannelRecord, member: string) => {
+      if (!member) return;
+      record.members.add(member);
+    };
+
+    for (const msg of stored) {
+      const target = msg.to;
+      if (!target || (!target.startsWith('#') && !target.startsWith('dm:'))) {
+        continue;
+      }
+
+      const data = msg.data as Record<string, unknown> | undefined;
+      const messageWorkspaceId = typeof data?._workspaceId === 'string' ? data._workspaceId : undefined;
+      if (workspaceId && messageWorkspaceId && messageWorkspaceId !== workspaceId) {
+        continue;
+      }
+
+      const record = ensureRecord(target);
+      const timestamp = typeof msg.ts === 'number' ? msg.ts : Date.now();
+
+      const channelCreate = data?._channelCreate as { createdBy?: string; description?: string; isPrivate?: boolean } | undefined;
+      if (channelCreate) {
+        record.createdAt = record.createdAt ?? timestamp;
+        record.createdBy = channelCreate.createdBy ?? record.createdBy;
+        if (channelCreate.description) {
+          record.description = String(channelCreate.description);
+        }
+        record.visibility = channelCreate.isPrivate ? 'private' : 'public';
+      }
+
+      const stateChange = data?._channelState as string | undefined;
+      if (stateChange) {
+        record.status = stateChange === 'archived' ? 'archived' : 'active';
+        record.lastActivityAt = Math.max(record.lastActivityAt, timestamp);
+      }
+
+      const membership = data?._channelMembership as { member?: string; action?: string } | undefined;
+      if (membership?.member) {
+        if (membership.action === 'leave') {
+          record.members.delete(membership.member);
+        } else {
+          addMember(record, membership.member);
+        }
+        record.lastActivityAt = Math.max(record.lastActivityAt, timestamp);
+      }
+
+      const isChannelMessage = Boolean(data?._isChannelMessage);
+      if (isChannelMessage) {
+        addMember(record, msg.from);
+        record.lastActivityAt = Math.max(record.lastActivityAt, timestamp);
+        record.lastMessage = {
+          content: msg.body,
+          from: msg.from || '__system__',
+          timestamp: new Date(timestamp).toISOString(),
+        };
+        if (target.startsWith('dm:') && !record.dmParticipants) {
+          const participants = target.split(':').slice(1).filter(Boolean);
+          if (participants.length > 0) {
+            participants.forEach((participant) => record.members.add(participant));
+            record.dmParticipants = participants;
+          }
+        }
+      }
+    }
+
+    return map;
+  };
+
+  const loadPersistedChannelsForUser = async (username: string, workspaceId?: string): Promise<string[]> => {
+    const channelMap = await loadChannelRecords(workspaceId);
+    const result: string[] = [];
+    for (const record of channelMap.values()) {
+      if (record.status === 'archived') {
+        continue;
+      }
+      if (record.members.has(username)) {
+        result.push(record.id);
+      }
+    }
+    if (!result.includes('#general')) {
+      result.unshift('#general');
+    }
+    return result;
+  };
+
+  const persistChannelMembershipEvent = async (
+    channel: string,
+    member: string,
+    action: 'join' | 'leave' | 'invite',
+    options?: { invitedBy?: string; workspaceId?: string }
+  ) => {
     if (!storage) return;
-    storage.saveMessage({
-      id: `membership-${crypto.randomUUID()}`,
+    const data: Record<string, unknown> = {
+      _channelMembership: {
+        member,
+        action,
+        invitedBy: options?.invitedBy,
+      },
+    };
+    const workspaceToStore = options?.workspaceId ?? defaultWorkspaceId;
+    if (workspaceToStore) {
+      data._workspaceId = workspaceToStore;
+    }
+
+    await storage.saveMessage({
+      id: `channel-membership-${crypto.randomUUID()}`,
       ts: Date.now(),
       from: '__system__',
       to: channel,
       topic: undefined,
-      kind: 'state', // membership events stored as state
+      kind: 'state',
       body: `${action}:${member}`,
-      data: {
-        _channelMembership: {
-          member,
-          action,
-          invitedBy: options?.invitedBy,
-        },
-      },
+      data,
       status: 'read',
       is_urgent: false,
       is_broadcast: true,
@@ -846,6 +996,8 @@ export async function startDashboard(
       await client.connect();
       return client;
     },
+    loadPersistedChannels: (username: string) =>
+      loadPersistedChannelsForUser(username, defaultWorkspaceId),
   });
 
   // Bridge client for cross-project messaging
@@ -2297,80 +2449,91 @@ export async function startDashboard(
   /**
    * GET /api/channels - Get list of channels the user has joined
    */
-  app.get('/api/channels', (req, res) => {
+  app.get('/api/channels', async (req, res) => {
     const username = req.query.username as string | undefined;
+    const workspaceId = resolveWorkspaceId(req);
 
-    // Prefer persisted channel history (storage)
-    if (storage) {
-      storage.getMessages({ limit: 1000, order: 'desc' }).then((msgs) => {
-        // Channel messages are stored with to=<channel> and data._isChannelMessage
-        const channelMap = new Map<string, { lastActivityAt: string; status?: string }>();
-        msgs.forEach((m) => {
-          const data = m.data as any;
-          const isChannel = data && data._isChannelMessage;
-          const stateChange = data && data._channelState;
-          const target = m.to || '';
-          if (!target.startsWith('#')) return;
-
-          const existing = channelMap.get(target) || { lastActivityAt: new Date(0).toISOString(), status: 'active' };
-
-          // Apply state changes
-          if (stateChange) {
-            const ts = new Date(m.ts).getTime();
-            const existingTs = new Date(existing.lastActivityAt).getTime();
-            const nextStatus = stateChange === 'archived' ? 'archived' : 'active';
-            channelMap.set(target, {
-              lastActivityAt: ts > existingTs ? new Date(ts).toISOString() : existing.lastActivityAt,
-              status: nextStatus,
-            });
-            return;
-          }
-
-          if (!isChannel) return;
-          const ts = new Date(m.ts).getTime();
-          const existingTs = new Date(existing.lastActivityAt).getTime();
-          channelMap.set(target, {
-            lastActivityAt: ts > existingTs ? new Date(ts).toISOString() : existing.lastActivityAt,
-            status: existing.status ?? 'active',
-          });
-        });
-
-        const channels = Array.from(channelMap.entries()).map(([id, meta]) => ({
+    if (!storage) {
+      if (!username) {
+        return res.status(400).json({ error: 'username query param required' });
+      }
+      const channels = userBridge.getUserChannels(username);
+      return res.json({
+        channels: channels.map((id) => ({
           id,
           name: id.startsWith('#') ? id.slice(1) : id,
-          status: meta.status ?? 'active',
-          lastActivityAt: meta.lastActivityAt,
-        }));
+          visibility: 'public',
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          createdBy: username,
+          memberCount: 0,
+          unreadCount: 0,
+          hasMentions: false,
+          isDm: id.startsWith('dm:'),
+        })),
+        archivedChannels: [],
+      });
+    }
 
-        // Also include in-memory memberships so live channels show immediately
-        if (username) {
-          const joined = userBridge.getUserChannels(username);
-          joined.forEach((id) => {
-            if (!channelMap.has(id)) {
-              channels.push({
-                id,
-                name: id.startsWith('#') ? id.slice(1) : id,
-                status: 'active',
-                lastActivityAt: new Date().toISOString(),
-              });
-            }
-          });
+    try {
+      const channelMap = await loadChannelRecords(workspaceId);
+      type ChannelResponse = {
+        id: string;
+        name: string;
+        description?: string;
+        visibility: string;
+        status: string;
+        createdAt: string;
+        createdBy: string;
+        lastActivityAt?: string;
+        memberCount: number;
+        unreadCount: number;
+        hasMentions: boolean;
+        lastMessage?: { content: string; from: string; timestamp: string };
+        isDm: boolean;
+        dmParticipants?: string[];
+      };
+      const activeChannels: ChannelResponse[] = [];
+      const archivedChannels: ChannelResponse[] = [];
+
+      for (const record of channelMap.values()) {
+        const isMember = !username || record.members.has(username) || record.id === '#general';
+        if (!isMember) {
+          continue;
         }
 
-        res.json({ channels });
-      }).catch((err) => {
-        console.error('[channels] Failed to read channel history', err);
-        res.status(500).json({ error: 'Failed to load channels' });
-      });
-      return;
-    }
+        const channel = {
+          id: record.id,
+          name: record.id.startsWith('#') ? record.id.slice(1) : record.id,
+          description: record.description,
+          visibility: record.visibility,
+          status: record.status,
+          createdAt: record.createdAt ? new Date(record.createdAt).toISOString() : new Date(record.lastActivityAt || Date.now()).toISOString(),
+          createdBy: record.createdBy || '__system__',
+          lastActivityAt: record.lastActivityAt ? new Date(record.lastActivityAt).toISOString() : undefined,
+          memberCount: record.members.size,
+          unreadCount: 0,
+          hasMentions: false,
+          lastMessage: record.lastMessage,
+          isDm: record.id.startsWith('dm:'),
+          dmParticipants: record.dmParticipants,
+        };
 
-    // Fallback: use in-memory memberships
-    if (!username) {
-      return res.status(400).json({ error: 'username query param required' });
+        if (record.status === 'archived') {
+          archivedChannels.push(channel);
+        } else {
+          activeChannels.push(channel);
+        }
+      }
+
+      return res.json({
+        channels: activeChannels,
+        archivedChannels,
+      });
+    } catch (err) {
+      console.error('[channels] Failed to load channels', err);
+      return res.status(500).json({ error: 'Failed to load channels' });
     }
-    const channels = userBridge.getUserChannels(username);
-    res.json({ channels: channels.map((id) => ({ id, name: id })) });
   });
 
   /**
@@ -2383,6 +2546,7 @@ export async function startDashboard(
       isPrivate?: boolean;
       invites?: string; // comma-separated usernames to invite
     };
+    const workspaceId = resolveWorkspaceId(req);
     const username = (req.query.username as string) || (req.body.username as string) || 'Dashboard';
 
     if (!name) {
@@ -2397,6 +2561,7 @@ export async function startDashboard(
       // Note: userBridge.joinChannel triggers router's persistChannelMembership via protocol
       // We only persist here for dashboard-initiated creates (no daemon connection)
       await userBridge.joinChannel(username, channelId);
+      await persistChannelMembershipEvent(channelId, username, 'join', { workspaceId });
 
       // Handle invites if provided
       if (invites) {
@@ -2404,6 +2569,7 @@ export async function startDashboard(
         for (const invitee of inviteList) {
           // userBridge.joinChannel handles persistence via protocol
           await userBridge.joinChannel(invitee, channelId);
+          await persistChannelMembershipEvent(channelId, invitee, 'invite', { invitedBy: username, workspaceId });
         }
       }
 
@@ -2423,6 +2589,7 @@ export async function startDashboard(
               description,
               isPrivate: isPrivate ?? false,
             },
+            ...(workspaceId ? { _workspaceId: workspaceId } : {}),
           },
           status: 'read',
           is_urgent: false,
@@ -2454,6 +2621,7 @@ export async function startDashboard(
       invites: string; // comma-separated usernames
       invitedBy?: string;
     };
+    const workspaceId = resolveWorkspaceId(req);
 
     if (!channel || !invites) {
       return res.status(400).json({ error: 'channel and invites are required' });
@@ -2463,11 +2631,26 @@ export async function startDashboard(
     const inviteList = invites.split(',').map((s) => s.trim()).filter(Boolean);
 
     try {
-      const results: Array<{ username: string; success: boolean }> = [];
+      const results: Array<{ username: string; success: boolean; reason?: string }> = [];
       for (const invitee of inviteList) {
-        // userBridge.joinChannel handles persistence via protocol
-        const success = await userBridge.joinChannel(invitee, channelId);
-        results.push({ username: invitee, success });
+        let success = false;
+        let reason: string | undefined;
+        if (userBridge.isUserRegistered(invitee)) {
+          success = await userBridge.joinChannel(invitee, channelId);
+          if (!success) {
+            reason = 'join_failed';
+          }
+        } else {
+          success = true;
+          reason = 'pending';
+        }
+
+        await persistChannelMembershipEvent(channelId, invitee, 'invite', {
+          invitedBy,
+          workspaceId,
+        });
+
+        results.push({ username: invitee, success, reason });
       }
 
       res.json({ channel: channelId, invited: results });
@@ -2533,6 +2716,7 @@ export async function startDashboard(
     const channelId = req.params.channel;
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 200;
     const beforeTs = req.query.before ? parseInt(req.query.before as string, 10) : undefined;
+    const workspaceId = resolveWorkspaceId(req);
 
     try {
       const query: any = {
@@ -2544,8 +2728,14 @@ export async function startDashboard(
         query.sinceTs = beforeTs;
       }
       let messages = await storage.getMessages(query);
-      // Only include channel messages
-      messages = messages.filter((m) => (m.data as any)?._isChannelMessage);
+      // Only include channel messages for this workspace
+      messages = messages.filter((m) => {
+        const data = m.data as any;
+        if (workspaceId && data?._workspaceId && data._workspaceId !== workspaceId) {
+          return false;
+        }
+        return Boolean(data?._isChannelMessage);
+      });
 
       // Sort ascending for UI
       messages.sort((a, b) => a.ts - b.ts);
@@ -2600,6 +2790,7 @@ export async function startDashboard(
     if (!channel) {
       return res.status(400).json({ error: 'channel required' });
     }
+    const workspaceId = resolveWorkspaceId(req);
     try {
       await storage.saveMessage({
         id: `state-${Date.now()}`,
@@ -2609,7 +2800,10 @@ export async function startDashboard(
         topic: undefined,
         kind: 'message',
         body: 'STATE:archived',
-        data: { _channelState: 'archived' },
+        data: {
+          _channelState: 'archived',
+          ...(workspaceId ? { _workspaceId: workspaceId } : {}),
+        },
         status: 'read',
         is_urgent: false,
         is_broadcast: true,
@@ -2632,6 +2826,7 @@ export async function startDashboard(
     if (!channel) {
       return res.status(400).json({ error: 'channel required' });
     }
+    const workspaceId = resolveWorkspaceId(req);
     try {
       await storage.saveMessage({
         id: `state-${Date.now()}`,
@@ -2641,7 +2836,10 @@ export async function startDashboard(
         topic: undefined,
         kind: 'message',
         body: 'STATE:active',
-        data: { _channelState: 'active' },
+        data: {
+          _channelState: 'active',
+          ...(workspaceId ? { _workspaceId: workspaceId } : {}),
+        },
         status: 'read',
         is_urgent: false,
         is_broadcast: true,

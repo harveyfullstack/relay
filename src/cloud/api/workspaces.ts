@@ -1710,7 +1710,11 @@ workspacesRouter.all('/:id/proxy/{*proxyPath}', async (req: Request, res: Respon
       targetBaseUrl = `http://${workspace.computeId}:3888`;
     }
 
-    const targetUrl = `${targetBaseUrl}/api/${proxyPath}`;
+    // Forward query parameters from original request
+    const queryString = Object.keys(req.query).length > 0
+      ? `?${new URLSearchParams(req.query as Record<string, string>).toString()}`
+      : '';
+    const targetUrl = `${targetBaseUrl}/api/${proxyPath}${queryString}`;
     console.log(`[workspace-proxy] ${req.method} ${targetUrl}`);
 
     // Store targetUrl for error handling

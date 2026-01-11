@@ -465,6 +465,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const [archivedChannelsList, setArchivedChannelsList] = useState<Channel[]>([]);
   const [channelMessages, setChannelMessages] = useState<ChannelApiMessage[]>([]);
   const [channelMessageMap, setChannelMessageMap] = useState<Record<string, ChannelApiMessage[]>>({});
+  const fetchedChannelsRef = useRef<Set<string>>(new Set()); // Track channels already fetched to prevent loops
   const [isChannelsLoading, setIsChannelsLoading] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [channelUnreadState, setChannelUnreadState] = useState<UnreadState | undefined>();
@@ -1185,8 +1186,45 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   // Load channels on mount (they're always visible in sidebar, collapsed by default)
   useEffect(() => {
-    // Local mode: use default channels (general + engineering)
     if (!effectiveActiveWorkspaceId) {
+      if (!isCloudMode) {
+        setChannelsList([
+          {
+            id: '#general',
+            name: 'general',
+            description: 'General discussion for all agents',
+            visibility: 'public',
+            memberCount: 0,
+            unreadCount: 0,
+            hasMentions: false,
+            createdAt: new Date().toISOString(),
+            status: 'active',
+            createdBy: 'system',
+            isDm: false,
+          },
+          {
+            id: '#engineering',
+            name: 'engineering',
+            description: 'Engineering discussion',
+            visibility: 'public',
+            memberCount: 0,
+            unreadCount: 0,
+            hasMentions: false,
+            createdAt: new Date().toISOString(),
+            status: 'active',
+            createdBy: 'system',
+            isDm: false,
+          },
+        ]);
+        setArchivedChannelsList([]);
+      } else {
+        setChannelsList([]);
+        setArchivedChannelsList([]);
+      }
+      return;
+    }
+
+    if (!isCloudMode) {
       setChannelsList([
         {
           id: '#general',
@@ -1219,9 +1257,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
       return;
     }
 
-    // Cloud mode: fetch from API
+    setChannelsList([]);
+    setArchivedChannelsList([]);
+    setIsChannelsLoading(true);
+
     const fetchChannels = async () => {
-      setIsChannelsLoading(true);
       try {
         const response = await listChannels(effectiveActiveWorkspaceId);
         setChannelListsFromResponse(response);
@@ -1233,14 +1273,20 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     };
 
     fetchChannels();
-  }, [effectiveActiveWorkspaceId]);
+  }, [effectiveActiveWorkspaceId, isCloudMode]);
 
   // Load messages when a channel is selected (persisted + live)
   useEffect(() => {
     if (!selectedChannelId || viewMode !== 'channels') return;
 
+    // Check if we already have messages cached
     const existing = channelMessageMap[selectedChannelId] ?? [];
-    if (existing.length === 0) {
+    if (existing.length > 0) {
+      setChannelMessages(existing);
+      setHasMoreMessages(false);
+    } else if (!fetchedChannelsRef.current.has(selectedChannelId)) {
+      // Only fetch if we haven't already fetched this channel (prevents infinite loop)
+      fetchedChannelsRef.current.add(selectedChannelId);
       (async () => {
         try {
           const response = await getMessages(effectiveActiveWorkspaceId || 'local', selectedChannelId, { limit: 200 });
@@ -1254,7 +1300,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         }
       })();
     } else {
-      setChannelMessages(existing);
+      // Already fetched but no messages - show empty state
+      setChannelMessages([]);
       setHasMoreMessages(false);
     }
 
@@ -1264,7 +1311,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         c.id === selectedChannelId ? { ...c, unreadCount: 0, hasMentions: false } : c
       )
     );
-  }, [selectedChannelId, viewMode, channelMessageMap, effectiveActiveWorkspaceId]);
+  }, [selectedChannelId, viewMode, effectiveActiveWorkspaceId]); // Removed channelMessageMap to prevent infinite loop
 
   // Channel selection handler - also joins the channel in local mode
   const handleSelectChannel = useCallback(async (channel: Channel) => {

@@ -1,9 +1,8 @@
 /**
  * Channels API Service
  *
- * Channels are now handled entirely by the daemon (not cloud).
- * Real-time messaging uses the daemon's CHANNEL_* protocol.
- * Mock data is still used for channel listing/display (daemon doesn't persist these).
+ * Channels are handled entirely by the daemon (not cloud).
+ * Real-time messaging uses the daemon's CHANNEL_* protocol while the HTTP API now reads from daemon storage.
  *
  * Cloud channels were removed because:
  * - Daemon already has full channel protocol support (CHANNEL_JOIN, CHANNEL_MESSAGE, etc.)
@@ -24,7 +23,7 @@ import type {
   SendMessageResponse,
   SearchResponse,
 } from './types';
-import { getCsrfToken } from '../../lib/api';
+import { getCsrfToken, getApiUrl, initializeWorkspaceId } from '../../lib/api';
 
 /**
  * Get current username from localStorage or return default
@@ -58,12 +57,19 @@ export class ApiError extends Error {
  * List all channels for current user
  * workspaceId parameter is kept for API compatibility but not used
  */
-export async function listChannels(_workspaceId?: string): Promise<ListChannelsResponse> {
+export async function listChannels(workspaceId?: string): Promise<ListChannelsResponse> {
+  // Ensure workspace ID is initialized for proper URL routing
+  initializeWorkspaceId();
   const username = getCurrentUsername();
-  const params = new URLSearchParams({ username });
+  const params = new URLSearchParams();
+  params.set('username', username);
+  if (workspaceId) {
+    params.set('workspaceId', workspaceId);
+  }
+  const url = getApiUrl(`/api/channels?${params.toString()}`);
 
   try {
-    const res = await fetch(`/api/channels?${params.toString()}`, {
+    const res = await fetch(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -73,29 +79,11 @@ export async function listChannels(_workspaceId?: string): Promise<ListChannelsR
       throw new ApiError('Failed to fetch channels', res.status);
     }
 
-    const json = await res.json() as { channels?: Array<{ id: string; name?: string; status?: string; lastActivityAt?: string }> };
-    const channelEntries = json.channels ?? [];
-
-    const channels: Channel[] = channelEntries.map((entry) => {
-      const id = typeof entry === 'string' ? entry : entry.id;
-      const name = (entry as any).name ?? (id.startsWith('#') ? id.slice(1) : id);
-      const status = (entry as any).status ?? 'active';
-      return {
-        id,
-        name,
-        visibility: 'public',
-        status: status === 'archived' ? 'archived' : 'active',
-        createdAt: new Date().toISOString(),
-        createdBy: username,
-        memberCount: 0,
-        unreadCount: 0,
-        hasMentions: false,
-        isDm: id.startsWith('dm:'),
-        lastActivityAt: (entry as any).lastActivityAt,
-      };
-    });
-
-    return { channels, archivedChannels: [] };
+    const json = await res.json() as { channels?: Channel[]; archivedChannels?: Channel[] };
+    return {
+      channels: json.channels ?? [],
+      archivedChannels: json.archivedChannels ?? [],
+    };
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError('Network error fetching channels', 0);
@@ -131,10 +119,12 @@ export async function getChannel(
  * Get messages in a channel
  */
 export async function getMessages(
-  _workspaceId: string,
+  workspaceId: string,
   channelId: string,
   options?: { before?: string; limit?: number; threadId?: string }
 ): Promise<GetMessagesResponse> {
+  // Ensure workspace ID is initialized for proper URL routing
+  initializeWorkspaceId();
   const params = new URLSearchParams();
   if (options?.limit) params.set('limit', String(options.limit));
   if (options?.before) {
@@ -142,8 +132,12 @@ export async function getMessages(
     const ts = Date.parse(options.before);
     if (!Number.isNaN(ts)) params.set('before', String(ts));
   }
+  if (workspaceId) {
+    params.set('workspaceId', workspaceId);
+  }
 
-  const res = await fetch(`/api/channels/${encodeURIComponent(channelId)}/messages?${params.toString()}`, {
+  const url = `/api/channels/${encodeURIComponent(channelId)}/messages${params.toString() ? `?${params.toString()}` : ''}`;
+  const res = await fetch(getApiUrl(url), {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' },
   });
@@ -164,10 +158,12 @@ export async function getMessages(
  * Create a new channel
  */
 export async function createChannel(
-  _workspaceId: string,
+  workspaceId: string,
   request: CreateChannelRequest
 ): Promise<CreateChannelResponse> {
   const username = getCurrentUsername();
+  // Ensure workspace ID is initialized for proper URL routing
+  initializeWorkspaceId();
 
   try {
     const csrfToken = getCsrfToken();
@@ -176,7 +172,7 @@ export async function createChannel(
       headers['X-CSRF-Token'] = csrfToken;
     }
 
-    const response = await fetch('/api/channels', {
+    const response = await fetch(getApiUrl('/api/channels'), {
       method: 'POST',
       headers,
       credentials: 'include',
@@ -186,6 +182,7 @@ export async function createChannel(
         isPrivate: request.visibility === 'private',
         invites: request.members?.join(','),
         username,
+        workspaceId,
       }),
     });
 
@@ -221,14 +218,16 @@ export async function createChannel(
  * Send a message to a channel via daemon API
  */
 export async function sendMessage(
-  _workspaceId: string,
+  workspaceId: string,
   channelId: string,
   request: SendMessageRequest
 ): Promise<SendMessageResponse> {
+  // Ensure workspace ID is initialized for proper URL routing
+  initializeWorkspaceId();
   const username = getCurrentUsername();
 
   try {
-    const response = await fetch('/api/channels/message', {
+    const response = await fetch(getApiUrl('/api/channels/message'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -236,6 +235,7 @@ export async function sendMessage(
         channel: channelId,
         body: request.content,
         thread: request.threadId,
+        workspaceId,
       }),
     });
 
@@ -268,16 +268,18 @@ export async function sendMessage(
  * Join a channel via daemon API
  */
 export async function joinChannel(
-  _workspaceId: string,
+  workspaceId: string,
   channelId: string
 ): Promise<Channel> {
+  // Ensure workspace ID is initialized for proper URL routing
+  initializeWorkspaceId();
   const username = getCurrentUsername();
 
   try {
-    const response = await fetch('/api/channels/join', {
+    const response = await fetch(getApiUrl('/api/channels/join'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, channel: channelId }),
+      body: JSON.stringify({ username, channel: channelId, workspaceId }),
     });
 
     if (!response.ok) {
@@ -307,16 +309,18 @@ export async function joinChannel(
  * Leave a channel via daemon API
  */
 export async function leaveChannel(
-  _workspaceId: string,
+  workspaceId: string,
   channelId: string
 ): Promise<void> {
+  // Ensure workspace ID is initialized for proper URL routing
+  initializeWorkspaceId();
   const username = getCurrentUsername();
 
   try {
-    const response = await fetch('/api/channels/leave', {
+    const response = await fetch(getApiUrl('/api/channels/leave'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, channel: channelId }),
+      body: JSON.stringify({ username, channel: channelId, workspaceId }),
     });
 
     if (!response.ok) {
@@ -333,13 +337,15 @@ export async function leaveChannel(
  * Archive a channel
  */
 export async function archiveChannel(
-  _workspaceId: string,
+  workspaceId: string,
   channelId: string
 ): Promise<Channel> {
-  const res = await fetch('/api/channels/archive', {
+  // Ensure workspace ID is initialized for proper URL routing
+  initializeWorkspaceId();
+  const res = await fetch(getApiUrl('/api/channels/archive'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel: channelId }),
+    body: JSON.stringify({ channel: channelId, workspaceId }),
   });
   if (!res.ok) {
     throw new ApiError('Failed to archive channel', res.status);
@@ -362,13 +368,15 @@ export async function archiveChannel(
  * Unarchive a channel
  */
 export async function unarchiveChannel(
-  _workspaceId: string,
+  workspaceId: string,
   channelId: string
 ): Promise<Channel> {
-  const res = await fetch('/api/channels/unarchive', {
+  // Ensure workspace ID is initialized for proper URL routing
+  initializeWorkspaceId();
+  const res = await fetch(getApiUrl('/api/channels/unarchive'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel: channelId }),
+    body: JSON.stringify({ channel: channelId, workspaceId }),
   });
   if (!res.ok) {
     throw new ApiError('Failed to unarchive channel', res.status);
@@ -582,7 +590,7 @@ export async function getChannelMembers(
  * Always returns true - channels now only use daemon/relay
  */
 export function isRealApiEnabled(): boolean {
-  return false; // "Real" cloud API is disabled, using daemon instead
+  return true;
 }
 
 /**
@@ -593,5 +601,5 @@ export function setApiMode(_useReal: boolean): void {
 }
 
 export function getApiMode(): 'real' | 'mock' {
-  return 'mock'; // Always daemon-based (local) implementation
+  return 'real';
 }

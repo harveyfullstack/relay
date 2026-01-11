@@ -64,6 +64,7 @@ interface UserSession {
 export interface UserBridgeOptions {
   socketPath: string;
   createRelayClient: RelayClientFactory;
+  loadPersistedChannels?: (username: string) => Promise<string[]>;
 }
 
 /**
@@ -81,11 +82,13 @@ export interface SendMessageOptions {
 export class UserBridge {
   private readonly socketPath: string;
   private readonly createRelayClient: RelayClientFactory;
+  private readonly loadPersistedChannels?: (username: string) => Promise<string[]>;
   private readonly users = new Map<string, UserSession>();
 
   constructor(options: UserBridgeOptions) {
     this.socketPath = options.socketPath;
     this.createRelayClient = options.createRelayClient;
+    this.loadPersistedChannels = options.loadPersistedChannels;
   }
 
   /**
@@ -136,6 +139,20 @@ export class UserBridge {
     // Auto-join user to #general channel
     // Note: The daemon auto-joins on connect, but we need to track locally too
     session.channels.add('#general');
+
+    if (this.loadPersistedChannels) {
+      try {
+        const persistedChannels = await this.loadPersistedChannels(username);
+        for (const channel of persistedChannels) {
+          if (channel === '#general') continue;
+          if (session.channels.has(channel)) continue;
+          session.relayClient.joinChannel(channel, username);
+          session.channels.add(channel);
+        }
+      } catch (err) {
+        console.error(`[user-bridge] Failed to restore persisted channels for ${username}:`, err);
+      }
+    }
 
     // Set up WebSocket close handler
     webSocket.on('close', () => {
