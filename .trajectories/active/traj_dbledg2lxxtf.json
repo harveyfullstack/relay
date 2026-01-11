@@ -31,6 +31,18 @@
             "reasoning": "Message sync endpoints and bulk ingest exports are commented out pending NewAgentMessage schema; cloud channels removed via traj_fnmapojrllau so nothing writes to agent_messages in prod build"
           },
           "significance": "high"
+        },
+        {
+          "ts": 1768129790717,
+          "type": "decision",
+          "content": "Switching task: remove example channels/messages from cloud UI; keeping existing trajectory active: Switching task: remove example channels/messages from cloud UI; keeping existing trajectory active",
+          "raw": {
+            "question": "Switching task: remove example channels/messages from cloud UI; keeping existing trajectory active",
+            "chosen": "Switching task: remove example channels/messages from cloud UI; keeping existing trajectory active",
+            "alternatives": [],
+            "reasoning": "Cannot start new trajectory due to active traj_dbledg2lxxtf; documenting context for new work"
+          },
+          "significance": "high"
         }
       ]
     }

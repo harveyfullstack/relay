@@ -399,14 +399,45 @@ export class Daemon {
   private notifyCloudSync(): void {
     if (!this.cloudSync?.isConnected()) return;
 
-    const agents = Array.from(this.connections)
-      .filter(c => c.agentName)
+    // Get AI agents (exclude internal ones like Dashboard)
+    const aiAgents = Array.from(this.connections)
+      .filter(c => {
+        if (!c.agentName) return false;
+        if (c.entityType === 'user') return false;
+        if (this.isInternalAgent(c.agentName)) return false;
+        return true;
+      })
       .map(c => ({
         name: c.agentName!,
         status: 'online',
+        isHuman: false,
       }));
 
-    this.cloudSync.updateAgents(agents);
+    // Get human users (entityType === 'user', exclude Dashboard)
+    const humanUsers = Array.from(this.connections)
+      .filter(c => {
+        if (!c.agentName) return false;
+        if (c.entityType !== 'user') return false;
+        if (this.isInternalAgent(c.agentName)) return false;
+        return true;
+      })
+      .map(c => ({
+        name: c.agentName!,
+        status: 'online',
+        isHuman: true,
+        avatarUrl: c.avatarUrl,
+      }));
+
+    this.cloudSync.updateAgents([...aiAgents, ...humanUsers]);
+  }
+
+  /**
+   * Check if an agent is internal (should be hidden from cloud sync and listings).
+   */
+  private isInternalAgent(name: string): boolean {
+    if (name.startsWith('__')) return true;
+    // Dashboard and cli are internal system agents
+    return name === 'Dashboard' || name === 'cli';
   }
 
   /**

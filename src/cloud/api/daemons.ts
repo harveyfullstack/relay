@@ -176,11 +176,13 @@ daemonsRouter.get('/workspace/:workspaceId/agents', requireAuth, async (req: Req
     // Extract agents from each daemon's metadata
     const localAgents = daemons.flatMap((daemon) => {
       const metadata = daemon.metadata as Record<string, unknown> | null;
-      const agents = (metadata?.agents as Array<{ name: string; status: string }>) || [];
+      const agents = (metadata?.agents as Array<{ name: string; status: string; isHuman?: boolean; avatarUrl?: string }>) || [];
       return agents.map((agent) => ({
         name: agent.name,
         status: agent.status,
         isLocal: true,
+        isHuman: agent.isHuman,
+        avatarUrl: agent.avatarUrl,
         daemonId: daemon.id,
         daemonName: daemon.name,
         daemonStatus: daemon.status,
@@ -366,7 +368,7 @@ daemonsRouter.post('/agents', requireDaemonAuth as any, async (req: Request, res
     const allDaemons = await db.linkedDaemons.findByUserId(daemon.userId);
     const allAgents = allDaemons.flatMap((d) => {
       const metadata = d.metadata as Record<string, unknown> | null;
-      const dAgents = (metadata?.agents as Array<{ name: string; status: string }>) || [];
+      const dAgents = (metadata?.agents as Array<{ name: string; status: string; isHuman?: boolean; avatarUrl?: string }>) || [];
       return dAgents.map((a) => ({
         ...a,
         daemonId: d.id,
