@@ -58,7 +58,7 @@ import {
 } from './channels';
 import { useCloudSessionOptional } from './CloudSessionProvider';
 import { WorkspaceProvider } from './WorkspaceContext';
-import { api, convertApiDecision, setActiveWorkspaceId as setApiWorkspaceId } from '../lib/api';
+import { api, convertApiDecision, setActiveWorkspaceId as setApiWorkspaceId, getCsrfToken } from '../lib/api';
 import { cloudApi } from '../lib/cloudApi';
 import type { CurrentUser } from './MessageList';
 
@@ -1195,10 +1195,17 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     if (!inviteChannelTarget) return;
     setIsInvitingToChannel(true);
     try {
-      // Call the invite API endpoint
+      // Call the invite API endpoint with CSRF token
+      const csrfToken = getCsrfToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+
       const response = await fetch('/api/channels/invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
+        credentials: 'include',
         body: JSON.stringify({
           channel: inviteChannelTarget.name,
           invites: members.join(','),
