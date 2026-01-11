@@ -178,6 +178,9 @@ export function Sidebar({
 
   // Total unread count for channels
   const totalChannelUnread = channels.reduce((sum, c) => sum + c.unreadCount, 0);
+  const hasChannels = channels.length > 0;
+  // Keep channels section open when empty so the create button is visible
+  const isChannelsSectionCollapsed = hasChannels ? isChannelsCollapsed : false;
 
   // Separate AI agents from human team members
   const aiAgents = agents.filter(a => !a.isHuman);
@@ -283,63 +286,61 @@ export function Sidebar({
       )}
 
       {/* Channels Section - Collapsible */}
-      {channels.length > 0 && (
-        <div className="border-b border-border-subtle">
-          <button
-            className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-text-muted uppercase tracking-wide hover:bg-bg-hover transition-colors"
-            onClick={() => setIsChannelsCollapsed(!isChannelsCollapsed)}
-          >
-            <span className="flex items-center gap-2">
-              <HashIcon />
-              Channels
-              {totalChannelUnread > 0 && (
-                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-accent-cyan/20 text-accent-cyan">
-                  {totalChannelUnread}
+      <div className="border-b border-border-subtle">
+        <button
+          className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-text-muted uppercase tracking-wide hover:bg-bg-hover transition-colors"
+          onClick={() => setIsChannelsCollapsed(!isChannelsCollapsed)}
+        >
+          <span className="flex items-center gap-2">
+            <HashIcon />
+            Channels
+            {totalChannelUnread > 0 && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-accent-cyan/20 text-accent-cyan">
+                {totalChannelUnread}
+              </span>
+            )}
+          </span>
+          <ChevronIcon className={`transition-transform ${isChannelsSectionCollapsed ? '' : 'rotate-180'}`} />
+        </button>
+        {!isChannelsSectionCollapsed && (
+          <div className="px-2 pb-2 space-y-0.5">
+            {channels.map(channel => (
+              <button
+                key={channel.id}
+                onClick={() => onChannelSelect?.(channel)}
+                className={`
+                  w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors
+                  ${selectedChannelId === channel.id
+                    ? 'bg-accent-cyan/10 text-text-primary'
+                    : 'hover:bg-bg-hover text-text-secondary hover:text-text-primary'}
+                `}
+              >
+                <span className="text-text-muted">#</span>
+                <span className={`flex-1 truncate ${channel.unreadCount > 0 ? 'font-semibold text-text-primary' : ''}`}>
+                  {channel.name}
                 </span>
-              )}
-            </span>
-            <ChevronIcon className={`transition-transform ${isChannelsCollapsed ? '' : 'rotate-180'}`} />
-          </button>
-          {!isChannelsCollapsed && (
-            <div className="px-2 pb-2 space-y-0.5">
-              {channels.map(channel => (
-                <button
-                  key={channel.id}
-                  onClick={() => onChannelSelect?.(channel)}
-                  className={`
-                    w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors
-                    ${selectedChannelId === channel.id
-                      ? 'bg-accent-cyan/10 text-text-primary'
-                      : 'hover:bg-bg-hover text-text-secondary hover:text-text-primary'}
-                  `}
-                >
-                  <span className="text-text-muted">#</span>
-                  <span className={`flex-1 truncate ${channel.unreadCount > 0 ? 'font-semibold text-text-primary' : ''}`}>
-                    {channel.name}
+                {channel.unreadCount > 0 && (
+                  <span className={`
+                    text-[11px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center
+                    ${channel.hasMentions ? 'bg-red-500/20 text-red-400' : 'bg-accent-cyan/20 text-accent-cyan'}
+                  `}>
+                    {channel.unreadCount}
                   </span>
-                  {channel.unreadCount > 0 && (
-                    <span className={`
-                      text-[11px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center
-                      ${channel.hasMentions ? 'bg-red-500/20 text-red-400' : 'bg-accent-cyan/20 text-accent-cyan'}
-                    `}>
-                      {channel.unreadCount}
-                    </span>
-                  )}
-                </button>
-              ))}
-              {onCreateChannel && (
-                <button
-                  onClick={onCreateChannel}
-                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors"
-                >
-                  <PlusIcon />
-                  <span>Add channel</span>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+                )}
+              </button>
+            ))}
+            {onCreateChannel && (
+              <button
+                onClick={onCreateChannel}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors"
+              >
+                <PlusIcon />
+                <span>{hasChannels ? 'Add channel' : 'Create your first channel'}</span>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Agent/Project List */}
       <div className="flex-1 overflow-y-auto px-2">

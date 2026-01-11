@@ -184,11 +184,13 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           const agents: Agent[] = result.agents.map((a) => ({
             name: a.name,
             status: a.daemonStatus === 'online' ? 'online' : 'offline',
-            isLocal: true,
+            // Only mark AI agents as "local" (from linked daemon), not human users
+            isLocal: !a.isHuman,
             isHuman: a.isHuman,
             avatarUrl: a.avatarUrl,
-            daemonName: a.daemonName,
-            machineId: a.machineId,
+            // Don't include daemon info for human users
+            daemonName: a.isHuman ? undefined : a.daemonName,
+            machineId: a.isHuman ? undefined : a.machineId,
             lastSeen: a.lastSeenAt || undefined,
           }));
           setLocalAgents(agents);
