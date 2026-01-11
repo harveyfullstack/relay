@@ -548,8 +548,9 @@ export class DaemonApi extends EventEmitter {
     // Check if provider is authenticated (credentials exist)
     this.routes.set('GET /auth/cli/:provider/check', async (req): Promise<ApiResponse> => {
       const { provider } = req.params;
+      const userId = req.query.userId;
       const { checkProviderAuth } = await import('./cli-auth.js');
-      const authenticated = await checkProviderAuth(provider);
+      const authenticated = await checkProviderAuth(provider, userId);
       return { status: 200, body: { authenticated } };
     });
 
