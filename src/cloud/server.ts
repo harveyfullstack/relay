@@ -218,6 +218,7 @@ export async function createServer(): Promise<CloudServer> {
     '/api/auth/nango/webhook',
     '/api/auth/codex-helper/callback',
     '/api/admin/',  // Admin API uses X-Admin-Secret header auth
+    '/api/channels/',  // Channels API routes to local daemon, not cloud
   ];
   // Additional pattern for workspace proxy routes (contains /proxy/)
   const isWorkspaceProxyRoute = (path: string) => /^\/api\/workspaces\/[^/]+\/proxy\//.test(path);
