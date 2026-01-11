@@ -791,7 +791,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   // Handle project selection (also switches workspace if using orchestrator)
   const handleProjectSelect = useCallback((project: Project) => {
     setCurrentProject(project.id);
-    // Clear channel selection when switching to project/DM view
+    // Switch to DM view mode and clear channel selection
+    setViewMode('local');
     setSelectedChannelId(undefined);
 
     // Track as recently accessed
@@ -813,7 +814,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   // Handle agent selection
   const handleAgentSelect = useCallback((agent: Agent) => {
-    // Clear channel selection when switching to DM view
+    // Switch to DM view mode and clear channel selection
+    setViewMode('local');
     setSelectedChannelId(undefined);
     selectAgent(agent.name);
     setCurrentChannel(agent.name);
@@ -861,7 +863,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   // Open a DM with a human user from the sidebar
   const handleHumanSelect = useCallback((human: Agent) => {
-    // Clear channel selection when switching to DM view
+    // Switch to DM view mode and clear channel selection
+    setViewMode('local');
     setSelectedChannelId(undefined);
     setCurrentChannel(human.name);
     markDmSeen(human.name);
