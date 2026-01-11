@@ -56,6 +56,108 @@ function isHumanSender(sender: string, agentNames: Set<string>): boolean {
     !agentNames.has(sender.toLowerCase());
 }
 
+const SETTINGS_STORAGE_KEY = 'dashboard-settings';
+
+type LegacyDashboardSettings = {
+  theme?: 'dark' | 'light' | 'system';
+  compactMode?: boolean;
+  showTimestamps?: boolean;
+  soundEnabled?: boolean;
+  notificationsEnabled?: boolean;
+  autoScrollMessages?: boolean;
+};
+
+function mergeSettings(base: Settings, partial: Partial<Settings>): Settings {
+  return {
+    ...base,
+    ...partial,
+    notifications: { ...base.notifications, ...partial.notifications },
+    display: { ...base.display, ...partial.display },
+    messages: { ...base.messages, ...partial.messages },
+    connection: { ...base.connection, ...partial.connection },
+  };
+}
+
+function migrateLegacySettings(raw: LegacyDashboardSettings): Settings {
+  const theme = raw.theme && ['dark', 'light', 'system'].includes(raw.theme)
+    ? raw.theme
+    : defaultSettings.theme;
+  const sound = raw.soundEnabled ?? defaultSettings.notifications.sound;
+  const desktop = raw.notificationsEnabled ?? defaultSettings.notifications.desktop;
+  return {
+    ...defaultSettings,
+    theme,
+    display: {
+      ...defaultSettings.display,
+      compactMode: raw.compactMode ?? defaultSettings.display.compactMode,
+      showTimestamps: raw.showTimestamps ?? defaultSettings.display.showTimestamps,
+    },
+    notifications: {
+      ...defaultSettings.notifications,
+      sound,
+      desktop,
+      enabled: sound || desktop || defaultSettings.notifications.mentionsOnly,
+    },
+    messages: {
+      ...defaultSettings.messages,
+      autoScroll: raw.autoScrollMessages ?? defaultSettings.messages.autoScroll,
+    },
+  };
+}
+
+function loadSettingsFromStorage(): Settings {
+  if (typeof window === 'undefined') return defaultSettings;
+  try {
+    const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!saved) return defaultSettings;
+    const parsed = JSON.parse(saved);
+    if (!parsed || typeof parsed !== 'object') return defaultSettings;
+    if ('notifications' in parsed && 'display' in parsed) {
+      return mergeSettings(defaultSettings, parsed as Partial<Settings>);
+    }
+    if ('notificationsEnabled' in parsed || 'soundEnabled' in parsed || 'autoScrollMessages' in parsed) {
+      return migrateLegacySettings(parsed as LegacyDashboardSettings);
+    }
+  } catch {
+    // Fall back to defaults
+  }
+  return defaultSettings;
+}
+
+function saveSettingsToStorage(settings: Settings) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore localStorage failures
+  }
+}
+
+function playNotificationSound() {
+  if (typeof window === 'undefined') return;
+  const AudioContextConstructor =
+    window.AudioContext ||
+    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextConstructor) return;
+  try {
+    const context = new AudioContextConstructor();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = 880;
+    gain.gain.value = 0.03;
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.12);
+    oscillator.onended = () => {
+      context.close().catch(() => undefined);
+    };
+  } catch {
+    // Audio might be blocked by browser autoplay policies
+  }
+}
+
 export interface AppProps {
   /** Initial WebSocket URL (optional, defaults to current host) */
   wsUrl?: string;
@@ -255,8 +357,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   // Command palette state
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
-  // Settings state (for theme)
-  const [settings, setSettings] = useState<Settings>(defaultSettings);
+  // Settings state (theme, display, notifications)
+  const [settings, setSettings] = useState<Settings>(() => loadSettingsFromStorage());
+  const updateSettings = useCallback((updater: (prev: Settings) => Settings) => {
+    setSettings((prev) => updater(prev));
+  }, []);
 
   // Full settings page state
   const [isFullSettingsOpen, setIsFullSettingsOpen] = useState(false);
@@ -322,6 +427,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const lastSeenMessageCountRef = useRef<number>(0);
   const sidebarClosedRef = useRef<boolean>(true); // Track if sidebar is currently closed
   const [dmSeenAt, setDmSeenAt] = useState<Map<string, number>>(new Map());
+  const lastNotifiedMessageCountRef = useRef<number>(0);
 
   // Close sidebar when selecting an agent or project on mobile
   const closeSidebarOnMobile = useCallback(() => {
@@ -1055,6 +1161,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const handleCommandPaletteClose = useCallback(() => {
     setIsCommandPaletteOpen(false);
   }, []);
+
+  // Persist settings changes
+  useEffect(() => {
+    saveSettingsToStorage(settings);
+  }, [settings]);
 
   // Apply theme to document
   React.useEffect(() => {
