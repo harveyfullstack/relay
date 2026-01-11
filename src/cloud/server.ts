@@ -54,7 +54,12 @@ import { validateSshSecurityConfig } from './services/ssh-security.js';
 /**
  * Proxy a request to the user's primary running workspace
  */
-async function proxyToUserWorkspace(req: Request, res: Response, path: string): Promise<void> {
+async function proxyToUserWorkspace(
+  req: Request,
+  res: Response,
+  path: string,
+  options?: { method?: string; body?: unknown }
+): Promise<void> {
   const userId = req.session.userId;
   if (!userId) {
     res.status(401).json({ error: 'Unauthorized' });
@@ -73,11 +78,18 @@ async function proxyToUserWorkspace(req: Request, res: Response, path: string): 
 
     // Proxy to workspace
     const targetUrl = `${runningWorkspace.publicUrl}${path}`;
-    const proxyRes = await fetch(targetUrl);
+    const fetchOptions: RequestInit = {
+      method: options?.method || 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (options?.body) {
+      fetchOptions.body = JSON.stringify(options.body);
+    }
+    const proxyRes = await fetch(targetUrl, fetchOptions);
     const data = await proxyRes.json();
     res.status(proxyRes.status).json(data);
   } catch (error) {
-    console.error('[trajectory-proxy] Error:', error);
+    console.error('[workspace-proxy] Error:', error);
     res.status(500).json({ error: 'Failed to proxy request to workspace', success: false });
   }
 }
@@ -335,6 +347,56 @@ export async function createServer(): Promise<CloudServer> {
 
   app.get('/api/trajectory/history', requireAuth, async (req, res) => {
     await proxyToUserWorkspace(req, res, '/api/trajectory/history');
+  });
+
+  // Channel proxy routes - forward to user's workspace daemon
+  // These routes communicate with the local daemon, not cloud services
+  app.get('/api/channels', requireAuth, async (req, res) => {
+    const queryString = req.query.username
+      ? `?username=${encodeURIComponent(req.query.username as string)}`
+      : '';
+    await proxyToUserWorkspace(req, res, `/api/channels${queryString}`);
+  });
+
+  app.post('/api/channels', requireAuth, express.json(), async (req, res) => {
+    await proxyToUserWorkspace(req, res, '/api/channels', { method: 'POST', body: req.body });
+  });
+
+  app.post('/api/channels/invite', requireAuth, express.json(), async (req, res) => {
+    await proxyToUserWorkspace(req, res, '/api/channels/invite', { method: 'POST', body: req.body });
+  });
+
+  app.post('/api/channels/join', requireAuth, express.json(), async (req, res) => {
+    await proxyToUserWorkspace(req, res, '/api/channels/join', { method: 'POST', body: req.body });
+  });
+
+  app.post('/api/channels/leave', requireAuth, express.json(), async (req, res) => {
+    await proxyToUserWorkspace(req, res, '/api/channels/leave', { method: 'POST', body: req.body });
+  });
+
+  app.post('/api/channels/message', requireAuth, express.json(), async (req, res) => {
+    await proxyToUserWorkspace(req, res, '/api/channels/message', { method: 'POST', body: req.body });
+  });
+
+  app.get('/api/channels/:channel/messages', requireAuth, async (req, res) => {
+    const channel = encodeURIComponent(req.params.channel);
+    const params = new URLSearchParams();
+    if (req.query.limit) params.set('limit', req.query.limit as string);
+    if (req.query.before) params.set('before', req.query.before as string);
+    const queryString = params.toString() ? `?${params.toString()}` : '';
+    await proxyToUserWorkspace(req, res, `/api/channels/${channel}/messages${queryString}`);
+  });
+
+  app.post('/api/channels/archive', requireAuth, express.json(), async (req, res) => {
+    await proxyToUserWorkspace(req, res, '/api/channels/archive', { method: 'POST', body: req.body });
+  });
+
+  app.post('/api/channels/unarchive', requireAuth, express.json(), async (req, res) => {
+    await proxyToUserWorkspace(req, res, '/api/channels/unarchive', { method: 'POST', body: req.body });
+  });
+
+  app.get('/api/channels/users', requireAuth, async (req, res) => {
+    await proxyToUserWorkspace(req, res, '/api/channels/users');
   });
 
   // Serve static dashboard files (Next.js static export)
