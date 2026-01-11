@@ -357,28 +357,40 @@ export async function createServer(): Promise<CloudServer> {
 
   // Auto-detect local dashboard URL if not configured
   let localDashboardUrl = config.localDashboardUrl;
-  const defaultPorts = [3888, 3889, 3890];
+  const defaultPorts = [3889, 3888, 3890]; // 3889 first (common alternate port)
 
   async function detectLocalDashboard(): Promise<string | null> {
+    console.log('[channel-proxy] Auto-detecting local dashboard...');
     for (const port of defaultPorts) {
       try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
+
         const res = await fetch(`http://localhost:${port}/health`, {
           method: 'GET',
-          signal: AbortSignal.timeout(1000),
+          signal: controller.signal,
         });
+        clearTimeout(timeout);
+
         if (res.ok) {
           console.log(`[channel-proxy] Detected local dashboard at http://localhost:${port}`);
           return `http://localhost:${port}`;
         }
-      } catch {
-        // Port not available, try next
+        console.log(`[channel-proxy] Port ${port}: responded but not OK (${res.status})`);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.log(`[channel-proxy] Port ${port}: ${msg}`);
       }
     }
+    console.log('[channel-proxy] No local dashboard detected, using fallback');
     return null;
   }
 
   // Detect on first request if not configured
   let dashboardDetected = !!localDashboardUrl;
+  if (localDashboardUrl) {
+    console.log(`[channel-proxy] Using configured dashboard URL: ${localDashboardUrl}`);
+  }
 
   async function getLocalDashboardUrl(): Promise<string> {
     if (!dashboardDetected) {
@@ -386,7 +398,8 @@ export async function createServer(): Promise<CloudServer> {
       if (detected) {
         localDashboardUrl = detected;
       } else {
-        localDashboardUrl = 'http://localhost:3888'; // fallback
+        localDashboardUrl = 'http://localhost:3889'; // fallback to 3889 (common port)
+        console.log(`[channel-proxy] Falling back to ${localDashboardUrl}`);
       }
       dashboardDetected = true;
     }

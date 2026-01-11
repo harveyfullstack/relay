@@ -105,8 +105,8 @@ export function loadConfig(): CloudConfig {
     appUrl: process.env.APP_URL || process.env.PUBLIC_URL || 'http://localhost:4567',
     sessionSecret: requireEnv('SESSION_SECRET'),
 
-    // Local dashboard for channel API (default: http://localhost:3888)
-    localDashboardUrl: optionalEnv('LOCAL_DASHBOARD_URL') || 'http://localhost:3888',
+    // Local dashboard for channel API (auto-detected if not set)
+    localDashboardUrl: optionalEnv('LOCAL_DASHBOARD_URL'),
 
     databaseUrl: requireEnv('DATABASE_URL'),
     redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
