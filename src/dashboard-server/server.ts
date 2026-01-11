@@ -656,6 +656,14 @@ export async function startDashboard(
     await storage.init();
   }
 
+  // Request logger for debugging
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/channels')) {
+      console.log(`[dashboard] ${req.method} ${req.path} - incoming request`);
+    }
+    next();
+  });
+
   // Increase JSON body limit for base64 image uploads (10MB)
   app.use(express.json({ limit: '10mb' }));
 
