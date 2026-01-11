@@ -2265,12 +2265,79 @@ export async function startDashboard(
    * GET /api/channels - Get list of channels the user has joined
    */
   app.get('/api/channels', (req, res) => {
-    const username = req.query.username as string;
+    const username = req.query.username as string | undefined;
+
+    // Prefer persisted channel history (storage)
+    if (storage) {
+      storage.getMessages({ limit: 1000, order: 'desc' }).then((msgs) => {
+        // Channel messages are stored with to=<channel> and data._isChannelMessage
+        const channelMap = new Map<string, { lastActivityAt: string; status?: string }>();
+        msgs.forEach((m) => {
+          const data = m.data as any;
+          const isChannel = data && data._isChannelMessage;
+          const stateChange = data && data._channelState;
+          const target = m.to || '';
+          if (!target.startsWith('#')) return;
+
+          const existing = channelMap.get(target) || { lastActivityAt: new Date(0).toISOString(), status: 'active' };
+
+          // Apply state changes
+          if (stateChange) {
+            const ts = new Date(m.ts).getTime();
+            const existingTs = new Date(existing.lastActivityAt).getTime();
+            const nextStatus = stateChange === 'archived' ? 'archived' : 'active';
+            channelMap.set(target, {
+              lastActivityAt: ts > existingTs ? new Date(ts).toISOString() : existing.lastActivityAt,
+              status: nextStatus,
+            });
+            return;
+          }
+
+          if (!isChannel) return;
+          const ts = new Date(m.ts).getTime();
+          const existingTs = new Date(existing.lastActivityAt).getTime();
+          channelMap.set(target, {
+            lastActivityAt: ts > existingTs ? new Date(ts).toISOString() : existing.lastActivityAt,
+            status: existing.status ?? 'active',
+          });
+        });
+
+        const channels = Array.from(channelMap.entries()).map(([id, meta]) => ({
+          id,
+          name: id.startsWith('#') ? id.slice(1) : id,
+          status: meta.status ?? 'active',
+          lastActivityAt: meta.lastActivityAt,
+        }));
+
+        // Also include in-memory memberships so live channels show immediately
+        if (username) {
+          const joined = userBridge.getUserChannels(username);
+          joined.forEach((id) => {
+            if (!channelMap.has(id)) {
+              channels.push({
+                id,
+                name: id.startsWith('#') ? id.slice(1) : id,
+                status: 'active',
+                lastActivityAt: new Date().toISOString(),
+              });
+            }
+          });
+        }
+
+        res.json({ channels });
+      }).catch((err) => {
+        console.error('[channels] Failed to read channel history', err);
+        res.status(500).json({ error: 'Failed to load channels' });
+      });
+      return;
+    }
+
+    // Fallback: use in-memory memberships
     if (!username) {
       return res.status(400).json({ error: 'username query param required' });
     }
     const channels = userBridge.getUserChannels(username);
-    res.json({ channels });
+    res.json({ channels: channels.map((id) => ({ id, name: id })) });
   });
 
   /**
@@ -2318,6 +2385,53 @@ export async function startDashboard(
   });
 
   /**
+   * GET /api/channels/:channel/messages - Get persisted messages for a channel
+   */
+  app.get('/api/channels/:channel/messages', async (req, res) => {
+    if (!storage) {
+      return res.status(503).json({ error: 'Storage not configured' });
+    }
+
+    const channelId = req.params.channel;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 200;
+    const beforeTs = req.query.before ? parseInt(req.query.before as string, 10) : undefined;
+
+    try {
+      const query: any = {
+        to: channelId,
+        limit,
+        order: 'desc',
+      };
+      if (beforeTs) {
+        query.sinceTs = beforeTs;
+      }
+      let messages = await storage.getMessages(query);
+      // Only include channel messages
+      messages = messages.filter((m) => (m.data as any)?._isChannelMessage);
+
+      // Sort ascending for UI
+      messages.sort((a, b) => a.ts - b.ts);
+
+      res.json({
+        messages: messages.map((m) => ({
+          id: m.id,
+          channelId: channelId,
+          from: m.from,
+          fromEntityType: 'user',
+          content: m.body,
+          timestamp: new Date(m.ts).toISOString(),
+          threadId: m.thread || undefined,
+          isRead: true,
+        })),
+        hasMore: messages.length === limit,
+      });
+    } catch (err) {
+      console.error('[channels] Failed to fetch channel messages', err);
+      res.status(500).json({ error: 'Failed to fetch channel messages' });
+    }
+  });
+
+  /**
    * POST /api/channels/message - Send a message to a channel
    */
   app.post('/api/channels/message', express.json(), async (req, res) => {
@@ -2334,6 +2448,70 @@ export async function startDashboard(
     } catch (err: any) {
       console.log(`[channel-debug] MESSAGE error: ${err.message}`);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/channels/archive - Mark a channel as archived (persisted in storage)
+   */
+  app.post('/api/channels/archive', express.json(), async (req, res) => {
+    if (!storage) {
+      return res.status(503).json({ error: 'Storage not configured' });
+    }
+    const { channel } = req.body;
+    if (!channel) {
+      return res.status(400).json({ error: 'channel required' });
+    }
+    try {
+      await storage.saveMessage({
+        id: `state-${Date.now()}`,
+        ts: Date.now(),
+        from: '__system__',
+        to: channel,
+        topic: undefined,
+        kind: 'message',
+        body: 'STATE:archived',
+        data: { _channelState: 'archived' },
+        status: 'read',
+        is_urgent: false,
+        is_broadcast: true,
+      });
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[channels] Failed to archive channel', err);
+      res.status(500).json({ error: 'Failed to archive channel' });
+    }
+  });
+
+  /**
+   * POST /api/channels/unarchive - Mark a channel as active (persisted in storage)
+   */
+  app.post('/api/channels/unarchive', express.json(), async (req, res) => {
+    if (!storage) {
+      return res.status(503).json({ error: 'Storage not configured' });
+    }
+    const { channel } = req.body;
+    if (!channel) {
+      return res.status(400).json({ error: 'channel required' });
+    }
+    try {
+      await storage.saveMessage({
+        id: `state-${Date.now()}`,
+        ts: Date.now(),
+        from: '__system__',
+        to: channel,
+        topic: undefined,
+        kind: 'message',
+        body: 'STATE:active',
+        data: { _channelState: 'active' },
+        status: 'read',
+        is_urgent: false,
+        is_broadcast: true,
+      });
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[channels] Failed to unarchive channel', err);
+      res.status(500).json({ error: 'Failed to unarchive channel' });
     }
   });
 

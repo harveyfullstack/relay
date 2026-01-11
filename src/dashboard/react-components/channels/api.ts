@@ -14,6 +14,7 @@
 import type {
   Channel,
   ChannelMember,
+  ChannelMessage,
   ListChannelsResponse,
   GetChannelResponse,
   GetMessagesResponse,
@@ -23,9 +24,6 @@ import type {
   SendMessageResponse,
   SearchResponse,
 } from './types';
-
-// Mock data still used for channel listing/display (daemon doesn't persist channels)
-import * as mockApi from './mockApi';
 
 /**
  * Get current username from localStorage or return default
@@ -52,7 +50,7 @@ export class ApiError extends Error {
 }
 
 // =============================================================================
-// Channel API Functions - All delegate to daemon-based mockApi
+// Channel API Functions - daemon-backed with minimal placeholders
 // =============================================================================
 
 /**
@@ -60,7 +58,47 @@ export class ApiError extends Error {
  * workspaceId parameter is kept for API compatibility but not used
  */
 export async function listChannels(_workspaceId?: string): Promise<ListChannelsResponse> {
-  return mockApi.listChannels();
+  const username = getCurrentUsername();
+  const params = new URLSearchParams({ username });
+
+  try {
+    const res = await fetch(`/api/channels?${params.toString()}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      throw new ApiError('Failed to fetch channels', res.status);
+    }
+
+    const json = await res.json() as { channels?: Array<{ id: string; name?: string; status?: string; lastActivityAt?: string }> };
+    const channelEntries = json.channels ?? [];
+
+    const channels: Channel[] = channelEntries.map((entry) => {
+      const id = typeof entry === 'string' ? entry : entry.id;
+      const name = (entry as any).name ?? (id.startsWith('#') ? id.slice(1) : id);
+      const status = (entry as any).status ?? 'active';
+      return {
+        id,
+        name,
+        visibility: 'public',
+        status: status === 'archived' ? 'archived' : 'active',
+        createdAt: new Date().toISOString(),
+        createdBy: username,
+        memberCount: 0,
+        unreadCount: 0,
+        hasMentions: false,
+        isDm: id.startsWith('dm:'),
+        lastActivityAt: (entry as any).lastActivityAt,
+      };
+    });
+
+    return { channels, archivedChannels: [] };
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError('Network error fetching channels', 0);
+  }
 }
 
 /**
@@ -70,7 +108,22 @@ export async function getChannel(
   _workspaceId: string,
   channelId: string
 ): Promise<GetChannelResponse> {
-  return mockApi.getChannel(channelId);
+  // Minimal channel details until daemon exposes metadata
+  return {
+    channel: {
+      id: channelId,
+      name: channelId.startsWith('#') ? channelId.slice(1) : channelId,
+      visibility: 'public',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      createdBy: getCurrentUsername(),
+      memberCount: 0,
+      unreadCount: 0,
+      hasMentions: false,
+      isDm: channelId.startsWith('dm:'),
+    },
+    members: [],
+  };
 }
 
 /**
@@ -81,7 +134,29 @@ export async function getMessages(
   channelId: string,
   options?: { before?: string; limit?: number; threadId?: string }
 ): Promise<GetMessagesResponse> {
-  return mockApi.getMessages(channelId, options);
+  const params = new URLSearchParams();
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.before) {
+    // convert ISO to timestamp for server query
+    const ts = Date.parse(options.before);
+    if (!Number.isNaN(ts)) params.set('before', String(ts));
+  }
+
+  const res = await fetch(`/api/channels/${encodeURIComponent(channelId)}/messages?${params.toString()}`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!res.ok) {
+    throw new ApiError('Failed to fetch channel messages', res.status);
+  }
+
+  const json = await res.json() as { messages: Array<ChannelMessage>; hasMore?: boolean };
+  return {
+    messages: json.messages ?? [],
+    hasMore: Boolean(json.hasMore),
+    unread: { count: 0 },
+  };
 }
 
 /**
@@ -91,7 +166,24 @@ export async function createChannel(
   _workspaceId: string,
   request: CreateChannelRequest
 ): Promise<CreateChannelResponse> {
-  return mockApi.createChannel(request);
+  // Daemon creates channel on first join
+  const channelId = request.name.startsWith('#') ? request.name : `#${request.name}`;
+  await joinChannel(_workspaceId, channelId);
+  return {
+    channel: {
+      id: channelId,
+      name: request.name,
+      description: request.description,
+      visibility: request.visibility,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      createdBy: getCurrentUsername(),
+      memberCount: 1,
+      unreadCount: 0,
+      hasMentions: false,
+      isDm: false,
+    },
+  };
 }
 
 /**
@@ -162,8 +254,18 @@ export async function joinChannel(
       throw new ApiError(error.error || 'Failed to join channel', response.status);
     }
 
-    // Also update mock state for consistency
-    return mockApi.joinChannel(channelId);
+    return {
+      id: channelId,
+      name: channelId.startsWith('#') ? channelId.slice(1) : channelId,
+      visibility: 'public',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      createdBy: username,
+      memberCount: 1,
+      unreadCount: 0,
+      hasMentions: false,
+      isDm: channelId.startsWith('dm:'),
+    };
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError('Network error joining channel', 0);
@@ -190,9 +292,6 @@ export async function leaveChannel(
       const error = await response.json().catch(() => ({ error: 'Unknown error' }));
       throw new ApiError(error.error || 'Failed to leave channel', response.status);
     }
-
-    // Also update mock state for consistency
-    return mockApi.leaveChannel(channelId);
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError('Network error leaving channel', 0);
@@ -206,7 +305,26 @@ export async function archiveChannel(
   _workspaceId: string,
   channelId: string
 ): Promise<Channel> {
-  return mockApi.archiveChannel(channelId);
+  const res = await fetch('/api/channels/archive', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel: channelId }),
+  });
+  if (!res.ok) {
+    throw new ApiError('Failed to archive channel', res.status);
+  }
+  return {
+    id: channelId,
+    name: channelId.startsWith('#') ? channelId.slice(1) : channelId,
+    visibility: 'public',
+    status: 'archived',
+    createdAt: new Date().toISOString(),
+    createdBy: getCurrentUsername(),
+    memberCount: 0,
+    unreadCount: 0,
+    hasMentions: false,
+    isDm: channelId.startsWith('dm:'),
+  };
 }
 
 /**
@@ -216,7 +334,26 @@ export async function unarchiveChannel(
   _workspaceId: string,
   channelId: string
 ): Promise<Channel> {
-  return mockApi.unarchiveChannel(channelId);
+  const res = await fetch('/api/channels/unarchive', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel: channelId }),
+  });
+  if (!res.ok) {
+    throw new ApiError('Failed to unarchive channel', res.status);
+  }
+  return {
+    id: channelId,
+    name: channelId.startsWith('#') ? channelId.slice(1) : channelId,
+    visibility: 'public',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    createdBy: getCurrentUsername(),
+    memberCount: 0,
+    unreadCount: 0,
+    hasMentions: false,
+    isDm: channelId.startsWith('dm:'),
+  };
 }
 
 /**
@@ -226,7 +363,8 @@ export async function deleteChannel(
   _workspaceId: string,
   channelId: string
 ): Promise<void> {
-  return mockApi.deleteChannel(channelId);
+  // Daemon deletes automatically when empty; nothing to do client-side
+  return;
 }
 
 /**
@@ -237,8 +375,8 @@ export async function markRead(
   channelId: string,
   upToMessageId?: string
 ): Promise<void> {
-  // Mock uses timestamp, pass current time if no message ID
-  return mockApi.markRead(channelId, upToMessageId || new Date().toISOString());
+  // TODO: add mark-read to daemon; no-op for now
+  return;
 }
 
 /**
@@ -271,7 +409,7 @@ export async function unpinMessage(
 export async function getMentionSuggestions(
   _workspaceId?: string
 ): Promise<string[]> {
-  return mockApi.getMentionSuggestions();
+  return ['lead', 'frontend', 'reviewer', 'ops', 'qa'];
 }
 
 // =============================================================================
@@ -319,16 +457,22 @@ export async function updateChannel(
   channelId: string,
   updates: { name?: string; description?: string; isPrivate?: boolean }
 ): Promise<Channel> {
-  const channels = await mockApi.listChannels();
-  const channel = channels.channels.find(c => c.id === channelId);
-  if (!channel) throw new ApiError('Channel not found', 404);
+  const channel: Channel = {
+    id: channelId,
+    name: channelId.startsWith('#') ? channelId.slice(1) : channelId,
+    description: updates.description,
+    visibility: updates.isPrivate ? 'private' : 'public',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    createdBy: getCurrentUsername(),
+    memberCount: 0,
+    unreadCount: 0,
+    hasMentions: false,
+    isDm: channelId.startsWith('dm:'),
+  };
   return {
     ...channel,
     name: updates.name ?? channel.name,
-    description: updates.description ?? channel.description,
-    visibility: updates.isPrivate !== undefined
-      ? (updates.isPrivate ? 'private' : 'public')
-      : channel.visibility,
   };
 }
 
@@ -389,8 +533,14 @@ export async function getChannelMembers(
   _workspaceId: string,
   channelId: string
 ): Promise<ChannelMember[]> {
-  const response = await mockApi.getChannel(channelId);
-  return response.members || [];
+  return [{
+    id: getCurrentUsername(),
+    displayName: getCurrentUsername(),
+    entityType: 'user',
+    role: 'owner',
+    status: 'online',
+    joinedAt: new Date().toISOString(),
+  }];
 }
 
 // =============================================================================

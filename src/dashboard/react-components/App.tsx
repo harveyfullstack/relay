@@ -42,21 +42,16 @@ import { useRecentRepos } from './hooks/useRecentRepos';
 import { useWorkspaceRepos } from './hooks/useWorkspaceRepos';
 import { usePresence, type UserPresence } from './hooks/usePresence';
 import {
-  ChannelSidebarV1,
   ChannelViewV1,
   SearchInput,
-  SearchResults,
   CreateChannelModal,
   listChannels,
   getMessages,
   sendMessage as sendChannelApiMessage,
-  searchMessages,
   markRead,
   createChannel,
   type Channel,
   type ChannelMessage as ChannelApiMessage,
-  type SearchResult,
-  type SearchResponse,
   type UnreadState,
   type CreateChannelRequest,
 } from './channels';
@@ -254,9 +249,89 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
       : undefined,
     [currentUser?.displayName, currentUser?.avatarUrl]
   );
+
+  // Channel state: selectedChannelId must be declared before callbacks that use it
+  const [selectedChannelId, setSelectedChannelId] = useState<string | undefined>();
+
+  const appendChannelMessage = useCallback((channelId: string, message: ChannelApiMessage, options?: { incrementUnread?: boolean }) => {
+    const incrementUnread = options?.incrementUnread ?? true;
+
+    setChannelMessageMap(prev => {
+      const list = prev[channelId] ?? [];
+      const isDuplicate = list.some((m) => {
+        if (m.id === message.id) return true;
+        if (m.from !== message.from) return false;
+        if (m.content !== message.content) return false;
+        if (m.threadId !== message.threadId) return false;
+        const timeDiff = Math.abs(new Date(m.timestamp).getTime() - new Date(message.timestamp).getTime());
+        return timeDiff < 2000;
+      });
+      if (isDuplicate) return prev;
+      return { ...prev, [channelId]: [...list, message] };
+    });
+
+    if (selectedChannelId === channelId) {
+      setChannelMessages(prev => [...prev, message]);
+      setChannelUnreadState(undefined);
+    } else if (incrementUnread) {
+      setChannelsList(prev => {
+        const existing = prev.find(c => c.id === channelId);
+        if (existing) {
+          return prev.map(c =>
+            c.id === channelId
+              ? { ...c, unreadCount: (c.unreadCount ?? 0) + 1 }
+              : c
+          );
+        }
+
+        const newChannel: Channel = {
+          id: channelId,
+          name: channelId.startsWith('#') ? channelId.slice(1) : channelId,
+          visibility: 'public',
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          createdBy: currentUser?.displayName || 'Dashboard',
+          memberCount: 1,
+          unreadCount: 1,
+          hasMentions: false,
+          isDm: channelId.startsWith('dm:'),
+        };
+
+        return [...prev, newChannel];
+      });
+    }
+  }, [currentUser?.displayName, selectedChannelId]);
+
+  const handlePresenceEvent = useCallback((event: any) => {
+    if (event?.type === 'channel_message') {
+      const channelId = event.channel as string | undefined;
+      if (!channelId) return;
+      const sender = event.from || 'unknown';
+      const msg: ChannelApiMessage = {
+        id: event.id ?? `ws-${Date.now()}`,
+        channelId,
+        from: sender,
+        fromEntityType: currentUser?.displayName && sender === currentUser.displayName ? 'user' : 'agent',
+        content: event.body ?? '',
+        timestamp: event.timestamp || new Date().toISOString(),
+        threadId: event.thread,
+        isRead: selectedChannelId === channelId,
+      };
+      appendChannelMessage(channelId, msg, { incrementUnread: selectedChannelId !== channelId });
+    }
+  }, [appendChannelMessage, currentUser?.displayName, selectedChannelId]);
+
   const { onlineUsers, typingUsers, sendTyping, isConnected: isPresenceConnected } = usePresence({
     currentUser: presenceUser,
+    onEvent: handlePresenceEvent,
   });
+
+  // Keep local username for channel API calls
+  useEffect(() => {
+    if (typeof window !== 'undefined' && currentUser?.displayName) {
+      localStorage.setItem('relay_username', currentUser.displayName);
+    }
+  }, [currentUser?.displayName]);
 
   // User profile panel state
   const [selectedUserProfile, setSelectedUserProfile] = useState<UserPresence | null>(null);
@@ -268,13 +343,21 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   // Channel state for V1 channels UI
   const [channelsList, setChannelsList] = useState<Channel[]>([]);
   const [archivedChannelsList, setArchivedChannelsList] = useState<Channel[]>([]);
-  const [selectedChannelId, setSelectedChannelId] = useState<string | undefined>();
   const [channelMessages, setChannelMessages] = useState<ChannelApiMessage[]>([]);
+  const [channelMessageMap, setChannelMessageMap] = useState<Record<string, ChannelApiMessage[]>>({});
   const [isChannelsLoading, setIsChannelsLoading] = useState(false);
-  const [isChannelMessagesLoading, setIsChannelMessagesLoading] = useState(false);
-  const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [channelUnreadState, setChannelUnreadState] = useState<UnreadState | undefined>();
+
+  const setChannelListsFromResponse = useCallback((response: { channels: Channel[]; archivedChannels?: Channel[] }) => {
+    const archived = [
+      ...(response.archivedChannels || []),
+      ...response.channels.filter(c => c.status === 'archived'),
+    ];
+    const active = response.channels.filter(c => c.status !== 'archived');
+    setChannelsList(active);
+    setArchivedChannelsList(archived);
+  }, []);
 
   // Find selected channel object
   const selectedChannel = useMemo(() => {
@@ -347,6 +430,13 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     enabled: isCloudMode && !!effectiveActiveWorkspaceId,
   });
 
+  // Reset channel state when switching workspaces
+  useEffect(() => {
+    setChannelMessageMap({});
+    setChannelMessages([]);
+    setSelectedChannelId(undefined);
+  }, [effectiveActiveWorkspaceId]);
+
   // Coordinator panel state
   const [isCoordinatorOpen, setIsCoordinatorOpen] = useState(false);
 
@@ -391,12 +481,15 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     for (const agent of merged) {
       const key = agent.name.toLowerCase();
       const existing = byName.get(key);
-      // Local agents should preserve their isLocal flag when merging
+      // Merge agents, preserving non-undefined values from either source
       if (existing) {
         byName.set(key, {
           ...existing,
           ...agent,
+          // Preserve these fields if the new source has undefined
           isLocal: existing.isLocal || agent.isLocal,
+          avatarUrl: agent.avatarUrl || existing.avatarUrl,
+          isHuman: agent.isHuman ?? existing.isHuman,
         });
       } else {
         byName.set(key, agent);
@@ -1002,8 +1095,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
       setIsChannelsLoading(true);
       try {
         const response = await listChannels(effectiveActiveWorkspaceId);
-        setChannelsList(response.channels);
-        setArchivedChannelsList(response.archivedChannels || []);
+        setChannelListsFromResponse(response);
       } catch (err) {
         console.error('Failed to fetch channels:', err);
       } finally {
@@ -1014,34 +1106,36 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     fetchChannels();
   }, [effectiveActiveWorkspaceId]);
 
-  // Load messages when a channel is selected
+  // Load messages when a channel is selected (persisted + live)
   useEffect(() => {
-    if (!selectedChannelId || !effectiveActiveWorkspaceId || viewMode !== 'channels') return;
+    if (!selectedChannelId || viewMode !== 'channels') return;
 
-    const fetchMessages = async () => {
-      setIsChannelMessagesLoading(true);
-      setHasMoreMessages(false);
-      setChannelUnreadState(undefined);
-      try {
-        const response = await getMessages(effectiveActiveWorkspaceId, selectedChannelId, { limit: 50 });
-        setChannelMessages(response.messages);
-        setHasMoreMessages(response.hasMore);
-        // Set unread state from API response
-        if (response.unread) {
-          setChannelUnreadState(response.unread);
+    const existing = channelMessageMap[selectedChannelId] ?? [];
+    if (existing.length === 0) {
+      (async () => {
+        try {
+          const response = await getMessages(effectiveActiveWorkspaceId || 'local', selectedChannelId, { limit: 200 });
+          setChannelMessageMap(prev => ({ ...prev, [selectedChannelId]: response.messages }));
+          setChannelMessages(response.messages);
+          setHasMoreMessages(response.hasMore);
+        } catch (err) {
+          console.error('Failed to fetch channel messages:', err);
+          setChannelMessages([]);
+          setHasMoreMessages(false);
         }
-      } catch (err) {
-        console.error('Failed to fetch channel messages:', err);
-        setChannelMessages([]);
-        setHasMoreMessages(false);
-        setChannelUnreadState(undefined);
-      } finally {
-        setIsChannelMessagesLoading(false);
-      }
-    };
+      })();
+    } else {
+      setChannelMessages(existing);
+      setHasMoreMessages(false);
+    }
 
-    fetchMessages();
-  }, [selectedChannelId, effectiveActiveWorkspaceId, viewMode]);
+    setChannelUnreadState(undefined);
+    setChannelsList(prev =>
+      prev.map(c =>
+        c.id === selectedChannelId ? { ...c, unreadCount: 0, hasMentions: false } : c
+      )
+    );
+  }, [selectedChannelId, viewMode, channelMessageMap, effectiveActiveWorkspaceId]);
 
   // Channel selection handler - also joins the channel in local mode
   const handleSelectChannel = useCallback(async (channel: Channel) => {
@@ -1068,11 +1162,13 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     if (!effectiveActiveWorkspaceId) return;
     setIsCreatingChannel(true);
     try {
-      await createChannel(effectiveActiveWorkspaceId, request);
+      const result = await createChannel(effectiveActiveWorkspaceId, request);
       // Refresh channels list after successful creation
       const response = await listChannels(effectiveActiveWorkspaceId);
-      setChannelsList(response.channels);
-      setArchivedChannelsList(response.archivedChannels || []);
+      setChannelListsFromResponse(response);
+      if (result.channel?.id) {
+        setSelectedChannelId(result.channel.id);
+      }
       setIsCreateChannelOpen(false);
     } catch (err) {
       console.error('Failed to create channel:', err);
@@ -1090,11 +1186,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
       await joinChannel(effectiveActiveWorkspaceId, channelId);
       // Refresh channels list
       const response = await listChannels(effectiveActiveWorkspaceId);
-      setChannelsList(response.channels);
+      setChannelListsFromResponse(response);
     } catch (err) {
       console.error('Failed to join channel:', err);
     }
-  }, [effectiveActiveWorkspaceId]);
+  }, [effectiveActiveWorkspaceId, setChannelListsFromResponse]);
 
   // Leave channel handler
   const handleLeaveChannel = useCallback(async (channel: Channel) => {
@@ -1108,11 +1204,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
       }
       // Refresh channels list
       const response = await listChannels(effectiveActiveWorkspaceId);
-      setChannelsList(response.channels);
+      setChannelListsFromResponse(response);
     } catch (err) {
       console.error('Failed to leave channel:', err);
     }
-  }, [effectiveActiveWorkspaceId, selectedChannelId]);
+  }, [effectiveActiveWorkspaceId, selectedChannelId, setChannelListsFromResponse]);
 
   // Archive channel handler
   const handleArchiveChannel = useCallback(async (channel: Channel) => {
@@ -1126,12 +1222,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
       }
       // Refresh channels list
       const response = await listChannels(effectiveActiveWorkspaceId);
-      setChannelsList(response.channels);
-      setArchivedChannelsList(response.archivedChannels || []);
+      setChannelListsFromResponse(response);
     } catch (err) {
       console.error('Failed to archive channel:', err);
     }
-  }, [effectiveActiveWorkspaceId, selectedChannelId]);
+  }, [effectiveActiveWorkspaceId, selectedChannelId, setChannelListsFromResponse]);
 
   // Unarchive channel handler
   const handleUnarchiveChannel = useCallback(async (channel: Channel) => {
@@ -1141,60 +1236,47 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
       await unarchiveChannel(effectiveActiveWorkspaceId, channel.id);
       // Refresh channels list
       const response = await listChannels(effectiveActiveWorkspaceId);
-      setChannelsList(response.channels);
-      setArchivedChannelsList(response.archivedChannels || []);
+      setChannelListsFromResponse(response);
     } catch (err) {
       console.error('Failed to unarchive channel:', err);
     }
-  }, [effectiveActiveWorkspaceId]);
+  }, [effectiveActiveWorkspaceId, setChannelListsFromResponse]);
 
   // Send message to channel handler
   const handleSendChannelMessage = useCallback(async (content: string, threadId?: string) => {
     if (!selectedChannelId) return;
 
-    // Both local and cloud modes now use the channel API
-    // which sends proper CHANNEL_MESSAGE protocol to daemon
+    const senderName = currentUser?.displayName || 'Dashboard';
+    const optimisticMessage: ChannelApiMessage = {
+      id: `local-${Date.now()}`,
+      channelId: selectedChannelId,
+      from: senderName,
+      fromEntityType: 'user',
+      content,
+      timestamp: new Date().toISOString(),
+      threadId,
+      isRead: true,
+    };
+
+    // Optimistic append; daemon will echo back via WS
+    appendChannelMessage(selectedChannelId, optimisticMessage, { incrementUnread: false });
+
     try {
       await sendChannelApiMessage(
         effectiveActiveWorkspaceId || 'local',
         selectedChannelId,
         { content, threadId }
       );
-      // For cloud mode, refresh messages after sending
-      if (effectiveActiveWorkspaceId) {
-        const response = await getMessages(effectiveActiveWorkspaceId, selectedChannelId, { limit: 50 });
-        setChannelMessages(response.messages);
-        setHasMoreMessages(response.hasMore);
-      }
-      // For local mode, message will come back via WebSocket
     } catch (err) {
       console.error('Failed to send channel message:', err);
     }
-  }, [effectiveActiveWorkspaceId, selectedChannelId]);
+  }, [effectiveActiveWorkspaceId, selectedChannelId, currentUser?.displayName, appendChannelMessage]);
 
   // Load more messages (pagination) handler
   const handleLoadMoreMessages = useCallback(async () => {
-    if (!effectiveActiveWorkspaceId || !selectedChannelId || isLoadingMoreMessages || !hasMoreMessages) return;
-
-    // Get the oldest message ID as the cursor for pagination
-    const oldestMessage = channelMessages[0];
-    if (!oldestMessage) return;
-
-    setIsLoadingMoreMessages(true);
-    try {
-      const response = await getMessages(effectiveActiveWorkspaceId, selectedChannelId, {
-        before: oldestMessage.id,
-        limit: 50,
-      });
-      // Prepend older messages to the existing messages
-      setChannelMessages(prev => [...response.messages, ...prev]);
-      setHasMoreMessages(response.hasMore);
-    } catch (err) {
-      console.error('Failed to load more messages:', err);
-    } finally {
-      setIsLoadingMoreMessages(false);
-    }
-  }, [effectiveActiveWorkspaceId, selectedChannelId, isLoadingMoreMessages, hasMoreMessages, channelMessages]);
+    // Pagination not yet supported for daemon channels
+    return;
+  }, []);
 
   // Mark channel as read handler (with debouncing via useRef)
   const markReadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -1874,7 +1956,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
                 channel={selectedChannel}
                 messages={effectiveChannelMessages}
                 currentUser={currentUser?.displayName || 'Anonymous'}
-                isLoadingMore={isLoadingMoreMessages}
+                isLoadingMore={false}
                 hasMoreMessages={hasMoreMessages && !!effectiveActiveWorkspaceId}
                 mentionSuggestions={agents.map(a => a.name)}
                 unreadState={channelUnreadState}
