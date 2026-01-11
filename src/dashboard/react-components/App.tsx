@@ -113,7 +113,11 @@ function loadSettingsFromStorage(): Settings {
     const parsed = JSON.parse(saved);
     if (!parsed || typeof parsed !== 'object') return defaultSettings;
     if ('notifications' in parsed && 'display' in parsed) {
-      return mergeSettings(defaultSettings, parsed as Partial<Settings>);
+      const merged = mergeSettings(defaultSettings, parsed as Partial<Settings>);
+      merged.notifications.enabled = merged.notifications.sound ||
+        merged.notifications.desktop ||
+        merged.notifications.mentionsOnly;
+      return merged;
     }
     if ('notificationsEnabled' in parsed || 'soundEnabled' in parsed || 'autoScrollMessages' in parsed) {
       return migrateLegacySettings(parsed as LegacyDashboardSettings);

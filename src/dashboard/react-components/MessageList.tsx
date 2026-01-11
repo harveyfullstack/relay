@@ -180,18 +180,20 @@ export function MessageList({
     }
   }
 
+  const autoScrollAllowed = autoScrollDefault;
+
   // Check if we need to scroll BEFORE the DOM updates
   // This runs during render, before useLayoutEffect
   const currentLength = filteredMessages.length;
   if (currentLength > prevFilteredLengthRef.current) {
     // Check if the latest message is from the current user
     // This includes both "Dashboard" (local mode) and GitHub username (cloud mode)
-    // Always scroll for user's own messages, regardless of autoScroll state
+    // Scroll for user's own messages only when auto-scroll is enabled
     const latestMessage = filteredMessages[filteredMessages.length - 1];
     const latestIsFromUser = latestMessage?.from === 'Dashboard' ||
       (currentUser && latestMessage?.from === currentUser.displayName);
 
-    if (latestIsFromUser || autoScroll) {
+    if (autoScrollAllowed && (latestIsFromUser || autoScroll)) {
       shouldScrollRef.current = true;
       // Re-enable auto-scroll if we're scrolling for user's message
       // This ensures continued auto-scroll after user sends a message
@@ -207,6 +209,7 @@ export function MessageList({
     if (!scrollContainerRef.current) return;
     // Skip scroll events that happen during programmatic scrolling
     if (isScrollingRef.current) return;
+    if (!autoScrollDefault) return;
 
     const container = scrollContainerRef.current;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
