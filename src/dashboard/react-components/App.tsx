@@ -45,6 +45,7 @@ import {
   ChannelViewV1,
   SearchInput,
   CreateChannelModal,
+  InviteToChannelModal,
   listChannels,
   getMessages,
   sendMessage as sendChannelApiMessage,
@@ -383,6 +384,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   // Create channel modal state
   const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
+
+  // Invite to channel modal state
+  const [isInviteChannelOpen, setIsInviteChannelOpen] = useState(false);
+  const [inviteChannelTarget, setInviteChannelTarget] = useState<Channel | null>(null);
+  const [isInvitingToChannel, setIsInvitingToChannel] = useState(false);
 
   // Command palette state
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -1178,6 +1184,38 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     }
   }, [effectiveActiveWorkspaceId]);
 
+  // Handler for opening the invite to channel modal
+  const handleInviteToChannel = useCallback((channel: Channel) => {
+    setInviteChannelTarget(channel);
+    setIsInviteChannelOpen(true);
+  }, []);
+
+  // Handler for inviting members to a channel
+  const handleInviteSubmit = useCallback(async (members: string[]) => {
+    if (!inviteChannelTarget) return;
+    setIsInvitingToChannel(true);
+    try {
+      // Call the invite API endpoint
+      const response = await fetch('/api/channels/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel: inviteChannelTarget.name,
+          invites: members.join(','),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to invite members');
+      }
+      setIsInviteChannelOpen(false);
+      setInviteChannelTarget(null);
+    } catch (err) {
+      console.error('Failed to invite to channel:', err);
+    } finally {
+      setIsInvitingToChannel(false);
+    }
+  }, [inviteChannelTarget]);
+
   // Join channel handler
   const handleJoinChannel = useCallback(async (channelId: string) => {
     if (!effectiveActiveWorkspaceId) return;
@@ -1831,6 +1869,12 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
             }
           }}
           onCreateChannel={handleCreateChannel}
+          onInviteToChannel={(channel) => {
+            const fullChannel = channelsList.find(c => c.id === channel.id);
+            if (fullChannel) {
+              handleInviteToChannel(fullChannel);
+            }
+          }}
           onAgentSelect={handleAgentSelect}
           onHumanSelect={handleHumanSelect}
           onProjectSelect={handleProjectSelect}
@@ -2100,6 +2144,19 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         onCreate={handleCreateChannelSubmit}
         isLoading={isCreatingChannel}
         existingChannels={channelsList.map(c => c.name)}
+        availableMembers={agents.map(a => a.name)}
+      />
+
+      {/* Invite to Channel Modal */}
+      <InviteToChannelModal
+        isOpen={isInviteChannelOpen}
+        channelName={inviteChannelTarget?.name || ''}
+        onClose={() => {
+          setIsInviteChannelOpen(false);
+          setInviteChannelTarget(null);
+        }}
+        onInvite={handleInviteSubmit}
+        isLoading={isInvitingToChannel}
         availableMembers={agents.map(a => a.name)}
       />
 

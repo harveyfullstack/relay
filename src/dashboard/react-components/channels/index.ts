@@ -53,6 +53,7 @@ export {
   DeleteChannelDialog,
   LeaveChannelDialog,
   CreateChannelModal,
+  InviteToChannelModal,
   // Admin Tools (Task 10)
   ChannelSettingsModal,
   MemberManagementPanel,
@@ -70,6 +71,7 @@ export type {
   DeleteChannelDialogProps,
   LeaveChannelDialogProps,
   CreateChannelModalProps,
+  InviteToChannelModalProps,
   // Admin Tools (Task 10)
   ChannelSettingsModalProps,
   MemberManagementPanelProps,

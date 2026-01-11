@@ -24,6 +24,7 @@ import type {
   SendMessageResponse,
   SearchResponse,
 } from './types';
+import { getCsrfToken } from '../../lib/api';
 
 /**
  * Get current username from localStorage or return default
@@ -169,9 +170,16 @@ export async function createChannel(
   const username = getCurrentUsername();
 
   try {
+    const csrfToken = getCsrfToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+
     const response = await fetch('/api/channels', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
+      credentials: 'include',
       body: JSON.stringify({
         name: request.name,
         description: request.description,

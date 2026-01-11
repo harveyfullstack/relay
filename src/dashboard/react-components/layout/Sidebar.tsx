@@ -57,6 +57,8 @@ export interface SidebarProps {
   onChannelSelect?: (channel: SidebarChannel) => void;
   /** Handler to create a new channel */
   onCreateChannel?: () => void;
+  /** Handler to invite members to a channel */
+  onInviteToChannel?: (channel: SidebarChannel) => void;
   onAgentSelect?: (agent: Agent, project?: Project) => void;
   /** Handler when a human user is selected (opens DM) */
   onHumanSelect?: (human: Agent) => void;
@@ -103,6 +105,7 @@ export function Sidebar({
   selectedChannelId,
   onChannelSelect,
   onCreateChannel,
+  onInviteToChannel,
   onAgentSelect,
   onHumanSelect,
   onProjectSelect,
@@ -305,29 +308,42 @@ export function Sidebar({
         {!isChannelsSectionCollapsed && (
           <div className="px-2 pb-2 space-y-0.5">
             {channels.map(channel => (
-              <button
-                key={channel.id}
-                onClick={() => onChannelSelect?.(channel)}
-                className={`
-                  w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors
-                  ${selectedChannelId === channel.id
-                    ? 'bg-accent-cyan/10 text-text-primary'
-                    : 'hover:bg-bg-hover text-text-secondary hover:text-text-primary'}
-                `}
-              >
-                <span className="text-text-muted">#</span>
-                <span className={`flex-1 truncate ${channel.unreadCount > 0 ? 'font-semibold text-text-primary' : ''}`}>
-                  {channel.name}
-                </span>
-                {channel.unreadCount > 0 && (
-                  <span className={`
-                    text-[11px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center
-                    ${channel.hasMentions ? 'bg-red-500/20 text-red-400' : 'bg-accent-cyan/20 text-accent-cyan'}
-                  `}>
-                    {channel.unreadCount}
+              <div key={channel.id} className="group relative">
+                <button
+                  onClick={() => onChannelSelect?.(channel)}
+                  className={`
+                    w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors
+                    ${selectedChannelId === channel.id
+                      ? 'bg-accent-cyan/10 text-text-primary'
+                      : 'hover:bg-bg-hover text-text-secondary hover:text-text-primary'}
+                  `}
+                >
+                  <span className="text-text-muted">#</span>
+                  <span className={`flex-1 truncate ${channel.unreadCount > 0 ? 'font-semibold text-text-primary' : ''}`}>
+                    {channel.name}
                   </span>
+                  {channel.unreadCount > 0 && (
+                    <span className={`
+                      text-[11px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center
+                      ${channel.hasMentions ? 'bg-red-500/20 text-red-400' : 'bg-accent-cyan/20 text-accent-cyan'}
+                    `}>
+                      {channel.unreadCount}
+                    </span>
+                  )}
+                </button>
+                {onInviteToChannel && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onInviteToChannel(channel);
+                    }}
+                    title="Invite members"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-bg-tertiary text-text-muted hover:text-accent-cyan transition-all"
+                  >
+                    <UserPlusIcon />
+                  </button>
                 )}
-              </button>
+              </div>
             ))}
             {onCreateChannel && (
               <button
@@ -592,6 +608,17 @@ function PlusIcon() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
       <line x1="12" y1="5" x2="12" y2="19" />
       <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function UserPlusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="8.5" cy="7" r="4" />
+      <line x1="20" y1="8" x2="20" y2="14" />
+      <line x1="23" y1="11" x2="17" y2="11" />
     </svg>
   );
 }

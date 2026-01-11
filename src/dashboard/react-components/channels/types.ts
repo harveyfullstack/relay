@@ -301,6 +301,8 @@ export interface ChannelSidebarV1Props {
   onArchiveChannel: (channel: Channel) => void;
   /** Callback to unarchive a channel */
   onUnarchiveChannel: (channel: Channel) => void;
+  /** Callback to invite members to a channel */
+  onInviteMembers?: (channel: Channel) => void;
   /** Current user name (for DM display) */
   currentUser?: string;
 }

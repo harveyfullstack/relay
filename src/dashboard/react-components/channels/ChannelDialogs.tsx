@@ -509,6 +509,154 @@ export function CreateChannelModal({
 }
 
 // =============================================================================
+// Invite to Channel Modal
+// =============================================================================
+
+export interface InviteToChannelModalProps {
+  isOpen: boolean;
+  channelName: string;
+  onClose: () => void;
+  onInvite: (members: string[]) => void;
+  isLoading?: boolean;
+  availableMembers?: string[];
+}
+
+export function InviteToChannelModal({
+  isOpen,
+  channelName,
+  onClose,
+  onInvite,
+  isLoading = false,
+  availableMembers = [],
+}: InviteToChannelModalProps) {
+  const [inviteInput, setInviteInput] = useState('');
+  const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+
+  const handleClose = useCallback(() => {
+    setInviteInput('');
+    setSelectedMembers([]);
+    onClose();
+  }, [onClose]);
+
+  const handleAddMember = useCallback((member: string) => {
+    const normalized = member.trim();
+    if (normalized && !selectedMembers.includes(normalized)) {
+      setSelectedMembers(prev => [...prev, normalized]);
+      setInviteInput('');
+    }
+  }, [selectedMembers]);
+
+  const handleRemoveMember = useCallback((member: string) => {
+    setSelectedMembers(prev => prev.filter(m => m !== member));
+  }, []);
+
+  const handleSubmit = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedMembers.length === 0) return;
+    onInvite(selectedMembers);
+  }, [selectedMembers, onInvite]);
+
+  // Filter available members for suggestions
+  const suggestions = availableMembers.filter(m =>
+    m.toLowerCase().includes(inviteInput.toLowerCase()) &&
+    !selectedMembers.includes(m)
+  ).slice(0, 5);
+
+  if (!isOpen) return null;
+
+  return (
+    <Dialog onClose={handleClose}>
+      <form onSubmit={handleSubmit} className="p-6 w-[400px] max-w-full">
+        <h2 className="text-lg font-semibold text-text-primary mb-2">
+          Invite to #{channelName}
+        </h2>
+        <p className="text-sm text-text-muted mb-6">
+          Add agents or users to this channel
+        </p>
+
+        {/* Invite Input */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-text-primary mb-1.5">
+            Members to invite
+          </label>
+          <div className="relative">
+            <input
+              type="text"
+              value={inviteInput}
+              onChange={(e) => setInviteInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && inviteInput.trim()) {
+                  e.preventDefault();
+                  handleAddMember(inviteInput);
+                }
+              }}
+              placeholder="Type agent or user name..."
+              className="w-full px-3 py-2 bg-bg-tertiary border border-border-subtle rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent-cyan/50"
+              autoFocus
+            />
+            {/* Suggestions dropdown */}
+            {inviteInput && suggestions.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-bg-secondary border border-border-subtle rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                {suggestions.map(member => (
+                  <button
+                    key={member}
+                    type="button"
+                    onClick={() => handleAddMember(member)}
+                    className="w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-hover transition-colors"
+                  >
+                    {member}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* Selected members */}
+          {selectedMembers.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {selectedMembers.map(member => (
+                <span
+                  key={member}
+                  className="inline-flex items-center gap-1 px-2 py-1 bg-accent-cyan/10 text-accent-cyan text-xs rounded-full"
+                >
+                  {member}
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveMember(member)}
+                    className="hover:text-red-400 transition-colors"
+                  >
+                    <XIcon className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={handleClose}
+            disabled={isLoading}
+            className="px-4 py-2 text-sm font-medium text-text-secondary bg-bg-tertiary hover:bg-bg-hover rounded-lg transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={selectedMembers.length === 0 || isLoading}
+            className="px-4 py-2 text-sm font-medium bg-accent-cyan text-bg-deep hover:bg-accent-cyan/90 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {isLoading && <LoadingSpinner className="w-4 h-4" />}
+            Invite {selectedMembers.length > 0 ? `(${selectedMembers.length})` : ''}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+// =============================================================================
 // Base Dialog Component
 // =============================================================================
 
