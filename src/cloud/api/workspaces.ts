@@ -1840,6 +1840,7 @@ workspacesRouter.post('/:id/agents', async (req: Request, res: Response) => {
         cli: provider || 'claude', // Map provider to cli
         task: task || '', // Empty task = interactive mode, user responds to prompts
         interactive: interactive ?? true, // Default to interactive for setup flows
+        userId,
       }),
       signal: AbortSignal.timeout(30000),
     });

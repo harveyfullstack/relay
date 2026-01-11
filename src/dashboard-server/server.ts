@@ -3394,6 +3394,7 @@ export async function startDashboard(
       shadowOf,
       shadowTriggers,
       shadowSpeakOn,
+      userId,
     } = req.body;
 
     if (!name || typeof name !== 'string') {
@@ -3417,6 +3418,7 @@ export async function startDashboard(
         shadowOf,
         shadowTriggers,
         shadowSpeakOn,
+        userId: typeof userId === 'string' ? userId : undefined,
       };
       const result = await spawner.spawn(request);
 
