@@ -78,11 +78,18 @@ get_token() {
     return 0
   fi
 
-  # Fetch fresh token
-  if token=$(fetch_fresh_token); then
-    echo "$token"
-    return 0
-  fi
+  # Fetch fresh token with retry (silent)
+  local attempt=0
+  local max_retries=5
+  local delays=(1 2 4 8 16)
+  while [[ $attempt -lt $max_retries ]]; do
+    if token=$(fetch_fresh_token); then
+      echo "$token"
+      return 0
+    fi
+    sleep "${delays[$attempt]}"
+    attempt=$((attempt + 1))
+  done
 
   return 1
 }
@@ -117,8 +124,6 @@ run_gh() {
 if use_relay; then
   if token=$(get_token); then
     export GH_TOKEN="$token"
-  else
-    echo "gh-relay: Warning: Could not refresh token, using existing GH_TOKEN" >&2
   fi
 fi
 
