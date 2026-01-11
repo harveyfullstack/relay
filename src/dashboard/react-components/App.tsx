@@ -913,11 +913,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   }, [effectiveActiveWorkspaceId]);
 
   // Join channel handler
-  const handleJoinChannel = useCallback(async (channel: Channel) => {
+  const handleJoinChannel = useCallback(async (channelId: string) => {
     if (!effectiveActiveWorkspaceId) return;
     try {
       const { joinChannel } = await import('./channels');
-      await joinChannel(effectiveActiveWorkspaceId, channel.id);
+      await joinChannel(effectiveActiveWorkspaceId, channelId);
       // Refresh channels list
       const response = await listChannels(effectiveActiveWorkspaceId);
       setChannelsList(response.channels);
@@ -1210,9 +1210,9 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           // Refresh cloud workspaces after a short delay to get updated status
           setTimeout(async () => {
             try {
-              const workspacesResult = await cloudApi.getWorkspaces();
-              if (workspacesResult.success && workspacesResult.data) {
-                setCloudWorkspaces(workspacesResult.data);
+              const workspacesResult = await cloudApi.getWorkspaceSummary();
+              if (workspacesResult.success && workspacesResult.data.workspaces) {
+                setCloudWorkspaces(workspacesResult.data.workspaces);
               }
             } catch (err) {
               console.error('Failed to refresh workspaces after reconnect:', err);

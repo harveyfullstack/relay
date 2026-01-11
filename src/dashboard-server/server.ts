@@ -708,8 +708,12 @@ export async function startDashboard(
     app.use(express.static(dashboardDir, { extensions: ['html'] }));
 
     // Fallback for Next.js pages (e.g., /metrics -> /metrics.html)
+    // These are needed when a route exists as both a directory and .html file
     app.get('/metrics', (req, res) => {
       res.sendFile(path.join(dashboardDir, 'metrics.html'));
+    });
+    app.get('/app', (req, res) => {
+      res.sendFile(path.join(dashboardDir, 'app.html'));
     });
   } else {
     console.error('[dashboard] Dashboard not found at:', dashboardDistDir, 'or', dashboardSourceDir);
