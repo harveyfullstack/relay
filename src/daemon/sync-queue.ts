@@ -332,7 +332,7 @@ export class SyncQueue {
     try {
       await fs.mkdir(this.config.spillDir, { recursive: true });
 
-      const filename = `spill-${Date.now()}-${generateId().slice(0, 8)}.json`;
+      const filename = `spill-${Date.now()}-${generateId().replace(/-/g, '')}.json`;
       const filepath = path.join(this.config.spillDir, filename);
 
       await fs.writeFile(filepath, JSON.stringify(messages));
