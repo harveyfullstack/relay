@@ -799,6 +799,8 @@ export async function startDashboard(
         socketPath: options.socketPath,
         agentName: options.agentName,
         entityType: options.entityType,
+        displayName: options.displayName,
+        avatarUrl: options.avatarUrl,
         cli: 'dashboard',
         reconnect: true,
         maxReconnectAttempts: 5,
