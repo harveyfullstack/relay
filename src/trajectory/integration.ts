@@ -489,51 +489,60 @@ export async function listTrajectorySteps(trajectoryId?: string): Promise<{
     return { success: true, steps: [] };
   }
 
-  // Find the trajectory to load
-  let trajectoryPath: string | undefined;
+  // Collect all trajectory paths to load
+  const trajectoryPaths: string[] = [];
 
   if (trajectoryId) {
     // Use specified trajectory
     const entry = index.trajectories[trajectoryId];
     if (entry) {
-      trajectoryPath = entry.path;
+      trajectoryPaths.push(entry.path);
     }
   } else {
-    // Find active trajectory
+    // Collect ALL active trajectories (not just the first one)
     for (const [_id, entry] of Object.entries(index.trajectories)) {
       if (entry.status === 'active') {
-        trajectoryPath = entry.path;
-        break;
+        trajectoryPaths.push(entry.path);
       }
     }
   }
 
-  if (!trajectoryPath) {
+  if (trajectoryPaths.length === 0) {
     return { success: true, steps: [] };
   }
 
-  const trajectory = readTrajectoryFile(trajectoryPath);
-  if (!trajectory) {
-    return { success: true, steps: [] };
-  }
-
-  // Extract events from all chapters
+  // Load all trajectories and merge their steps
   const steps: TrajectoryStepData[] = [];
   let stepIndex = 0;
 
-  for (const chapter of trajectory.chapters || []) {
-    for (const event of chapter.events || []) {
-      steps.push({
-        id: `step-${stepIndex++}`,
-        timestamp: event.ts || Date.now(),
-        type: mapEventType(event.type),
-        title: event.content?.slice(0, 50) || event.type || 'Event',
-        description: event.content,
-        metadata: event.raw,
-        status: mapEventStatus(trajectory.status),
-      });
+  for (const trajectoryPath of trajectoryPaths) {
+    const trajectory = readTrajectoryFile(trajectoryPath);
+    if (!trajectory) {
+      continue;
+    }
+
+    // Extract events from all chapters
+    for (const chapter of trajectory.chapters || []) {
+      for (const event of chapter.events || []) {
+        steps.push({
+          id: `step-${stepIndex++}`,
+          timestamp: event.ts || Date.now(),
+          type: mapEventType(event.type),
+          title: event.content?.slice(0, 50) || event.type || 'Event',
+          description: event.content,
+          metadata: event.raw,
+          status: mapEventStatus(trajectory.status),
+        });
+      }
     }
   }
+
+  // Sort steps by timestamp to maintain chronological order across all trajectories
+  steps.sort((a, b) => {
+    const timeA = typeof a.timestamp === 'number' ? a.timestamp : new Date(a.timestamp as string).getTime();
+    const timeB = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp as string).getTime();
+    return timeA - timeB;
+  });
 
   return { success: true, steps };
 }
