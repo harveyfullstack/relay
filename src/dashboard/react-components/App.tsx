@@ -1809,6 +1809,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           currentUserId={cloudSession?.user?.id}
           initialTab={settingsInitialTab}
           onClose={() => setIsFullSettingsOpen(false)}
+          settings={settings}
+          onUpdateSettings={updateSettings}
         />
       )}
     </div>
