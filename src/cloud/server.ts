@@ -321,19 +321,9 @@ export async function createServer(): Promise<CloudServer> {
   app.use('/api/project-groups', coordinatorsRouter);
   app.use('/api/github-app', githubAppRouter);
 
-  // Test helper routes (only available in non-production)
-  // MUST be before teamsRouter to avoid auth interception
-  if (process.env.NODE_ENV !== 'production') {
-    app.use('/api/test', testHelpersRouter);
-    console.log('[cloud] Test helper routes enabled (non-production mode)');
-  }
-
-  // Teams router - MUST BE LAST among /api routes
-  // Handles /workspaces/:id/members and /invites with requireAuth on all routes
-  app.use('/api', teamsRouter);
-
   // Trajectory proxy routes - auto-detect user's workspace and forward
   // These are convenience routes so the dashboard doesn't need to know the workspace ID
+  // MUST be before teamsRouter to avoid being caught by its catch-all
   app.get('/api/trajectory', requireAuth, async (req, res) => {
     await proxyToUserWorkspace(req, res, '/api/trajectory');
   });
@@ -351,6 +341,7 @@ export async function createServer(): Promise<CloudServer> {
 
   // Channel proxy routes - forward to user's workspace daemon
   // These routes communicate with the local daemon, not cloud services
+  // MUST be before teamsRouter to avoid being caught by its catch-all
   app.get('/api/channels', requireAuth, async (req, res) => {
     const queryString = req.query.username
       ? `?username=${encodeURIComponent(req.query.username as string)}`
@@ -398,6 +389,17 @@ export async function createServer(): Promise<CloudServer> {
   app.get('/api/channels/users', requireAuth, async (req, res) => {
     await proxyToUserWorkspace(req, res, '/api/channels/users');
   });
+
+  // Test helper routes (only available in non-production)
+  // MUST be before teamsRouter to avoid auth interception
+  if (process.env.NODE_ENV !== 'production') {
+    app.use('/api/test', testHelpersRouter);
+    console.log('[cloud] Test helper routes enabled (non-production mode)');
+  }
+
+  // Teams router - MUST BE LAST among /api routes
+  // Handles /workspaces/:id/members and /invites with requireAuth on all routes
+  app.use('/api', teamsRouter);
 
   // Serve static dashboard files (Next.js static export)
   // Path: dist/cloud/server.js -> ../../src/dashboard/out
