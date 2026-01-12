@@ -74,6 +74,7 @@ export function XTermLogViewer({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [lineCount, setLineCount] = useState(0);
+  const [isTerminalReady, setIsTerminalReady] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const colors = getAgentColor(agentName);
@@ -110,6 +111,7 @@ export function XTermLogViewer({
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
     searchAddonRef.current = searchAddon;
+    setIsTerminalReady(true);
 
     // Handle resize
     const resizeObserver = new ResizeObserver(() => {
@@ -123,12 +125,13 @@ export function XTermLogViewer({
       terminalRef.current = null;
       fitAddonRef.current = null;
       searchAddonRef.current = null;
+      setIsTerminalReady(false);
     };
   }, []);
 
   // Mobile touch scrolling fallback for xterm viewport
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !isTerminalReady) return;
     if (typeof window !== 'undefined' &&
         !window.matchMedia('(pointer: coarse)').matches) {
       return;
@@ -138,29 +141,48 @@ export function XTermLogViewer({
     const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null;
     if (!viewport) return;
 
-    let startY = 0;
-    let startScrollTop = 0;
+    let lastY = 0;
+    let lineHeightPx = 16;
+
+    const rows = container.querySelector('.xterm-rows') as HTMLElement | null;
+    if (rows) {
+      const computedLineHeight = parseFloat(window.getComputedStyle(rows).lineHeight);
+      if (!Number.isNaN(computedLineHeight)) {
+        lineHeightPx = computedLineHeight;
+      }
+    }
 
     const handleTouchStart = (event: TouchEvent) => {
       if (event.touches.length !== 1) return;
-      startY = event.touches[0].clientY;
-      startScrollTop = viewport.scrollTop;
+      lastY = event.touches[0].clientY;
     };
 
     const handleTouchMove = (event: TouchEvent) => {
       if (event.touches.length !== 1) return;
-      const delta = startY - event.touches[0].clientY;
-      viewport.scrollTop = startScrollTop + delta;
+      const currentY = event.touches[0].clientY;
+      const delta = lastY - currentY;
+      lastY = currentY;
+
+      const lineDelta = Math.round(delta / lineHeightPx);
+      if (lineDelta !== 0) {
+        terminalRef.current?.scrollLines(lineDelta);
+      } else {
+        viewport.scrollTop += delta;
+      }
+
+      if (viewport.scrollHeight > viewport.clientHeight) {
+        event.preventDefault();
+      }
     };
 
-    container.addEventListener('touchstart', handleTouchStart, { passive: true });
-    container.addEventListener('touchmove', handleTouchMove, { passive: true });
+    viewport.addEventListener('touchstart', handleTouchStart, { passive: true });
+    viewport.addEventListener('touchmove', handleTouchMove, { passive: false });
 
     return () => {
-      container.removeEventListener('touchstart', handleTouchStart);
-      container.removeEventListener('touchmove', handleTouchMove);
+      viewport.removeEventListener('touchstart', handleTouchStart);
+      viewport.removeEventListener('touchmove', handleTouchMove);
     };
-  }, []);
+  }, [isTerminalReady]);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
@@ -377,6 +399,7 @@ export function XTermLogViewer({
           max-height: 100%;
           touch-action: pan-y !important;
           overscroll-behavior: contain;
+          pointer-events: auto;
         }
         .xterm-log-viewer .xterm-screen {
           touch-action: pan-y !important;
