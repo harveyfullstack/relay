@@ -141,19 +141,34 @@ export function XTermLogViewer({
     const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null;
     if (!viewport) return;
 
-    let startY = 0;
-    let startScrollTop = 0;
+    let lastY = 0;
+    let lineHeightPx = 16;
+
+    const rows = container.querySelector('.xterm-rows') as HTMLElement | null;
+    if (rows) {
+      const computedLineHeight = parseFloat(window.getComputedStyle(rows).lineHeight);
+      if (!Number.isNaN(computedLineHeight)) {
+        lineHeightPx = computedLineHeight;
+      }
+    }
 
     const handleTouchStart = (event: TouchEvent) => {
       if (event.touches.length !== 1) return;
-      startY = event.touches[0].clientY;
-      startScrollTop = viewport.scrollTop;
+      lastY = event.touches[0].clientY;
     };
 
     const handleTouchMove = (event: TouchEvent) => {
       if (event.touches.length !== 1) return;
-      const delta = startY - event.touches[0].clientY;
-      viewport.scrollTop = startScrollTop + delta;
+      const currentY = event.touches[0].clientY;
+      const delta = lastY - currentY;
+      lastY = currentY;
+
+      const lineDelta = Math.round(delta / lineHeightPx);
+      if (lineDelta !== 0) {
+        terminalRef.current?.scrollLines(lineDelta);
+      } else {
+        viewport.scrollTop += delta;
+      }
 
       if (viewport.scrollHeight > viewport.clientHeight) {
         event.preventDefault();
