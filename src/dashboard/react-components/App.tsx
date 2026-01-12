@@ -444,7 +444,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const lastSeenMessageCountRef = useRef<number>(0);
   const sidebarClosedRef = useRef<boolean>(true); // Track if sidebar is currently closed
   const [dmSeenAt, setDmSeenAt] = useState<Map<string, number>>(new Map());
-  const lastNotifiedMessageCountRef = useRef<number>(0);
+  const lastNotifiedMessageIdRef = useRef<string | null>(null);
 
   // Close sidebar when selecting an agent or project on mobile
   const closeSidebarOnMobile = useCallback(() => {
@@ -1246,24 +1246,37 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   useEffect(() => {
     const messages = data?.messages;
     if (!messages || messages.length === 0) {
-      lastNotifiedMessageCountRef.current = 0;
+      lastNotifiedMessageIdRef.current = null;
       return;
     }
+
+    const latestMessage = messages[messages.length - 1];
 
     if (!settings.notifications.enabled) {
-      lastNotifiedMessageCountRef.current = messages.length;
+      lastNotifiedMessageIdRef.current = latestMessage?.id ?? null;
       return;
     }
 
-    if (lastNotifiedMessageCountRef.current === 0) {
-      lastNotifiedMessageCountRef.current = messages.length;
+    if (!lastNotifiedMessageIdRef.current) {
+      lastNotifiedMessageIdRef.current = latestMessage.id;
       return;
     }
 
-    if (messages.length <= lastNotifiedMessageCountRef.current) return;
+    const lastNotifiedIndex = messages.findIndex((message) => (
+      message.id === lastNotifiedMessageIdRef.current
+    ));
 
-    const newMessages = messages.slice(lastNotifiedMessageCountRef.current);
-    lastNotifiedMessageCountRef.current = messages.length;
+    if (lastNotifiedIndex === -1) {
+      lastNotifiedMessageIdRef.current = latestMessage.id;
+      return;
+    }
+
+    const newMessages = messages.slice(lastNotifiedIndex + 1);
+    if (newMessages.length === 0) {
+      return;
+    }
+
+    lastNotifiedMessageIdRef.current = latestMessage.id;
 
     const isFromCurrentUser = (message: Message) =>
       message.from === 'Dashboard' ||
