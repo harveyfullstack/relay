@@ -900,6 +900,15 @@ export async function startDashboard(
     }
   };
 
+  const isUserOnline = (username: string): boolean => {
+    if (username === '*') return true;
+    return onlineUsers.has(username) || userBridge.isUserRegistered(username);
+  };
+
+  const isRecipientOnline = (name: string): boolean => (
+    isAgentOnline(name) || isUserOnline(name)
+  );
+
   // Helper to get team members from teams.json, agents.json, and spawner's active workers
   const getTeamMembers = (teamName: string): string[] => {
     const members = new Set<string>();
@@ -965,8 +974,8 @@ export async function startDashboard(
       }
     } else {
       // Fail fast if target agent is offline (except broadcasts)
-      if (to !== '*' && !isAgentOnline(to)) {
-        return res.status(404).json({ error: `Agent "${to}" is not online` });
+      if (to !== '*' && !isRecipientOnline(to)) {
+        return res.status(404).json({ error: `Recipient "${to}" is not online` });
       }
       targets = [to];
     }
