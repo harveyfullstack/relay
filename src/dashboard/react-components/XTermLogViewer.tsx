@@ -126,6 +126,42 @@ export function XTermLogViewer({
     };
   }, []);
 
+  // Mobile touch scrolling fallback for xterm viewport
+  useEffect(() => {
+    if (!containerRef.current) return;
+    if (typeof window !== 'undefined' &&
+        !window.matchMedia('(pointer: coarse)').matches) {
+      return;
+    }
+
+    const container = containerRef.current;
+    const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null;
+    if (!viewport) return;
+
+    let startY = 0;
+    let startScrollTop = 0;
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      startY = event.touches[0].clientY;
+      startScrollTop = viewport.scrollTop;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      const delta = startY - event.touches[0].clientY;
+      viewport.scrollTop = startScrollTop + delta;
+    };
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, []);
+
   // Connect to WebSocket
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN ||
@@ -354,6 +390,14 @@ export function XTermLogViewer({
         /* Ensure the xterm rows don't block scrolling */
         .xterm-log-viewer .xterm-rows {
           touch-action: pan-y !important;
+        }
+        /* Let touch scroll events reach the viewport on mobile Safari */
+        @media (pointer: coarse) {
+          .xterm-log-viewer .xterm-screen,
+          .xterm-log-viewer .xterm-screen canvas,
+          .xterm-log-viewer .xterm-helper-textarea {
+            pointer-events: none;
+          }
         }
       `}</style>
       {/* Header */}
