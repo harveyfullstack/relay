@@ -135,7 +135,12 @@ export function LogViewer({
         </div>
         <div
           className="font-mono text-xs leading-relaxed p-3 overflow-y-auto touch-pan-y"
-          style={{ maxHeight: '150px', WebkitOverflowScrolling: 'touch' }}
+          style={{
+            maxHeight: '150px',
+            WebkitOverflowScrolling: 'touch',
+            overscrollBehavior: 'contain',
+            touchAction: 'pan-y',
+          }}
           ref={scrollContainerRef}
           onScroll={handleScroll}
         >

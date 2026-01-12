@@ -1053,9 +1053,46 @@ workspacesRouter.post('/:id/repos', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    // Assign repositories to workspace
+    const reposToAssign: string[] = [];
+    const repoFullNames: string[] = [];
+
     for (const repoId of repositoryIds) {
+      const repo = await db.repositories.findById(repoId);
+      if (!repo || repo.userId !== userId) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      if (repo.workspaceId && repo.workspaceId !== id) {
+        return res.status(409).json({
+          error: 'Repository already linked to another workspace',
+          workspaceId: repo.workspaceId,
+        });
+      }
+
+      if (!repo.installationId) {
+        return res.status(400).json({
+          error: 'Repository not authorized via GitHub App',
+          message: 'Install the GitHub App for this repository before adding it to a workspace.',
+        });
+      }
+
+      reposToAssign.push(repo.id);
+      repoFullNames.push(repo.githubFullName);
+    }
+
+    // Assign repositories to workspace
+    for (const repoId of reposToAssign) {
       await db.repositories.assignToWorkspace(repoId, id);
+    }
+
+    // Update workspace config repositories list
+    const existingRepos = workspace.config.repositories ?? [];
+    const updatedRepos = Array.from(new Set([...existingRepos, ...repoFullNames]));
+    if (updatedRepos.length !== existingRepos.length) {
+      await db.workspaces.updateConfig(id, {
+        ...workspace.config,
+        repositories: updatedRepos,
+      });
     }
 
     res.json({ success: true, message: 'Repositories added' });
@@ -1844,6 +1881,7 @@ workspacesRouter.post('/:id/agents', async (req: Request, res: Response) => {
         cli: provider || 'claude', // Map provider to cli
         task: task || '', // Empty task = interactive mode, user responds to prompts
         interactive: interactive ?? true, // Default to interactive for setup flows
+        userId,
       }),
       signal: AbortSignal.timeout(30000),
     });

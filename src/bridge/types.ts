@@ -57,6 +57,8 @@ export interface SpawnRequest {
   shadowTriggers?: Array<'SESSION_END' | 'CODE_WRITTEN' | 'REVIEW_REQUEST' | 'EXPLICIT_ASK' | 'ALL_MESSAGES'>;
   /** When the shadow should speak (default: ['EXPLICIT_ASK']) */
   shadowSpeakOn?: Array<'SESSION_END' | 'CODE_WRITTEN' | 'REVIEW_REQUEST' | 'EXPLICIT_ASK' | 'ALL_MESSAGES'>;
+  /** User ID for per-user credential storage in shared workspaces */
+  userId?: string;
 }
 
 /** Policy decision details */

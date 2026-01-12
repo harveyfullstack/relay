@@ -126,6 +126,42 @@ export function XTermLogViewer({
     };
   }, []);
 
+  // Mobile touch scrolling fallback for xterm viewport
+  useEffect(() => {
+    if (!containerRef.current) return;
+    if (typeof window !== 'undefined' &&
+        !window.matchMedia('(pointer: coarse)').matches) {
+      return;
+    }
+
+    const container = containerRef.current;
+    const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null;
+    if (!viewport) return;
+
+    let startY = 0;
+    let startScrollTop = 0;
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      startY = event.touches[0].clientY;
+      startScrollTop = viewport.scrollTop;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      const delta = startY - event.touches[0].clientY;
+      viewport.scrollTop = startScrollTop + delta;
+    };
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, []);
+
   // Connect to WebSocket
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN ||
@@ -326,6 +362,44 @@ export function XTermLogViewer({
         boxShadow: `0 0 60px -15px ${colors.primary}25, 0 25px 50px -12px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255,255,255,0.02)`,
       }}
     >
+      {/* Mobile touch scroll fix for xterm.js
+          xterm.js intercepts touch events on multiple elements (canvas, viewport, screen).
+          We need to allow vertical panning on all of them while still permitting taps. */}
+      <style>{`
+        .xterm-log-viewer .xterm {
+          touch-action: pan-y !important;
+          overscroll-behavior: contain;
+        }
+        .xterm-log-viewer .xterm-viewport {
+          -webkit-overflow-scrolling: touch !important;
+          overflow-y: auto !important;
+          height: 100%;
+          max-height: 100%;
+          touch-action: pan-y !important;
+          overscroll-behavior: contain;
+        }
+        .xterm-log-viewer .xterm-screen {
+          touch-action: pan-y !important;
+        }
+        .xterm-log-viewer .xterm-screen canvas {
+          touch-action: pan-y !important;
+        }
+        .xterm-log-viewer .xterm-helper-textarea {
+          touch-action: pan-y !important;
+        }
+        /* Ensure the xterm rows don't block scrolling */
+        .xterm-log-viewer .xterm-rows {
+          touch-action: pan-y !important;
+        }
+        /* Let touch scroll events reach the viewport on mobile Safari */
+        @media (pointer: coarse) {
+          .xterm-log-viewer .xterm-screen,
+          .xterm-log-viewer .xterm-screen canvas,
+          .xterm-log-viewer .xterm-helper-textarea {
+            pointer-events: none;
+          }
+        }
+      `}</style>
       {/* Header */}
       {showHeader && (
         <div
@@ -452,11 +526,16 @@ export function XTermLogViewer({
         </div>
       )}
 
-      {/* Terminal container */}
+      {/* Terminal container - don't use overflow-auto here, xterm-viewport handles scrolling */}
       <div
         ref={containerRef}
-        className="flex-1 overflow-auto md:overflow-hidden touch-pan-y"
-        style={{ maxHeight, minHeight: '200px', WebkitOverflowScrolling: 'touch' }}
+        className="flex-1 touch-pan-y"
+        style={{
+          maxHeight,
+          minHeight: '200px',
+          overscrollBehavior: 'contain',
+          touchAction: 'pan-y',
+        }}
       />
 
       {/* Footer status bar */}

@@ -322,6 +322,7 @@ interface AgentStatus {
   processingStartedAt?: number;
   isSpawned?: boolean;
   team?: string;
+  avatarUrl?: string;
 }
 
 interface Attachment {
@@ -1112,6 +1113,15 @@ export async function startDashboard(
     }
   };
 
+  const isUserOnline = (username: string): boolean => {
+    if (username === '*') return true;
+    return onlineUsers.has(username) || userBridge.isUserRegistered(username);
+  };
+
+  const isRecipientOnline = (name: string): boolean => (
+    isAgentOnline(name) || isUserOnline(name)
+  );
+
   // Helper to get team members from teams.json, agents.json, and spawner's active workers
   const getTeamMembers = (teamName: string): string[] => {
     const members = new Set<string>();
@@ -1177,8 +1187,8 @@ export async function startDashboard(
       }
     } else {
       // Fail fast if target agent is offline (except broadcasts)
-      if (to !== '*' && !isAgentOnline(to)) {
-        return res.status(404).json({ error: `Agent "${to}" is not online` });
+      if (to !== '*' && !isRecipientOnline(to)) {
+        return res.status(404).json({ error: `Recipient "${to}" is not online` });
       }
       targets = [to];
     }
@@ -1564,6 +1574,26 @@ export async function startDashboard(
         team: a.team,
       });
     });
+
+    // Inject online human users (connected via dashboard WebSocket) into agentsMap
+    // These users are tracked in onlineUsers for presence but need to appear in the agents list
+    // with cli: 'dashboard' so they show up in the sidebar for DM conversations
+    for (const [username, state] of onlineUsers) {
+      // Don't overwrite existing entries (e.g., if user is also in team.json)
+      if (!agentsMap.has(username)) {
+        agentsMap.set(username, {
+          name: username,
+          role: 'User',
+          cli: 'dashboard',
+          messageCount: 0,
+          status: 'online',
+          lastSeen: state.info.lastSeen,
+          lastActive: state.info.lastSeen,
+          needsAttention: false,
+          avatarUrl: state.info.avatarUrl,
+        });
+      }
+    }
 
     // Update inbox counts if fallback mode; if storage, count messages addressed to agent
     if (storage) {
@@ -3956,6 +3986,7 @@ export async function startDashboard(
       shadowOf,
       shadowTriggers,
       shadowSpeakOn,
+      userId,
     } = req.body;
 
     if (!name || typeof name !== 'string') {
@@ -3979,6 +4010,7 @@ export async function startDashboard(
         shadowOf,
         shadowTriggers,
         shadowSpeakOn,
+        userId: typeof userId === 'string' ? userId : undefined,
       };
       const result = await spawner.spawn(request);
 

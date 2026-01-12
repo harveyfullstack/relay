@@ -13,6 +13,7 @@ import { PtyWrapper, type PtyWrapperConfig, type SummaryEvent, type SessionEndEv
 import { selectShadowCli } from './shadow-cli.js';
 import { AgentPolicyService, type CloudPolicyFetcher } from '../policy/agent-policy.js';
 import { buildClaudeArgs } from '../utils/agent-config.js';
+import { getUserDirectoryService } from '../daemon/user-directory.js';
 import type {
   SpawnRequest,
   SpawnResult,
@@ -40,6 +41,8 @@ interface WorkerMeta {
   task: string;
   /** Optional team name this agent belongs to */
   team?: string;
+  /** Optional user ID for per-user credential scoping */
+  userId?: string;
   spawnedAt: number;
   pid?: number;
   logFile?: string;
@@ -56,6 +59,7 @@ interface ActiveWorker extends WorkerInfo {
   pty: PtyWrapper;
   logFile?: string;
   listeners?: ListenerBindings;
+  userId?: string;
 }
 
 /** Callback for agent death notifications */
@@ -217,7 +221,7 @@ export class AgentSpawner {
    * Spawn a new worker agent using node-pty
    */
   async spawn(request: SpawnRequest): Promise<SpawnResult> {
-    const { name, cli, task, team, spawnerName } = request;
+    const { name, cli, task, team, spawnerName, userId } = request;
     const debug = process.env.DEBUG_SPAWN === '1';
 
     // Check if worker already exists
@@ -295,6 +299,19 @@ export class AgentSpawner {
       // Log whether nested spawning will be enabled for this agent
       console.log(`[spawner] Spawning ${name}: dashboardPort=${this.dashboardPort || 'none'} (${this.dashboardPort ? 'nested spawns enabled' : 'nested spawns disabled'})`);
 
+      let userEnv: Record<string, string> | undefined;
+      if (userId) {
+        try {
+          const userDirService = getUserDirectoryService();
+          userEnv = userDirService.getUserEnvironment(userId);
+        } catch (err) {
+          console.warn('[spawner] Failed to resolve user environment, using default', {
+            userId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       const ptyConfig: PtyWrapperConfig = {
         name,
         command,
@@ -303,6 +320,7 @@ export class AgentSpawner {
         cwd: agentCwd,
         logsDir: this.logsDir,
         dashboardPort: this.dashboardPort,
+        env: userEnv,
         // Interactive mode - disables auto-accept for auth setup flows
         interactive: request.interactive,
         // Shadow agent configuration
@@ -317,6 +335,7 @@ export class AgentSpawner {
             cli: workerCli,
             task: workerTask,
             // Nested spawns don't inherit team - they're flat by default
+            userId,
           });
         },
         onRelease: this.dashboardPort ? undefined : async (workerName) => {
@@ -463,6 +482,7 @@ export class AgentSpawner {
         cli,
         task,
         team,
+        userId,
         spawnedAt: Date.now(),
         pid: pty.pid,
         pty,
@@ -788,6 +808,7 @@ export class AgentSpawner {
         cli: w.cli,
         task: w.task,
         team: w.team,
+        userId: w.userId,
         spawnedAt: w.spawnedAt,
         pid: w.pid,
         logFile: w.logFile,
