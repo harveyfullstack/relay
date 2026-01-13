@@ -983,18 +983,21 @@ export class Router {
   /**
    * Handle a CHANNEL_LEAVE message.
    * Removes the member from the channel and notifies remaining members.
+   * If payload.member is provided, removes that member instead (admin mode).
    */
   handleChannelLeave(
     connection: RoutableConnection,
     envelope: Envelope<ChannelLeavePayload>
   ): void {
-    const memberName = connection.agentName;
+    // Use payload.member if provided (admin mode), otherwise use connection's name
+    const memberName = envelope.payload.member ?? connection.agentName;
     if (!memberName) {
-      routerLog.warn('CHANNEL_LEAVE from connection without name');
+      routerLog.warn('CHANNEL_LEAVE from connection without name and no member specified');
       return;
     }
 
     const channel = envelope.payload.channel;
+    const isAdminRemove = Boolean(envelope.payload.member);
     const members = this.channels.get(channel);
 
     if (!members || !members.has(memberName)) {
@@ -1008,25 +1011,29 @@ export class Router {
       return;
     }
 
-    const remainingMembers = this.channels.get(channel);
-    if (remainingMembers) {
-      for (const remainingMember of remainingMembers) {
-        const memberConn = this.getConnectionByName(remainingMember);
-        if (memberConn) {
-          const leaveNotification: Envelope<ChannelLeavePayload> = {
-            v: PROTOCOL_VERSION,
-            type: 'CHANNEL_LEAVE',
-            id: generateId(),
-            ts: Date.now(),
-            from: memberName,
-            payload: envelope.payload,
-          };
-          memberConn.send(leaveNotification);
+    // Only notify remaining members for non-admin removes
+    // Admin removes are silent to avoid spamming notifications
+    if (!isAdminRemove) {
+      const remainingMembers = this.channels.get(channel);
+      if (remainingMembers) {
+        for (const remainingMember of remainingMembers) {
+          const memberConn = this.getConnectionByName(remainingMember);
+          if (memberConn) {
+            const leaveNotification: Envelope<ChannelLeavePayload> = {
+              v: PROTOCOL_VERSION,
+              type: 'CHANNEL_LEAVE',
+              id: generateId(),
+              ts: Date.now(),
+              from: memberName,
+              payload: envelope.payload,
+            };
+            memberConn.send(leaveNotification);
+          }
         }
       }
     }
 
-    routerLog.info(`${memberName} left ${channel}`);
+    routerLog.info(`${memberName} left ${channel}${isAdminRemove ? ' [admin]' : ''}`);
   }
 
   /**

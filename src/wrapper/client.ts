@@ -385,6 +385,31 @@ export class RelayClient {
   }
 
   /**
+   * Admin remove: Remove any member from a channel (does not require member to be connected).
+   * Used by dashboard to remove channel members.
+   * @param channel - Channel name (e.g., '#general')
+   * @param member - Name of the member to remove
+   */
+  adminRemoveMember(channel: string, member: string): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: ChannelLeaveEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_LEAVE',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        member, // Admin mode: specify member to remove
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
    * Send a message to a channel.
    * @param channel - Channel name
    * @param body - Message content

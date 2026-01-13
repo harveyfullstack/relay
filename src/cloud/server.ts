@@ -690,6 +690,27 @@ export async function createServer(): Promise<CloudServer> {
         });
       }
 
+      // Also subscribe the user on the daemon side for real-time messages
+      try {
+        const workspace = await db.workspaces.findById(workspaceId);
+        if (workspace?.publicUrl) {
+          const channelWithHash = rawChannelId.startsWith('#') ? rawChannelId : `#${rawChannelId}`;
+          await fetch(`${workspace.publicUrl}/api/channels/subscribe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: memberId,
+              channels: [channelWithHash],
+              workspaceId,
+            }),
+          });
+          console.log(`[cloud] Subscribed ${memberId} to ${channelWithHash} on daemon`);
+        }
+      } catch (err) {
+        // Non-fatal - daemon sync is best-effort
+        console.warn(`[cloud] Failed to sync join to daemon:`, err);
+      }
+
       res.json({ success: true, channel: channelId });
     } catch (error) {
       console.error('[channels] Error joining channel:', error);
@@ -1037,6 +1058,9 @@ export async function createServer(): Promise<CloudServer> {
   // WebSocket server for agent logs (proxied to workspace daemon)
   const wssLogs = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
+  // WebSocket server for channel messages (proxied to workspace daemon)
+  const wssChannels = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+
   // Handle agent logs WebSocket connections
   wssLogs.on('connection', async (clientWs: WebSocket, workspaceId: string, agentName: string) => {
     console.log(`[ws/logs] Client connected for workspace=${workspaceId} agent=${agentName}`);
@@ -1118,6 +1142,111 @@ export async function createServer(): Promise<CloudServer> {
     }
   });
 
+  // Handle channel WebSocket connections (proxied to workspace daemon)
+  // This allows cloud users to receive real-time channel messages
+  wssChannels.on('connection', async (clientWs: WebSocket, workspaceId: string, username: string) => {
+    console.log(`[ws/channels] Client connected for workspace=${workspaceId} user=${username}`);
+
+    let daemonWs: WebSocket | null = null;
+
+    try {
+      // Find the workspace
+      const workspace = await db.workspaces.findById(workspaceId);
+      if (!workspace || !workspace.publicUrl) {
+        clientWs.send(JSON.stringify({ type: 'error', message: 'Workspace not found or not running' }));
+        clientWs.close();
+        return;
+      }
+
+      // Connect to workspace daemon's presence WebSocket
+      const baseUrl = workspace.publicUrl.replace(/^http/, 'ws').replace(/\/$/, '');
+      const daemonWsUrl = `${baseUrl}/ws/presence`;
+      console.log(`[ws/channels] Connecting to daemon: ${daemonWsUrl}`);
+
+      daemonWs = new WebSocket(daemonWsUrl, { perMessageDeflate: false });
+
+      daemonWs.on('open', () => {
+        console.log(`[ws/channels] Connected to daemon for ${username}`);
+        // Register with the daemon's presence system
+        daemonWs!.send(JSON.stringify({
+          type: 'presence',
+          action: 'join',
+          user: { username },
+        }));
+      });
+
+      daemonWs.on('message', (data) => {
+        // Forward daemon messages to client
+        // Only forward channel_message type messages for this user
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'channel_message') {
+            // Only forward if this message is for this user
+            if (msg.targetUser === username) {
+              console.log(`[ws/channels] Forwarding channel message to ${username}: ${msg.from} -> ${msg.channel}`);
+              clientWs.send(data.toString());
+            }
+          }
+          // Also forward presence updates so client stays in sync
+          if (msg.type === 'presence_join' || msg.type === 'presence_leave' || msg.type === 'presence_list') {
+            clientWs.send(data.toString());
+          }
+        } catch {
+          // Non-JSON message, skip
+        }
+      });
+
+      daemonWs.on('close', () => {
+        console.log(`[ws/channels] Daemon connection closed for ${username}`);
+        if (clientWs.readyState === WebSocket.OPEN) {
+          clientWs.close();
+        }
+      });
+
+      daemonWs.on('error', (err) => {
+        console.error(`[ws/channels] Daemon WebSocket error:`, err);
+        if (clientWs.readyState === WebSocket.OPEN) {
+          clientWs.send(JSON.stringify({ type: 'error', message: 'Daemon connection error' }));
+          clientWs.close();
+        }
+      });
+
+      // Forward client messages to daemon (for sending channel messages)
+      clientWs.on('message', (data) => {
+        if (daemonWs && daemonWs.readyState === WebSocket.OPEN) {
+          daemonWs.send(data.toString());
+        }
+      });
+
+      clientWs.on('close', () => {
+        console.log(`[ws/channels] Client disconnected for ${username}`);
+        // Send leave message to daemon
+        if (daemonWs && daemonWs.readyState === WebSocket.OPEN) {
+          daemonWs.send(JSON.stringify({
+            type: 'presence',
+            action: 'leave',
+            username,
+          }));
+          daemonWs.close();
+        }
+      });
+
+      clientWs.on('error', (err) => {
+        console.error(`[ws/channels] Client WebSocket error:`, err);
+        if (daemonWs && daemonWs.readyState === WebSocket.OPEN) {
+          daemonWs.close();
+        }
+      });
+
+    } catch (err) {
+      console.error(`[ws/channels] Setup error:`, err);
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(JSON.stringify({ type: 'error', message: 'Failed to connect to workspace' }));
+        clientWs.close();
+      }
+    }
+  });
+
   // Handle HTTP upgrade for WebSocket
   httpServer.on('upgrade', (request, socket, head) => {
     const pathname = new URL(request.url || '', `http://${request.headers.host}`).pathname;
@@ -1135,6 +1264,19 @@ export async function createServer(): Promise<CloudServer> {
 
         wssLogs.handleUpgrade(request, socket, head, (ws) => {
           wssLogs.emit('connection', ws, workspaceId, agentName);
+        });
+      } else {
+        socket.destroy();
+      }
+    } else if (pathname.startsWith('/ws/channels/')) {
+      // Parse /ws/channels/:workspaceId/:username
+      const parts = pathname.split('/').filter(Boolean);
+      if (parts.length >= 4) {
+        const workspaceId = decodeURIComponent(parts[2]);
+        const username = decodeURIComponent(parts[3]);
+
+        wssChannels.handleUpgrade(request, socket, head, (ws) => {
+          wssChannels.emit('connection', ws, workspaceId, username);
         });
       } else {
         socket.destroy();
@@ -1195,6 +1337,104 @@ export async function createServer(): Promise<CloudServer> {
   wssPresence.on('close', () => {
     clearInterval(presenceHeartbeat);
   });
+
+  // Track daemon proxy connections for channel message forwarding
+  const daemonProxies = new Map<WebSocket, Map<string, WebSocket>>(); // clientWs -> workspaceId -> daemonWs
+
+  // Set up daemon proxy for channel messages
+  async function setupDaemonChannelProxy(clientWs: WebSocket, workspaceId: string, username: string): Promise<void> {
+    // Check if already have a proxy for this workspace
+    const clientProxies = daemonProxies.get(clientWs) || new Map<string, WebSocket>();
+    if (clientProxies.has(workspaceId)) {
+      return; // Already connected
+    }
+
+    try {
+      const workspace = await db.workspaces.findById(workspaceId);
+      if (!workspace || !workspace.publicUrl) {
+        console.log(`[cloud] Workspace ${workspaceId} not found or not running`);
+        return;
+      }
+
+      const baseUrl = workspace.publicUrl.replace(/^http/, 'ws').replace(/\/$/, '');
+      const httpBaseUrl = workspace.publicUrl.replace(/\/$/, '');
+      const daemonWsUrl = `${baseUrl}/ws/presence`;
+      console.log(`[cloud] Connecting channel proxy to daemon: ${daemonWsUrl} for ${username}`);
+
+      // First, register the user for channel messages on the daemon side
+      // This creates a relay client for them so they receive channel messages
+      try {
+        const subscribeRes = await fetch(`${httpBaseUrl}/api/channels/subscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username,
+            channels: ['#general'], // Start with general, others can be joined later
+            workspaceId,
+          }),
+        });
+        if (subscribeRes.ok) {
+          const result = (await subscribeRes.json()) as { channels?: string[] };
+          console.log(`[cloud] Subscribed ${username} to channels: ${result.channels?.join(', ')}`);
+        } else {
+          console.warn(`[cloud] Failed to subscribe ${username} to channels: ${subscribeRes.status}`);
+        }
+      } catch (err) {
+        console.warn(`[cloud] Error subscribing ${username} to channels:`, err);
+        // Continue anyway - we can still set up the proxy
+      }
+
+      const daemonWs = new WebSocket(daemonWsUrl, { perMessageDeflate: false });
+
+      daemonWs.on('open', () => {
+        console.log(`[cloud] Channel proxy connected for ${username} in workspace ${workspaceId}`);
+      });
+
+      daemonWs.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          // Forward channel messages targeted at this user
+          if (msg.type === 'channel_message' && msg.targetUser === username) {
+            console.log(`[cloud] Forwarding channel message to ${username}: ${msg.from} -> ${msg.channel}`);
+            if (clientWs.readyState === WebSocket.OPEN) {
+              clientWs.send(data.toString());
+            }
+          }
+        } catch {
+          // Non-JSON, ignore
+        }
+      });
+
+      daemonWs.on('close', () => {
+        console.log(`[cloud] Channel proxy closed for ${username} in workspace ${workspaceId}`);
+        clientProxies.delete(workspaceId);
+      });
+
+      daemonWs.on('error', (err) => {
+        console.error(`[cloud] Channel proxy error for ${username}:`, err);
+        clientProxies.delete(workspaceId);
+      });
+
+      clientProxies.set(workspaceId, daemonWs);
+      daemonProxies.set(clientWs, clientProxies);
+    } catch (err) {
+      console.error(`[cloud] Failed to setup channel proxy for ${username}:`, err);
+    }
+  }
+
+  // Clean up daemon proxies for a client
+  function cleanupDaemonProxies(clientWs: WebSocket): void {
+    const clientProxies = daemonProxies.get(clientWs);
+    if (clientProxies) {
+      for (const [workspaceId, daemonWs] of clientProxies) {
+        console.log(`[cloud] Cleaning up channel proxy for workspace ${workspaceId}`);
+        if (daemonWs.readyState === WebSocket.OPEN) {
+          daemonWs.close();
+        }
+      }
+      daemonProxies.delete(clientWs);
+    }
+  }
 
   // Handle presence connections
   wssPresence.on('connection', (ws) => {
@@ -1286,6 +1526,33 @@ export async function createServer(): Promise<CloudServer> {
             avatarUrl: userState?.info.avatarUrl,
             isTyping: msg.isTyping,
           }, ws);
+        } else if (msg.type === 'subscribe_channels') {
+          // Subscribe to channel messages for a specific workspace
+          if (!clientUsername) {
+            console.warn(`[cloud] subscribe_channels from unauthenticated client`);
+            return;
+          }
+          if (!msg.workspaceId || typeof msg.workspaceId !== 'string') {
+            console.warn(`[cloud] subscribe_channels missing workspaceId`);
+            return;
+          }
+          console.log(`[cloud] User ${clientUsername} subscribing to channels in workspace ${msg.workspaceId}`);
+          setupDaemonChannelProxy(ws, msg.workspaceId, clientUsername).catch((err) => {
+            console.error(`[cloud] Failed to setup channel subscription:`, err);
+          });
+        } else if (msg.type === 'channel_message') {
+          // Proxy channel message to daemon via HTTP API
+          if (!clientUsername) {
+            console.warn(`[cloud] channel_message from unauthenticated client`);
+            return;
+          }
+          if (!msg.channel || !msg.body) {
+            console.warn(`[cloud] channel_message missing channel or body`);
+            return;
+          }
+          // Note: This should be handled by the HTTP API, but support WebSocket too
+          console.log(`[cloud] Channel message via WebSocket from ${clientUsername} to ${msg.channel}`);
+          // The HTTP proxy will handle actual sending - just log for now
         }
       } catch (err) {
         console.error('[cloud] Invalid presence message:', err);
@@ -1293,6 +1560,9 @@ export async function createServer(): Promise<CloudServer> {
     });
 
     ws.on('close', () => {
+      // Clean up daemon proxies
+      cleanupDaemonProxies(ws);
+
       if (clientUsername) {
         const userState = onlineUsers.get(clientUsername);
         if (userState) {

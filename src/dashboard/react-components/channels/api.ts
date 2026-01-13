@@ -595,12 +595,23 @@ export async function addMember(
  */
 export async function removeMember(
   _workspaceId: string,
-  _channelId: string,
-  _memberId: string,
+  channelId: string,
+  memberId: string,
   _memberType: 'user' | 'agent'
 ): Promise<void> {
-  // No-op in daemon mode
-  return;
+  const url = getApiUrl('/api/channels/admin-remove');
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      channel: channelId.startsWith('#') ? channelId : `#${channelId}`,
+      member: memberId,
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new ApiError(error.error || 'Failed to remove member', response.status);
+  }
 }
 
 /**

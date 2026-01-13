@@ -47,12 +47,16 @@ import {
   SearchInput,
   CreateChannelModal,
   InviteToChannelModal,
+  MemberManagementPanel,
   listChannels,
   getMessages,
+  getChannelMembers,
+  removeMember as removeChannelMember,
   sendMessage as sendChannelApiMessage,
   markRead,
   createChannel,
   type Channel,
+  type ChannelMember,
   type ChannelMessage as ChannelApiMessage,
   type UnreadState,
   type CreateChannelRequest,
@@ -360,6 +364,10 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   // Channel state: selectedChannelId must be declared before callbacks that use it
   const [selectedChannelId, setSelectedChannelId] = useState<string | undefined>();
+
+  // Member management state
+  const [showMemberPanel, setShowMemberPanel] = useState(false);
+  const [channelMembers, setChannelMembers] = useState<ChannelMember[]>([]);
 
   const appendChannelMessage = useCallback((channelId: string, message: ChannelApiMessage, options?: { incrementUnread?: boolean }) => {
     const incrementUnread = options?.incrementUnread ?? true;
@@ -1431,6 +1439,31 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     }
   }, [effectiveActiveWorkspaceId, selectedChannelId, setChannelListsFromResponse]);
 
+  // Show members panel handler
+  const handleShowMembers = useCallback(async () => {
+    if (!selectedChannel || !effectiveActiveWorkspaceId) return;
+    try {
+      const members = await getChannelMembers(effectiveActiveWorkspaceId, selectedChannel.id);
+      setChannelMembers(members);
+      setShowMemberPanel(true);
+    } catch (err) {
+      console.error('Failed to load channel members:', err);
+    }
+  }, [selectedChannel, effectiveActiveWorkspaceId]);
+
+  // Remove member handler
+  const handleRemoveMember = useCallback(async (memberId: string, memberType: 'user' | 'agent') => {
+    if (!selectedChannel || !effectiveActiveWorkspaceId) return;
+    try {
+      await removeChannelMember(effectiveActiveWorkspaceId, selectedChannel.id, memberId, memberType);
+      // Refresh members list
+      const members = await getChannelMembers(effectiveActiveWorkspaceId, selectedChannel.id);
+      setChannelMembers(members);
+    } catch (err) {
+      console.error('Failed to remove member:', err);
+    }
+  }, [selectedChannel, effectiveActiveWorkspaceId]);
+
   // Archive channel handler
   const handleArchiveChannel = useCallback(async (channel: Channel) => {
     if (!effectiveActiveWorkspaceId) return;
@@ -2315,6 +2348,8 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
                 unreadState={channelUnreadState}
                 onSendMessage={handleSendChannelMessage}
                 onLoadMore={handleLoadMoreMessages}
+                onThreadClick={(messageId) => setCurrentThread(messageId)}
+                onShowMembers={handleShowMembers}
                 onMemberClick={handleChannelMemberClick}
               />
             ) : viewMode === 'channels' ? (
@@ -2345,26 +2380,68 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
           {/* Thread Panel */}
           {currentThread && (() => {
-            // Find original message: first try by ID (reply chain), then by thread name (topic thread)
-            let originalMessage = messages.find((m) => m.id === currentThread);
-            const isTopicThread = !originalMessage;
+            // Determine which message list to search based on view mode
+            const isChannelView = viewMode === 'channels';
 
-            if (!originalMessage) {
-              // Topic thread: find oldest message with this thread name
-              const threadMsgs = messages
-                .filter((m) => m.thread === currentThread)
-                .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-              originalMessage = threadMsgs[0] ?? null;
+            // Helper to convert ChannelMessage to Message format for ThreadPanel
+            const convertChannelMessage = (cm: ChannelApiMessage): Message => ({
+              id: cm.id,
+              from: cm.from,
+              to: cm.channelId,
+              content: cm.content,
+              timestamp: cm.timestamp,
+              thread: cm.threadId,
+              isRead: cm.isRead,
+              replyCount: cm.threadSummary?.replyCount,
+            });
+
+            let originalMessage: Message | null = null;
+            let isTopicThread = false;
+
+            if (isChannelView) {
+              const channelMsg = effectiveChannelMessages.find((m) => m.id === currentThread);
+              if (channelMsg) {
+                originalMessage = convertChannelMessage(channelMsg);
+              } else {
+                isTopicThread = true;
+                const threadMsgs = effectiveChannelMessages
+                  .filter((m) => m.threadId === currentThread)
+                  .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                if (threadMsgs[0]) {
+                  originalMessage = convertChannelMessage(threadMsgs[0]);
+                }
+              }
+            } else {
+              originalMessage = messages.find((m) => m.id === currentThread) ?? null;
+              isTopicThread = !originalMessage;
+              if (!originalMessage) {
+                const threadMsgs = messages
+                  .filter((m) => m.thread === currentThread)
+                  .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                originalMessage = threadMsgs[0] ?? null;
+              }
             }
+
+            // Get thread replies based on view mode
+            const replies: Message[] = isChannelView
+              ? effectiveChannelMessages
+                  .filter((m) => m.threadId === currentThread)
+                  .map(convertChannelMessage)
+              : threadMessages(currentThread);
 
             return (
               <div className="w-full md:w-[400px] md:min-w-[320px] md:max-w-[500px] flex-shrink-0">
                   <ThreadPanel
-                    originalMessage={originalMessage ?? null}
-                    replies={threadMessages(currentThread)}
+                    originalMessage={originalMessage}
+                    replies={replies}
                     onClose={() => setCurrentThread(null)}
                     showTimestamps={settings.display.showTimestamps}
                     onReply={async (content) => {
+                    if (isChannelView && selectedChannel) {
+                      // For channels, send threaded message
+                      await handleSendChannelMessage(content, currentThread);
+                      return true;
+                    }
                     // For topic threads, broadcast to all; for reply chains, reply to the other participant
                     let recipient = '*';
                     if (!isTopicThread && originalMessage) {
@@ -2475,6 +2552,21 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
         isLoading={isInvitingToChannel}
         availableMembers={agents.map(a => a.name)}
       />
+
+      {/* Member Management Panel */}
+      {selectedChannel && (
+        <MemberManagementPanel
+          channel={selectedChannel}
+          members={channelMembers}
+          isOpen={showMemberPanel}
+          onClose={() => setShowMemberPanel(false)}
+          onAddMember={() => {}}
+          onRemoveMember={handleRemoveMember}
+          onUpdateRole={() => {}}
+          currentUserId={currentUser?.displayName}
+          availableAgents={agents.map(a => ({ name: a.name }))}
+        />
+      )}
 
       {/* Conversation History */}
       <ConversationHistory

@@ -80,6 +80,12 @@ export interface ChannelLeavePayload {
   channel: string;
   /** Optional reason for leaving */
   reason?: string;
+  /**
+   * Optional member name to remove from channel.
+   * If provided, removes this member instead of the sender.
+   * Used for admin operations (e.g., removing members via dashboard).
+   */
+  member?: string;
 }
 
 /**

@@ -2831,6 +2831,29 @@ export async function startDashboard(
   });
 
   /**
+   * POST /api/channels/admin-remove - Remove a member from a channel (admin operation)
+   * Used by dashboard to remove members from channels
+   */
+  app.post('/api/channels/admin-remove', express.json(), async (req, res) => {
+    const { channel, member } = req.body;
+    if (!channel || !member) {
+      return res.status(400).json({ error: 'channel and member required' });
+    }
+    const workspaceId = resolveWorkspaceId(req);
+    try {
+      console.log(`[channels] Admin remove: ${member} <- ${channel}`);
+      const success = await userBridge.adminRemoveMember(channel, member);
+      if (success) {
+        await persistChannelMembershipEvent(channel, member, 'leave', { workspaceId });
+      }
+      res.json({ success, channel, member });
+    } catch (err: any) {
+      console.error('[channels] Admin remove failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * GET /api/channels/:channel/members - Get members of a channel
    */
   app.get('/api/channels/:channel/members', async (req, res) => {
@@ -2958,55 +2981,122 @@ export async function startDashboard(
   });
 
   /**
+   * POST /api/channels/subscribe - Subscribe a cloud user to channel messages
+   * This creates a relay client for the user so they receive channel messages
+   */
+  app.post('/api/channels/subscribe', express.json(), async (req, res) => {
+    const { username, channels, workspaceId } = req.body;
+    console.log(`[channel-debug] SUBSCRIBE request: username=${username}, channels=${JSON.stringify(channels)}`);
+
+    if (!username) {
+      return res.status(400).json({ error: 'username required' });
+    }
+
+    try {
+      // Get or create a relay client for this user
+      const client = await getRelayClient(username);
+      if (!client) {
+        console.log(`[channel-debug] SUBSCRIBE failed: could not create relay client for ${username}`);
+        return res.status(503).json({ error: 'Could not connect to daemon' });
+      }
+
+      // Wait for client to be ready
+      let attempts = 0;
+      while (client.state !== 'READY' && attempts < 50) {
+        await new Promise((r) => setTimeout(r, 100));
+        attempts++;
+      }
+
+      if (client.state !== 'READY') {
+        console.log(`[channel-debug] SUBSCRIBE failed: client not ready for ${username}`);
+        return res.status(503).json({ error: 'Relay client not ready' });
+      }
+
+      // Join the user to their channels
+      const joinedChannels: string[] = [];
+      const channelList = channels || ['#general'];
+      for (const channel of channelList) {
+        const channelId = channel.startsWith('#') ? channel : `#${channel}`;
+        const joined = client.joinChannel(channelId, username);
+        if (joined) {
+          joinedChannels.push(channelId);
+        }
+      }
+
+      console.log(`[channel-debug] SUBSCRIBE success: ${username} joined ${joinedChannels.join(', ')}`);
+      res.json({ success: true, channels: joinedChannels });
+    } catch (err: any) {
+      console.log(`[channel-debug] SUBSCRIBE error: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * POST /api/channels/message - Send a message to a channel
    */
   app.post('/api/channels/message', express.json(), async (req, res) => {
+    // Build marker - if you don't see this, you're running old code
+    console.log('[channel-msg] === BUILD v3 === Handler called');
+
     const { username, channel, body, thread } = req.body;
-    console.log(`[channel-debug] MESSAGE request: username=${username}, channel=${channel}, body=${body?.substring(0, 50)}...`);
+    console.log(`[channel-msg] Request: username=${username}, channel=${channel}`);
+
     if (!username || !channel || !body) {
-      console.log('[channel-debug] MESSAGE failed: missing required fields');
+      console.log('[channel-msg] Missing required fields');
       return res.status(400).json({ error: 'username, channel, and body required' });
     }
-    const workspaceId = resolveWorkspaceId(req);
 
-    // Ensure channel has # prefix
+    const workspaceId = resolveWorkspaceId(req);
     const channelId = channel.startsWith('#') ? channel : `#${channel}`;
 
-    try {
-      // First try via userBridge (for users connected via WebSocket)
-      let success = await userBridge.sendChannelMessage(username, channelId, body, {
+    // SIMPLE APPROACH: Always try relay client first for sending
+    // userBridge is only useful for users connected via local WebSocket
+    // For cloud-proxied requests, we need to use relay client directly
+
+    let success = false;
+
+    // Step 1: Check if user is registered with userBridge (local mode)
+    const isLocalUser = userBridge.isUserRegistered(username);
+    console.log(`[channel-msg] Is local user: ${isLocalUser}`);
+
+    if (isLocalUser) {
+      // Local user - use userBridge
+      console.log('[channel-msg] Using userBridge (local user)');
+      success = await userBridge.sendChannelMessage(username, channelId, body, {
         thread,
         data: workspaceId ? { _workspaceId: workspaceId } : undefined,
       });
+      console.log(`[channel-msg] userBridge result: ${success}`);
+    }
 
-      // If user not registered via WebSocket, fall back to dashboard relay client
-      // This handles cloud-proxied requests where user is connected to cloud, not local daemon
-      if (!success && !userBridge.isUserRegistered(username)) {
-        console.log(`[channel-debug] User ${username} not registered via WebSocket, using relay client fallback`);
-
-        // Get or create a relay client for this user
+    // Step 2: If not local or userBridge failed, use relay client
+    if (!success) {
+      console.log('[channel-msg] Using relay client fallback');
+      try {
         const client = await getRelayClient(username);
-        if (client && client.state === 'READY') {
-          // Auto-join the user to the channel first
-          client.joinChannel(channelId, username);
+        console.log(`[channel-msg] Got relay client: ${client ? `state=${client.state}` : 'null'}`);
 
-          // Send the channel message
+        if (client && client.state === 'READY') {
+          // Join the channel first (idempotent)
+          const joinResult = client.joinChannel(channelId, username);
+          console.log(`[channel-msg] Join channel result: ${joinResult}`);
+
+          // Send the message
           success = client.sendChannelMessage(channelId, body, {
             thread,
             data: workspaceId ? { _workspaceId: workspaceId } : undefined,
           });
-          console.log(`[channel-debug] Relay client fallback result: ${success}`);
+          console.log(`[channel-msg] sendChannelMessage result: ${success}`);
         } else {
-          console.log(`[channel-debug] Relay client not available for ${username}`);
+          console.log('[channel-msg] Relay client not ready or null');
         }
+      } catch (err: any) {
+        console.log(`[channel-msg] Relay client error: ${err.message}`);
       }
-
-      console.log(`[channel-debug] MESSAGE result: success=${success}`);
-      res.json({ success });
-    } catch (err: any) {
-      console.log(`[channel-debug] MESSAGE error: ${err.message}`);
-      res.status(500).json({ error: err.message });
     }
+
+    console.log(`[channel-msg] Final result: success=${success}`);
+    res.json({ success });
   });
 
   /**
@@ -5292,7 +5382,7 @@ Start by greeting the project leads and asking for status updates.`;
 
   return new Promise((resolve, reject) => {
     server.listen(availablePort, async () => {
-      console.log(`Dashboard running at http://localhost:${availablePort}`);
+      console.log(`Dashboard running at http://localhost:${availablePort} (build: cloud-channels-v2)`);
       console.log(`Monitoring: ${dataDir}`);
 
       // Set the dashboard port on spawner so spawned agents can use the API for nested spawns
