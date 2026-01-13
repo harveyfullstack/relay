@@ -584,6 +584,7 @@ export async function createServer(): Promise<CloudServer> {
       const addedMembers: Array<{ id: string; type: 'user' | 'agent'; role: string }> = [
         { id: createdBy, type: 'user', role: 'owner' },
       ];
+      const memberWarnings: Array<{ member: string; warning: string }> = [];
 
       if (invites) {
         let inviteList: Array<{ id: string; type: 'user' | 'agent' }> = [];
@@ -623,12 +624,18 @@ export async function createServer(): Promise<CloudServer> {
               const channelName = channelId.startsWith('#') ? channelId : `#${channelId}`;
               // Route to local dashboard where the daemon and channel routing lives
               const dashboardUrl = await getLocalDashboardUrl();
-              await fetch(`${dashboardUrl}/api/channels/admin-join`, {
+              const joinResponse = await fetch(`${dashboardUrl}/api/channels/admin-join`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ channel: channelName, member: invitee.id, workspaceId }),
               });
+              const joinResult = await joinResponse.json() as { success: boolean; warning?: string };
               console.log(`[channels] Synced agent ${invitee.id} to channel ${channelName} via local dashboard`);
+              // Check for warning about unconnected agent
+              if (joinResult.warning) {
+                memberWarnings.push({ member: invitee.id, warning: joinResult.warning });
+                console.log(`[channels] Warning for ${invitee.id}: ${joinResult.warning}`);
+              }
             } catch (err) {
               // Non-fatal - daemon sync is best-effort
               console.warn(`[channels] Failed to sync agent ${invitee.id} to daemon:`, err);
@@ -649,6 +656,7 @@ export async function createServer(): Promise<CloudServer> {
           createdBy: channel.createdBy,
           members: addedMembers,
         },
+        warnings: memberWarnings.length > 0 ? memberWarnings : undefined,
       });
     } catch (error) {
       console.error('[channels] Error creating channel:', error);

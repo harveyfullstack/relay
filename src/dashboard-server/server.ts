@@ -2856,7 +2856,30 @@ export async function startDashboard(
       if (success) {
         await persistChannelMembershipEvent(channel, member, 'join', { workspaceId });
       }
-      res.json({ success, channel, member });
+
+      // Check if member is connected (warning for unconnected members)
+      let warning: string | undefined;
+      const connectedAgentsPath = path.join(teamDir, 'connected-agents.json');
+      try {
+        if (fs.existsSync(connectedAgentsPath)) {
+          const data = JSON.parse(fs.readFileSync(connectedAgentsPath, 'utf-8'));
+          const connectedAgents: string[] = data.agents || [];
+          const connectedUsers: string[] = data.users || [];
+          const allConnected = [...connectedAgents, ...connectedUsers];
+          // Case-insensitive check
+          const isConnected = allConnected.some(
+            (name) => name.toLowerCase() === member.toLowerCase()
+          );
+          if (!isConnected) {
+            warning = `Member "${member}" is not currently connected to the daemon. Messages sent to this channel will not be delivered until the agent connects.`;
+            console.log(`[channels] Warning: ${member} added to ${channel} but not connected`);
+          }
+        }
+      } catch {
+        // Ignore errors reading connected-agents.json
+      }
+
+      res.json({ success, channel, member, warning });
     } catch (err: any) {
       console.error('[channels] Admin join failed:', err.message);
       res.status(500).json({ error: err.message });
