@@ -1084,7 +1084,9 @@ export class Router {
       return;
     }
 
-    if (!members.has(senderName)) {
+    // Case-insensitive membership check
+    const senderMemberName = this.findMemberInSet(members, senderName);
+    if (!senderMemberName) {
       routerLog.warn(`${senderName} not a member of ${channel} (members: ${Array.from(members).join(', ')})`);
       return;
     }
@@ -1103,7 +1105,8 @@ export class Router {
     routerLog.info(`Connected entities: agents=[${connectedAgents.join(',')}] users=[${connectedUsers.join(',')}]`);
 
     for (const memberName of members) {
-      if (memberName === senderName) {
+      // Case-insensitive comparison to skip sender
+      if (this.namesMatch(memberName, senderName)) {
         continue;
       }
       const memberConn = this.getConnectionByName(memberName);
@@ -1287,6 +1290,29 @@ export class Router {
   }
 
   /**
+   * Check if a member is in a Set (case-insensitive).
+   * Returns the actual stored name if found, undefined otherwise.
+   */
+  private findMemberInSet(members: Set<string>, name: string): string | undefined {
+    // Try exact match first
+    if (members.has(name)) return name;
+
+    // Fall back to case-insensitive search
+    const lowerName = name.toLowerCase();
+    for (const member of members) {
+      if (member.toLowerCase() === lowerName) return member;
+    }
+    return undefined;
+  }
+
+  /**
+   * Check if two names match (case-insensitive).
+   */
+  private namesMatch(a: string, b: string): boolean {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+
+  /**
    * Auto-join a member to a channel without notifications.
    * Used for default channel membership (e.g., #general).
    * @param memberName - The agent or user name to add
@@ -1317,7 +1343,9 @@ export class Router {
       members = new Set();
       this.channels.set(channel, members);
     }
-    if (members.has(memberName)) {
+    // Case-insensitive check for existing membership
+    const existingMember = this.findMemberInSet(members, memberName);
+    if (existingMember) {
       return false;
     }
     members.add(memberName);
@@ -1339,25 +1367,33 @@ export class Router {
     options?: { persist?: boolean }
   ): boolean {
     const members = this.channels.get(channel);
-    if (!members || !members.has(memberName)) {
+    if (!members) {
       return false;
     }
 
-    members.delete(memberName);
+    // Case-insensitive lookup to find actual stored name
+    const actualMemberName = this.findMemberInSet(members, memberName);
+    if (!actualMemberName) {
+      return false;
+    }
+
+    members.delete(actualMemberName);
     if (members.size === 0) {
       this.channels.delete(channel);
     }
 
-    const memberChannelSet = this.memberChannels.get(memberName);
+    // Also try case-insensitive for memberChannels cleanup
+    const memberChannelSet = this.memberChannels.get(actualMemberName) ?? this.memberChannels.get(memberName);
     if (memberChannelSet) {
       memberChannelSet.delete(channel);
       if (memberChannelSet.size === 0) {
-        this.memberChannels.delete(memberName);
+        this.memberChannels.delete(actualMemberName);
+        this.memberChannels.delete(memberName); // Clean up both potential keys
       }
     }
 
     if (options?.persist ?? true) {
-      this.persistChannelMembership(channel, memberName, 'leave');
+      this.persistChannelMembership(channel, actualMemberName, 'leave');
     }
 
     return true;

@@ -19,7 +19,8 @@ import { EventEmitter } from 'node:events';
 import { RelayClient } from './client.js';
 import type { ParsedCommand, ParsedSummary } from './parser.js';
 import { isPlaceholderTarget } from './parser.js';
-import type { SendPayload, SendMeta, SpeakOnTrigger } from '../protocol/types.js';
+import type { SendPayload, SendMeta, SpeakOnTrigger, Envelope } from '../protocol/types.js';
+import type { ChannelMessagePayload } from '../protocol/channels.js';
 import {
   type QueuedMessage,
   type InjectionMetrics,
@@ -139,9 +140,14 @@ export abstract class BaseWrapper extends EventEmitter {
       confidenceThreshold: config.idleConfidenceThreshold ?? DEFAULT_IDLE_CONFIDENCE_THRESHOLD,
     });
 
-    // Set up message handler
+    // Set up message handler for direct messages
     this.client.onMessage = (from, payload, messageId, meta, originalTo) => {
       this.handleIncomingMessage(from, payload, messageId, meta, originalTo);
+    };
+
+    // Set up channel message handler
+    this.client.onChannelMessage = (from, channel, body, envelope) => {
+      this.handleIncomingChannelMessage(from, channel, body, envelope);
     };
   }
 
@@ -266,6 +272,48 @@ export abstract class BaseWrapper extends EventEmitter {
       originalTo,
     };
 
+    this.messageQueue.push(queuedMsg);
+  }
+
+  /**
+   * Handle incoming channel message from relay.
+   * Channel messages include a channel indicator so the agent knows to reply to the channel.
+   */
+  protected handleIncomingChannelMessage(
+    from: string,
+    channel: string,
+    body: string,
+    envelope: Envelope<ChannelMessagePayload>
+  ): void {
+    const messageId = envelope.id;
+
+    // Deduplicate by message ID
+    if (this.receivedMessageIds.has(messageId)) return;
+    this.receivedMessageIds.add(messageId);
+
+    // Limit dedup set size
+    if (this.receivedMessageIds.size > 1000) {
+      const oldest = this.receivedMessageIds.values().next().value;
+      if (oldest) this.receivedMessageIds.delete(oldest);
+    }
+
+    // Queue the message with channel indicator in the body
+    // Format: "Relay message from Alice [abc123] [#general]: message body"
+    // This lets the agent know to reply to the channel, not the sender
+    const queuedMsg: QueuedMessage = {
+      from,
+      body,
+      messageId,
+      thread: envelope.payload.thread,
+      data: {
+        _isChannelMessage: true,
+        _channel: channel,
+        _mentions: envelope.payload.mentions,
+      },
+      originalTo: channel, // Set channel as the reply target
+    };
+
+    console.error(`[base-wrapper] Received channel message: from=${from} channel=${channel} id=${messageId.substring(0, 8)}`);
     this.messageQueue.push(queuedMsg);
   }
 
