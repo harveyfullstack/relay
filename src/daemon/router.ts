@@ -1097,6 +1097,7 @@ export class Router {
     });
 
     let deliveredCount = 0;
+    const undeliveredMembers: string[] = [];
     const connectedAgents = Array.from(this.agents.keys());
     const connectedUsers = Array.from(this.users.keys());
     routerLog.info(`Connected entities: agents=[${connectedAgents.join(',')}] users=[${connectedUsers.join(',')}]`);
@@ -1121,16 +1122,24 @@ export class Router {
           routerLog.info(`Delivered to ${memberName} (${memberConn.entityType || 'agent'})`);
         } else {
           routerLog.warn(`Failed to send to ${memberName}`);
+          undeliveredMembers.push(memberName);
         }
       } else {
-        routerLog.info(`Member ${memberName} not connected (not in agents or users map)`);
+        routerLog.warn(`Member ${memberName} is registered in channel but NOT connected to daemon - message not delivered`);
+        undeliveredMembers.push(memberName);
       }
     }
 
     // Persist channel message
     this.persistChannelMessage(envelope, senderName);
 
-    routerLog.info(`${senderName} -> ${channel}: delivered to ${deliveredCount}/${allMembers.length - 1} members`);
+    const recipientCount = allMembers.length - 1; // Exclude sender
+    routerLog.info(`${senderName} -> ${channel}: delivered to ${deliveredCount}/${recipientCount} members`);
+
+    // Log warning if some members didn't receive the message
+    if (undeliveredMembers.length > 0) {
+      routerLog.warn(`Channel message undelivered to: [${undeliveredMembers.join(', ')}] - these agents may need to reconnect to the relay daemon`);
+    }
   }
 
   /**

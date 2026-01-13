@@ -125,6 +125,28 @@ export class Daemon {
   }
 
   /**
+   * Write currently connected agents to connected-agents.json for CLI consumption.
+   * This file contains agents with active socket connections (vs agents.json which is historical).
+   */
+  private writeConnectedAgentsFile(): void {
+    try {
+      const connectedAgents = this.router.getAgents();
+      const connectedUsers = this.router.getUsers();
+      const targetPath = path.join(this.config.teamDir ?? path.dirname(this.config.socketPath), 'connected-agents.json');
+      const data = JSON.stringify({
+        agents: connectedAgents,
+        users: connectedUsers,
+        updatedAt: Date.now(),
+      }, null, 2);
+      const tempPath = `${targetPath}.tmp`;
+      fs.writeFileSync(tempPath, data, 'utf-8');
+      fs.renameSync(tempPath, targetPath);
+    } catch (err) {
+      log.error('Failed to write connected-agents.json', { error: String(err) });
+    }
+  }
+
+  /**
    * Initialize storage adapter (called during start).
    */
   private async initStorage(): Promise<void> {
@@ -639,6 +661,9 @@ export class Daemon {
 
       // Notify cloud sync about agent changes
       this.notifyCloudSync();
+
+      // Update connected agents file for CLI
+      this.writeConnectedAgentsFile();
     };
 
     connection.onClose = () => {
@@ -658,6 +683,9 @@ export class Daemon {
 
       // Notify cloud sync about agent changes
       this.notifyCloudSync();
+
+      // Update connected agents file for CLI
+      this.writeConnectedAgentsFile();
     };
 
     connection.onError = (error: Error) => {
@@ -674,6 +702,9 @@ export class Daemon {
         this.storage.endSession(connection.sessionId, { closedBy: 'error' })
           .catch(err => log.error('Failed to record session end', { error: String(err) }));
       }
+
+      // Update connected agents file for CLI
+      this.writeConnectedAgentsFile();
     };
   }
 
