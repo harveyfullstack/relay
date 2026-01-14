@@ -75,43 +75,36 @@ export type OnAgentDeathCallback = (info: {
  * This provides the agent with the communication protocol it needs to work with the relay.
  */
 function getRelayInstructions(agentName: string): string {
-  return `# Agent Relay Protocol
-
-You are agent "${agentName}" connected to Agent Relay for multi-agent coordination.
-
-## Sending Messages
-
-Use fenced format for all messages:
-
-\`\`\`
-->relay:TargetAgent <<<
-Your message here.>>>
-\`\`\`
-
-## Communication Rules
-
-1. **ACK immediately** - When you receive a task:
-   \`\`\`
-   ->relay:Sender <<<
-   ACK: Brief description of task received>>>
-   \`\`\`
-
-2. **Report completion** - When done:
-   \`\`\`
-   ->relay:Sender <<<
-   DONE: Brief summary of what was completed>>>
-   \`\`\`
-
-3. Close `>>>` must immediately follow content (no blank lines before it)
-
-## Session End
-
-When your work is complete, output:
-\`\`\`
-[[SESSION_END]]Work complete.[[/SESSION_END]]
-\`\`\`
-
-This signals you're done and ready to be released.`;
+  return [
+    '# Agent Relay Protocol',
+    '',
+    `You are agent "${agentName}" connected to Agent Relay for multi-agent coordination.`,
+    '',
+    '## Sending Messages',
+    '',
+    'Use fenced format for all messages:',
+    '->relay:TargetAgent <<<',
+    'Your message here.>>>',
+    '',
+    '## Communication Rules',
+    '',
+    '1. **ACK immediately** - When you receive a task:',
+    '   ->relay:Sender <<<',
+    '   ACK: Brief description of task received>>>',
+    '',
+    '2. **Report completion** - When done:',
+    '   ->relay:Sender <<<',
+    '   DONE: Brief summary of what was completed>>>',
+    '',
+    '3. Close >>> must immediately follow content (no blank lines before it)',
+    '',
+    '## Session End',
+    '',
+    'When your work is complete, output:',
+    '[[SESSION_END]]Work complete.[[/SESSION_END]]',
+    '',
+    'This signals you are done and ready to be released.',
+  ].join('\n');
 }
 
 export class AgentSpawner {
