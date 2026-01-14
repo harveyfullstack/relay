@@ -3397,6 +3397,18 @@ export async function startDashboard(
     }
   });
 
+  // ===== Agent Status API =====
+
+  /**
+   * GET /api/agents/:name/online - Check if an agent is online
+   * Used by wrappers to wait for spawned agents before sending tasks.
+   */
+  app.get('/api/agents/:name/online', (req, res) => {
+    const { name } = req.params;
+    const online = isAgentOnline(name);
+    res.json({ name, online });
+  });
+
   // ===== Agent Spawn API =====
 
   /**

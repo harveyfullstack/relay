@@ -313,6 +313,8 @@ export class AgentSpawner {
         // Shadow agent configuration
         shadowOf: request.shadowOf,
         shadowSpeakOn: request.shadowSpeakOn,
+        // Skip continuity for spawned agents - they're short-lived workers
+        skipContinuity: true,
         // Only use callbacks if dashboardPort is not set (for backwards compatibility)
         onSpawn: this.dashboardPort ? undefined : async (workerName, workerCli, workerTask) => {
           // Handle nested spawn requests (legacy path, may fail in non-TTY)

@@ -1224,14 +1224,13 @@ export class TmuxWrapper extends BaseWrapper {
 
     this.logStderr(`Waiting for ${agentName} to come online...`);
 
-    // Poll for agent to be online
+    // Poll for agent to be online using dedicated status endpoint
     while (Date.now() - startTime < maxWaitMs) {
       try {
-        const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/agents`);
-        const data = await response.json() as { agents?: Array<{ name: string; online?: boolean }> };
-        const agent = data.agents?.find(a => a.name === agentName);
+        const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/agents/${encodeURIComponent(agentName)}/online`);
+        const data = await response.json() as { name: string; online: boolean };
 
-        if (agent?.online) {
+        if (data.online) {
           this.logStderr(`${agentName} is online, sending task...`);
 
           // Send task via relay
