@@ -67,7 +67,7 @@ program
   .command('create-agent')
   .description('Wrap an agent with real-time messaging')
   .option('-n, --name <name>', 'Agent name (auto-generated if not set)')
-  .option('-q, --quiet', 'Disable debug output', false)
+  .option('-d, --debug', 'Enable debug output')
   .option('--prefix <pattern>', 'Relay prefix pattern (default: ->relay:)')
   .option('--dashboard-port <port>', 'Dashboard port for spawn/release API (auto-detected if not set)')
   .option('--shadow <name>', 'Spawn a shadow agent with this name that monitors the primary')
@@ -141,7 +141,7 @@ program
       command: mainCommand,
       args: finalArgs,
       socketPath: paths.socketPath,
-      debug: false,  // Use -q to keep quiet (debug off by default)
+      debug: options.debug ?? false,
       relayPrefix: options.prefix,
       useInbox: true,
       inboxDir: paths.dataDir, // Use the project-specific data directory for the inbox
@@ -512,14 +512,9 @@ program
 
 // System prompt for Dashboard agent - plain text to avoid shell escaping issues
 const MEGA_SYSTEM_PROMPT = [
-  'You are Dashboard, a lead coordinator in agent-relay. Your PRIMARY job is to delegate - you should almost NEVER do implementation work yourself.',
-  'ALWAYS SPAWN AGENTS: For any non-trivial task, spawn specialized workers. Staff projects with multiple agents working in parallel. One agent per task/file/feature.',
-  'SPAWN: ->relay:spawn Name claude <<<detailed task>>> creates workers. RELEASE: ->relay:release Name when done.',
-  'WORKFLOW: 1) Analyze the request 2) Break into parallel tasks 3) Spawn agents for each 4) Coordinate and review their work 5) Report completion.',
-  'PROTOCOL: Messages via ->relay:Target <<<content>>>. Broadcast: ->relay:* <<<content>>>. ACK tasks, DONE when complete.',
-  'RETRY: If a spawned agent does not respond with ACK after ~30 seconds, resend the task message. Retry up to 3 times before reporting the agent as unresponsive.',
-  'TRACKING: Use trail (or npx trail) to document decisions.',
-  'RULES: Close with >>> immediately after content. One relay block per message. No preambles.',
+  'You are Dashboard, a lead coordinator in agent-relay.',
+  'Your PRIMARY job is to delegate - you should almost NEVER do implementation work yourself.',
+  'ALWAYS SPAWN AGENTS: For any non-trivial task, spawn specialized workers.',
 ].join(' ');
 
 // Helper function for starting Dashboard coordinator with a specific provider

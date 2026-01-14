@@ -1476,7 +1476,6 @@ export class TmuxWrapper extends BaseWrapper {
     const truncatedBody = payload.body.substring(0, Math.min(DEBUG_LOG_TRUNCATE_LENGTH, payload.body.length));
     const channelInfo = originalTo === '*' ? ' [broadcast]' : '';
     this.logStderr(`← ${from}${channelInfo}: ${truncatedBody}...`);
-    console.log(`[tmux:${this.config.name}] Received message from ${from}, queuing for injection (queue length: ${this.messageQueue.length + 1})`);
 
     // Record in trajectory via trail
     this.trajectory?.message('received', from, this.config.name, payload.body);
@@ -1499,10 +1498,7 @@ export class TmuxWrapper extends BaseWrapper {
    */
   private checkForInjectionOpportunity(): void {
     if (this.messageQueue.length === 0) return;
-    if (this.isInjecting) {
-      console.log(`[tmux:${this.config.name}] Injection in progress, skipping check`);
-      return;
-    }
+    if (this.isInjecting) return;
     if (!this.running) return;
 
     // Use universal idle detector for more reliable detection (inherited from BaseWrapper)
@@ -1513,12 +1509,6 @@ export class TmuxWrapper extends BaseWrapper {
       const retryMs = this.config.injectRetryMs ?? 500;
       setTimeout(() => this.checkForInjectionOpportunity(), retryMs);
       return;
-    }
-
-    // Log detection method in debug mode
-    if (this.config.debug && idleResult.signals.length > 0) {
-      const signalInfo = idleResult.signals.map(s => `${s.source}:${(s.confidence * 100).toFixed(0)}%`).join(', ');
-      this.logStderr(`Idle detected (${signalInfo})`);
     }
 
     this.injectNextMessage();
@@ -1533,21 +1523,18 @@ export class TmuxWrapper extends BaseWrapper {
     if (!msg) return;
 
     this.isInjecting = true;
-    this.logStderr(`Injecting message from ${msg.from} (cli: ${this.cliType})`);
 
     try {
       const shortId = msg.messageId.substring(0, 8);
 
       // Wait for input to be clear before injecting
       // If input is not clear (human typing), re-queue and try later - never clear forcefully!
-      // Fix for agent-relay-j9z: forceful clearing destroys human input in progress
       const waitTimeoutMs = this.config.inputWaitTimeoutMs ?? 5000;
       const waitPollMs = this.config.inputWaitPollMs ?? 200;
       const inputClear = await this.waitForClearInput(waitTimeoutMs, waitPollMs);
       if (!inputClear) {
         // Input still has text after timeout - DON'T clear forcefully, re-queue instead
-        // This preserves any human input in progress
-        this.logStderr('Input not clear after waiting, re-queuing injection to preserve human input');
+        this.logStderr('Input not clear, re-queuing injection');
         this.messageQueue.unshift(msg);
         this.isInjecting = false;
         setTimeout(() => this.checkForInjectionOpportunity(), this.config.injectRetryMs ?? 1000);
@@ -1608,7 +1595,9 @@ export class TmuxWrapper extends BaseWrapper {
           }
         },
         performInjection: async (inj: string) => {
-          await this.pasteLiteral(inj);
+          // Use send-keys -l (literal) instead of paste-buffer
+          // paste-buffer causes issues where Claude shows "[Pasted text]" but content doesn't appear
+          await this.sendKeysLiteral(inj);
           await sleep(INJECTION_CONSTANTS.ENTER_DELAY_MS);
           await this.sendKeys('Enter');
         },
@@ -1715,24 +1704,10 @@ export class TmuxWrapper extends BaseWrapper {
       .replace(/`/g, '\\`')
       .replace(/!/g, '\\!');
 
-    console.log(`[tmux:${this.config.name}] [PASTE-DEBUG] Sanitized length: ${sanitized.length}, escaped length: ${escaped.length}`);
-    console.log(`[tmux:${this.config.name}] [PASTE-DEBUG] First 100 chars: "${escaped.substring(0, 100)}"`);
-
     // Set tmux buffer then paste
-    // Skip bracketed paste (-p) for CLIs that don't handle it properly (droid, other)
     const setBufferCmd = `"${this.tmuxPath}" set-buffer -- "${escaped}"`;
-    console.log(`[tmux:${this.config.name}] [PASTE-DEBUG] set-buffer command length: ${setBufferCmd.length}`);
     await execAsync(setBufferCmd);
-
-    // Disable bracketed paste for now - it seems to cause issues where content doesn't appear
-    // The [Pasted text #N +1 lines] indicators show but actual content is missing
-    const useBracketedPaste = false; // Was: this.cliType === 'claude' || this.cliType === 'codex' || this.cliType === 'gemini' || this.cliType === 'opencode';
-    console.log(`[tmux:${this.config.name}] [PASTE-DEBUG] Using bracketed paste: ${useBracketedPaste}, cliType: ${this.cliType}`);
-    if (useBracketedPaste) {
-      await execAsync(`"${this.tmuxPath}" paste-buffer -t ${this.sessionName} -p`);
-    } else {
-      await execAsync(`"${this.tmuxPath}" paste-buffer -t ${this.sessionName}`);
-    }
+    await execAsync(`"${this.tmuxPath}" paste-buffer -t ${this.sessionName}`);
   }
 
   /**
