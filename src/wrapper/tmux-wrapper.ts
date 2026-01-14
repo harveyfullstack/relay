@@ -1246,6 +1246,12 @@ export class TmuxWrapper extends BaseWrapper {
     // Only process if we have API or callbacks configured
     const canSpawn = this.config.dashboardPort || this.config.onSpawn;
     const canRelease = this.config.dashboardPort || this.config.onRelease;
+
+    // Debug: Log spawn capability status
+    if (content.includes('->relay:spawn')) {
+      this.logStderr(`[spawn-debug] canSpawn=${!!canSpawn} dashboardPort=${this.config.dashboardPort} hasOnSpawn=${!!this.config.onSpawn}`);
+    }
+
     if (!canSpawn && !canRelease) return;
 
     const lines = content.split('\n');

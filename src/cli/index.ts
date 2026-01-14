@@ -110,22 +110,28 @@ program
     if (options.dashboardPort) {
       dashboardPort = parseInt(options.dashboardPort, 10);
     } else {
-      // Try to detect if dashboard is running at default port
-      const defaultPort = parseInt(DEFAULT_DASHBOARD_PORT, 10);
-      try {
-        const response = await fetch(`http://localhost:${defaultPort}/api/health`, {
-          method: 'GET',
-          signal: AbortSignal.timeout(500), // Quick timeout for detection
-        });
-        if (response.ok) {
-          const health = await response.json() as { status: string };
-          if (health.status === 'healthy') {
-            dashboardPort = defaultPort;
-            console.error(`Dashboard detected: http://localhost:${dashboardPort}`);
+      // Try to detect if dashboard is running at common ports
+      const portsToTry = [
+        parseInt(DEFAULT_DASHBOARD_PORT, 10),
+        3889, 3890, 3891, // Common fallback ports when default is in use
+      ];
+      for (const port of portsToTry) {
+        try {
+          const response = await fetch(`http://localhost:${port}/api/health`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(300), // Quick timeout for detection
+          });
+          if (response.ok) {
+            const health = await response.json() as { status: string };
+            if (health.status === 'healthy') {
+              dashboardPort = port;
+              console.error(`Dashboard detected: http://localhost:${dashboardPort}`);
+              break;
+            }
           }
+        } catch {
+          // Try next port
         }
-      } catch {
-        // Dashboard not running - spawn/release will use fallback callbacks
       }
     }
 
@@ -546,24 +552,44 @@ program
     // Check if socket exists (daemon running)
     const socketExists = fs.existsSync(paths.socketPath);
 
+    // Ports to try for dashboard detection
+    const portsToTry = [
+      parseInt(DEFAULT_DASHBOARD_PORT, 10),
+      3889, 3890, 3891,
+    ];
+
     // Check if dashboard is responding for THIS project
     let dashboardReady = false;
-    if (socketExists) {
+    let detectedPort: number | undefined;
+
+    // Helper to check health at a port
+    const checkPort = async (port: number): Promise<boolean> => {
       try {
-        const response = await fetch(`http://localhost:${DEFAULT_DASHBOARD_PORT}/api/health`, {
-          signal: AbortSignal.timeout(1000),
+        const response = await fetch(`http://localhost:${port}/api/health`, {
+          signal: AbortSignal.timeout(500),
         });
         if (response.ok) {
           const health = await response.json() as { status: string };
-          dashboardReady = health.status === 'healthy';
+          return health.status === 'healthy';
         }
       } catch {
-        // Dashboard not responding
+        // Port not responding
+      }
+      return false;
+    };
+
+    if (socketExists) {
+      for (const port of portsToTry) {
+        if (await checkPort(port)) {
+          dashboardReady = true;
+          detectedPort = port;
+          break;
+        }
       }
     }
 
-    if (dashboardReady) {
-      console.log('Daemon already running, reusing...');
+    if (dashboardReady && detectedPort) {
+      console.log(`Daemon already running at port ${detectedPort}, reusing...`);
     } else {
       console.log('Starting daemon...');
       const daemonProc = spawn(process.execPath, [process.argv[1], 'up'], {
@@ -577,26 +603,23 @@ program
       const startTime = Date.now();
       while (Date.now() - startTime < maxWait) {
         await new Promise((resolve) => setTimeout(resolve, 500));
-        try {
-          const response = await fetch(`http://localhost:${DEFAULT_DASHBOARD_PORT}/api/health`, {
-            signal: AbortSignal.timeout(1000),
-          });
-          if (response.ok) {
-            const health = await response.json() as { status: string };
-            if (health.status === 'healthy') {
-              dashboardReady = true;
-              break;
-            }
+        for (const port of portsToTry) {
+          if (await checkPort(port)) {
+            dashboardReady = true;
+            detectedPort = port;
+            break;
           }
-        } catch {
-          // Keep waiting
         }
+        if (dashboardReady) break;
       }
 
       if (!dashboardReady) {
         console.error('Warning: Dashboard may not be fully ready. Spawn might not work.');
+        detectedPort = parseInt(DEFAULT_DASHBOARD_PORT, 10); // Fallback
       }
     }
+
+    const dashboardPort = detectedPort || parseInt(DEFAULT_DASHBOARD_PORT, 10);
 
     // Step 2: Install prpm snippet via npx
     console.log('[2/3] Installing agent-relay snippet...');
@@ -639,10 +662,10 @@ program
     }
 
     // Use '--' to separate agent-relay options from the command + its args
-    // Format: agent-relay -n Mega --skip-instructions --dashboard-port 3888 -- claude --append-system-prompt "..."
+    // Format: agent-relay -n Mega --skip-instructions --dashboard-port <port> -- claude --append-system-prompt "..."
     const agentProc = spawn(
       process.execPath,
-      [process.argv[1], '-n', 'Mega', '--skip-instructions', '--dashboard-port', DEFAULT_DASHBOARD_PORT, '--', operator, ...cliArgs],
+      [process.argv[1], '-n', 'Mega', '--skip-instructions', '--dashboard-port', String(dashboardPort), '--', operator, ...cliArgs],
       { stdio: 'inherit' }
     );
 
