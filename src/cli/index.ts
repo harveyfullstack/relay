@@ -113,13 +113,16 @@ program
       // Try to detect if dashboard is running at default port
       const defaultPort = parseInt(DEFAULT_DASHBOARD_PORT, 10);
       try {
-        const response = await fetch(`http://localhost:${defaultPort}/api/status`, {
+        const response = await fetch(`http://localhost:${defaultPort}/api/health`, {
           method: 'GET',
           signal: AbortSignal.timeout(500), // Quick timeout for detection
         });
         if (response.ok) {
-          dashboardPort = defaultPort;
-          console.error(`Dashboard detected: http://localhost:${dashboardPort}`);
+          const health = await response.json() as { status: string };
+          if (health.status === 'healthy') {
+            dashboardPort = defaultPort;
+            console.error(`Dashboard detected: http://localhost:${dashboardPort}`);
+          }
         }
       } catch {
         // Dashboard not running - spawn/release will use fallback callbacks
