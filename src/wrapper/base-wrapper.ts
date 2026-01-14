@@ -300,8 +300,12 @@ export abstract class BaseWrapper extends EventEmitter {
     }
 
     // Only send if client ready
-    if (this.client.state !== 'READY') return;
+    if (this.client.state !== 'READY') {
+      console.error(`[base-wrapper] Skipped message to ${cmd.to} - client not ready (state: ${this.client.state})`);
+      return;
+    }
 
+    console.log(`[base-wrapper] Sending message to ${cmd.to}: "${cmd.body.substring(0, 50)}..."`);
     this.client.sendMessage(cmd.to, cmd.body, cmd.kind, cmd.data, cmd.thread);
   }
 

@@ -754,6 +754,15 @@ export class PtyWrapper extends BaseWrapper {
     const lookbackStart = Math.max(0, this.lastParsedLength - 500);
     const contentToParse = cleanContent.substring(lookbackStart);
 
+    // Debug: Check if content contains relay pattern
+    if (contentToParse.includes('->relay:')) {
+      const relayLines = contentToParse.split('\n').filter(l => l.includes('->relay:'));
+      console.log(`[pty:${this.config.name}] [RELAY-DEBUG] Found ${relayLines.length} lines with ->relay: pattern`);
+      relayLines.slice(0, 3).forEach((line, i) => {
+        console.log(`[pty:${this.config.name}] [RELAY-DEBUG] Line ${i}: "${line.substring(0, 80)}..."`);
+      });
+    }
+
     // First, try to find fenced multi-line messages: ->relay:Target <<<\n...\n>>>
     this.parseFencedMessages(contentToParse);
 
