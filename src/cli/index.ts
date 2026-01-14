@@ -589,10 +589,10 @@ program
     }
 
     // Use '--' to separate agent-relay options from the command + its args
-    // Format: agent-relay -n Mega --skip-instructions -- claude --append-system-prompt "..."
+    // Format: agent-relay -n Mega --skip-instructions --dashboard-port 3888 -- claude --append-system-prompt "..."
     const agentProc = spawn(
       process.execPath,
-      [process.argv[1], '-n', 'Mega', '--skip-instructions', '--', operator, ...cliArgs],
+      [process.argv[1], '-n', 'Mega', '--skip-instructions', '--dashboard-port', DEFAULT_DASHBOARD_PORT, '--', operator, ...cliArgs],
       { stdio: 'inherit' }
     );
 
