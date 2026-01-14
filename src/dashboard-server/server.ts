@@ -980,8 +980,9 @@ export async function startDashboard(
       targets = [to];
     }
 
-    // Get or create relay client for this sender (defaults to 'Dashboard' for non-cloud mode)
-    const relayClient = await getRelayClient(senderName || 'Dashboard');
+    // Always use 'Dashboard' client to avoid name conflicts with actual agents
+    // The sender name is preserved in message history/logs but not used for the relay connection
+    const relayClient = await getRelayClient('Dashboard');
     if (!relayClient || relayClient.state !== 'READY') {
       return res.status(503).json({ error: 'Relay daemon not connected' });
     }
