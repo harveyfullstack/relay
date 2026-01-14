@@ -70,6 +70,50 @@ export type OnAgentDeathCallback = (info: {
   resumeInstructions?: string;
 }) => void;
 
+/**
+ * Get relay protocol instructions for a spawned agent.
+ * This provides the agent with the communication protocol it needs to work with the relay.
+ */
+function getRelayInstructions(agentName: string): string {
+  return `# Agent Relay Protocol
+
+You are agent "${agentName}" connected to Agent Relay for multi-agent coordination.
+
+## Sending Messages
+
+Use fenced format for all messages:
+
+\`\`\`
+->relay:TargetAgent <<<
+Your message here.>>>
+\`\`\`
+
+## Communication Rules
+
+1. **ACK immediately** - When you receive a task:
+   \`\`\`
+   ->relay:Sender <<<
+   ACK: Brief description of task received>>>
+   \`\`\`
+
+2. **Report completion** - When done:
+   \`\`\`
+   ->relay:Sender <<<
+   DONE: Brief summary of what was completed>>>
+   \`\`\`
+
+3. Close `>>>` must immediately follow content (no blank lines before it)
+
+## Session End
+
+When your work is complete, output:
+\`\`\`
+[[SESSION_END]]Work complete.[[/SESSION_END]]
+\`\`\`
+
+This signals you're done and ready to be released.`;
+}
+
 export class AgentSpawner {
   private activeWorkers: Map<string, ActiveWorker> = new Map();
   private agentsPath: string;
@@ -271,6 +315,14 @@ export class AgentSpawner {
       const isCodexCli = commandName.startsWith('codex');
       if (isCodexCli && !args.includes('--dangerously-bypass-approvals-and-sandbox')) {
         args.push('--dangerously-bypass-approvals-and-sandbox');
+      }
+
+      // Inject relay protocol instructions via CLI-specific system prompt
+      const relayInstructions = getRelayInstructions(name);
+      if (isClaudeCli && !args.includes('--append-system-prompt')) {
+        args.push('--append-system-prompt', relayInstructions);
+      } else if (isCodexCli && !args.some(a => a.includes('developer_instructions'))) {
+        args.push('--config', `developer_instructions=${relayInstructions}`);
       }
 
       if (debug) console.log(`[spawner:debug] Spawning ${name} with: ${command} ${args.join(' ')}`);
