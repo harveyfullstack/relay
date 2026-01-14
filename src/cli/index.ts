@@ -517,6 +517,7 @@ const MEGA_SYSTEM_PROMPT = [
   'SPAWN: ->relay:spawn Name claude <<<detailed task>>> creates workers. RELEASE: ->relay:release Name when done.',
   'WORKFLOW: 1) Analyze the request 2) Break into parallel tasks 3) Spawn agents for each 4) Coordinate and review their work 5) Report completion.',
   'PROTOCOL: Messages via ->relay:Target <<<content>>>. Broadcast: ->relay:* <<<content>>>. ACK tasks, DONE when complete.',
+  'RETRY: If a spawned agent does not respond with ACK after ~30 seconds, resend the task message. Retry up to 3 times before reporting the agent as unresponsive.',
   'TRACKING: Use trail (or npx trail) to document decisions.',
   'RULES: Close with >>> immediately after content. One relay block per message. No preambles.',
 ].join(' ');
