@@ -190,26 +190,8 @@ impl Injector {
         // Mark as not idle (we just sent input)
         self.is_idle.store(false, Ordering::SeqCst);
 
-        // Wait for verification
-        let verify_timeout = Duration::from_millis(self.config.idle_timeout_ms * 4);
-        let verify_start = Instant::now();
-
-        // Create pattern to look for in output
-        let short_id = &msg.id[..msg.id.len().min(7)];
-        let expected_pattern = format!("Relay message from {} [{}]", msg.from, short_id);
-
-        while verify_start.elapsed() < verify_timeout {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            let recent = self.recent_output.lock().await;
-            if recent.contains(&expected_pattern) {
-                return Ok(true);
-            }
-        }
-
-        // Pattern not found in output
-        warn!("Verification timeout for message {}", msg.id);
-        Ok(false)
+        // Assume delivery after successful PTY write; many CLIs don't echo input.
+        Ok(true)
     }
 }
 
