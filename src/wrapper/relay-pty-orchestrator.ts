@@ -154,9 +154,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   private backpressureActive = false;
   private readyForMessages = false;
 
-  // Session state
-  private sessionEndProcessed = false;
-  private lastSummaryRawContent = '';
+  // Note: sessionEndProcessed and lastSummaryRawContent are inherited from BaseWrapper
 
   constructor(config: RelayPtyOrchestratorConfig) {
     super(config);
