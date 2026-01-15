@@ -63,7 +63,9 @@ impl Injector {
     /// Record new output (updates last_output_ms and recent_output)
     pub async fn record_output(&self, output: &str) {
         self.last_output_ms.store(current_timestamp_ms(), Ordering::SeqCst);
-        self.is_idle.store(false, Ordering::SeqCst);
+        if !is_relay_echo(output) {
+            self.is_idle.store(false, Ordering::SeqCst);
+        }
 
         let mut recent = self.recent_output.lock().await;
         recent.push_str(output);
@@ -193,6 +195,13 @@ impl Injector {
         // Assume delivery after successful PTY write; many CLIs don't echo input.
         Ok(true)
     }
+}
+
+fn is_relay_echo(output: &str) -> bool {
+    output.lines().all(|line| {
+        let trimmed = line.trim();
+        trimmed.is_empty() || trimmed.starts_with("Relay message from ")
+    })
 }
 
 /// Get current timestamp in milliseconds

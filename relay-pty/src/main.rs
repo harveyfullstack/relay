@@ -249,8 +249,8 @@ async fn main() -> Result<()> {
                     let parse_result = parser.process(&data);
 
                     // Update injector state
-                    injector.update_from_parse(&parse_result);
                     injector.record_output(&text).await;
+                    injector.update_from_parse(&parse_result);
 
                     // Output parsed commands as JSON if enabled
                     if json_output {
