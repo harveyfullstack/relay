@@ -786,7 +786,8 @@ export async function startDashboard(
   };
 
   // Start default relay client connection (non-blocking)
-  getRelayClient('Dashboard').catch(() => {});
+  // Use '_DashboardUI' to avoid conflicts with agents named 'Dashboard'
+  getRelayClient('_DashboardUI').catch(() => {});
 
   // User bridge for human-to-human and human-to-agent messaging
   const userBridge = new UserBridge({
@@ -980,8 +981,10 @@ export async function startDashboard(
       targets = [to];
     }
 
-    // Get or create relay client for this sender (defaults to 'Dashboard' for non-cloud mode)
-    const relayClient = await getRelayClient(senderName || 'Dashboard');
+    // Always use '_DashboardUI' client to avoid name conflicts with user agents
+    // (underscore prefix indicates system client, prevents collision if user names an agent "Dashboard")
+    // The sender name is preserved in message history/logs but not used for the relay connection
+    const relayClient = await getRelayClient('_DashboardUI');
     if (!relayClient || relayClient.state !== 'READY') {
       return res.status(503).json({ error: 'Relay daemon not connected' });
     }
@@ -999,8 +1002,9 @@ export async function startDashboard(
         }
       }
 
-      // Include attachments and channel context in the message data field
+      // Include attachments, channel context, and sender info in the message data field
       // For broadcasts (to='*'), include channel: 'general' so replies can be routed back
+      // For dashboard messages, include senderName so frontend can display actual user instead of '_DashboardUI'
       const isBroadcast = targets.length === 1 && targets[0] === '*';
       const messageData: Record<string, unknown> = {};
 
@@ -1010,6 +1014,12 @@ export async function startDashboard(
 
       if (isBroadcast) {
         messageData.channel = 'general';
+      }
+
+      // Include actual sender name for dashboard messages (relay client uses '_DashboardUI' but
+      // we want the real user's name displayed in message history)
+      if (senderName) {
+        messageData.senderName = senderName;
       }
 
       const hasMessageData = Object.keys(messageData).length > 0;
@@ -1253,9 +1263,11 @@ export async function startDashboard(
     // Filter out messages from/to internal system agents (e.g., __spawner__)
     .filter((row) => !isInternalAgent(row.from) && !isInternalAgent(row.to))
     .map((row) => {
-      // Extract attachments and channel from the data field if present
+      // Extract attachments, channel, and senderName from the data field if present
       let attachments: Attachment[] | undefined;
       let channel: string | undefined;
+      let effectiveFrom = row.from;
+
       if (row.data && typeof row.data === 'object') {
         if ('attachments' in row.data) {
           attachments = (row.data as { attachments: Attachment[] }).attachments;
@@ -1263,10 +1275,15 @@ export async function startDashboard(
         if ('channel' in row.data) {
           channel = (row.data as { channel: string }).channel;
         }
+        // For dashboard messages sent via _DashboardUI, use the actual sender name
+        // This provides proper attribution in message history
+        if ('senderName' in row.data && row.from === '_DashboardUI') {
+          effectiveFrom = (row.data as { senderName: string }).senderName;
+        }
       }
 
       return {
-        from: row.from,
+        from: effectiveFrom,
         to: row.to,
         content: row.body,
         timestamp: new Date(row.ts).toISOString(),
@@ -3397,6 +3414,18 @@ export async function startDashboard(
     }
   });
 
+  // ===== Agent Status API =====
+
+  /**
+   * GET /api/agents/:name/online - Check if an agent is online
+   * Used by wrappers to wait for spawned agents before sending tasks.
+   */
+  app.get('/api/agents/:name/online', (req, res) => {
+    const { name } = req.params;
+    const online = isAgentOnline(name);
+    res.json({ name, online });
+  });
+
   // ===== Agent Spawn API =====
 
   /**
@@ -4035,7 +4064,7 @@ Start by greeting the project leads and asking for status updates.`;
 
     // Try to send message to agent
     try {
-      const client = await getRelayClient('Dashboard');
+      const client = await getRelayClient('_DashboardUI');
       if (client) {
         await client.sendMessage(agentName, responseMessage, 'message');
       }
@@ -4070,7 +4099,7 @@ Start by greeting the project leads and asking for status updates.`;
     }
 
     try {
-      const client = await getRelayClient('Dashboard');
+      const client = await getRelayClient('_DashboardUI');
       if (client) {
         await client.sendMessage(agentName, responseMessage, 'message');
       }
@@ -4311,7 +4340,7 @@ Start by greeting the project leads and asking for status updates.`;
 
     // Send task to agent via relay
     try {
-      const client = await getRelayClient('Dashboard');
+      const client = await getRelayClient('_DashboardUI');
       if (client) {
         const taskMessage = `TASK ASSIGNED [${priority.toUpperCase()}]: ${title}\n\n${description || 'No additional details.'}`;
         await client.sendMessage(agentName, taskMessage, 'message');
@@ -4368,7 +4397,7 @@ Start by greeting the project leads and asking for status updates.`;
     // Notify agent of cancellation if task is still active
     if (task.status === 'pending' || task.status === 'assigned' || task.status === 'in_progress') {
       try {
-        const client = await getRelayClient('Dashboard');
+        const client = await getRelayClient('_DashboardUI');
         if (client) {
           await client.sendMessage(task.agentName, `TASK CANCELLED: ${task.title}`, 'message');
         }
@@ -4455,7 +4484,7 @@ Start by greeting the project leads and asking for status updates.`;
     }
 
     try {
-      const client = await getRelayClient('Dashboard');
+      const client = await getRelayClient('_DashboardUI');
       if (!client) {
         return res.status(503).json({
           success: false,

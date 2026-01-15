@@ -41,10 +41,12 @@ import { useTrajectory } from './hooks/useTrajectory';
 import { useRecentRepos } from './hooks/useRecentRepos';
 import { useWorkspaceRepos } from './hooks/useWorkspaceRepos';
 import { usePresence, type UserPresence } from './hooks/usePresence';
+import { useWorkspaceMembers, filterOnlineUsersByWorkspace } from './hooks/useWorkspaceMembers';
 import { useCloudSessionOptional } from './CloudSessionProvider';
 import { WorkspaceProvider } from './WorkspaceContext';
 import { api, convertApiDecision, setActiveWorkspaceId as setApiWorkspaceId } from '../lib/api';
 import { cloudApi } from '../lib/cloudApi';
+import { mergeAgentsForDashboard } from '../lib/agent-merge';
 import type { CurrentUser } from './MessageList';
 
 /**
@@ -201,11 +203,14 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     : undefined;
 
   // Cloud workspaces state (for cloud mode)
+  // Includes owned, member, and contributor workspaces (via GitHub repo access)
   const [cloudWorkspaces, setCloudWorkspaces] = useState<Array<{
     id: string;
     name: string;
     status: string;
-    path?: string;
+    publicUrl?: string;
+    accessType?: 'owner' | 'member' | 'contributor';
+    permission?: 'admin' | 'write' | 'read';
   }>>([]);
   const [activeCloudWorkspaceId, setActiveCloudWorkspaceId] = useState<string | null>(null);
   const [isLoadingCloudWorkspaces, setIsLoadingCloudWorkspaces] = useState(false);
@@ -214,18 +219,22 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const [localAgents, setLocalAgents] = useState<Agent[]>([]);
 
   // Fetch cloud workspaces when in cloud mode
+  // Uses getAccessibleWorkspaces to include contributor workspaces (via GitHub repos)
   useEffect(() => {
     if (!cloudSession?.user) return;
 
     const fetchCloudWorkspaces = async () => {
       setIsLoadingCloudWorkspaces(true);
       try {
-        const result = await cloudApi.getWorkspaceSummary();
+        const result = await cloudApi.getAccessibleWorkspaces();
         if (result.success && result.data.workspaces) {
           setCloudWorkspaces(result.data.workspaces);
           // Auto-select first workspace if none selected
           if (!activeCloudWorkspaceId && result.data.workspaces.length > 0) {
-            setActiveCloudWorkspaceId(result.data.workspaces[0].id);
+            const firstWorkspaceId = result.data.workspaces[0].id;
+            setActiveCloudWorkspaceId(firstWorkspaceId);
+            // Sync immediately with api module to avoid race conditions
+            setApiWorkspaceId(firstWorkspaceId);
           }
         }
       } catch (err) {
@@ -293,10 +302,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const effectiveWorkspaces = useMemo(() => {
     if (isCloudMode && cloudWorkspaces.length > 0) {
       // Convert cloud workspaces to the format expected by WorkspaceSelector
+      // Includes owned, member, and contributor workspaces
       return cloudWorkspaces.map(ws => ({
         id: ws.id,
         name: ws.name,
-        path: ws.path || `/workspace/${ws.name}`,
+        path: ws.publicUrl || `/workspace/${ws.name}`,
         status: ws.status === 'running' ? 'active' as const : 'inactive' as const,
         provider: 'claude' as const,
         lastActiveAt: new Date(),
@@ -309,9 +319,14 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const effectiveIsLoading = isCloudMode ? isLoadingCloudWorkspaces : isOrchestratorLoading;
 
   // Sync the active workspace ID with the api module for cloud mode proxying
+  // This useEffect serves as a safeguard and handles initial load/edge cases
+  // The immediate sync in handleEffectiveWorkspaceSelect handles user-initiated changes
   useEffect(() => {
     if (isCloudMode && activeCloudWorkspaceId) {
       setApiWorkspaceId(activeCloudWorkspaceId);
+    } else if (isCloudMode && !activeCloudWorkspaceId) {
+      // In cloud mode but no workspace selected - clear the proxy
+      setApiWorkspaceId(null);
     } else if (!isCloudMode) {
       // Clear the workspace ID when not in cloud mode
       setApiWorkspaceId(null);
@@ -322,6 +337,9 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const handleEffectiveWorkspaceSelect = useCallback(async (workspace: { id: string; name: string }) => {
     if (isCloudMode) {
       setActiveCloudWorkspaceId(workspace.id);
+      // Sync immediately with api module to avoid race conditions
+      // This ensures spawn/release calls use the correct workspace before the useEffect runs
+      setApiWorkspaceId(workspace.id);
     } else {
       await switchWorkspace(workspace.id);
     }
@@ -335,9 +353,21 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
       : undefined,
     [currentUser?.displayName, currentUser?.avatarUrl]
   );
-  const { onlineUsers, typingUsers, sendTyping, isConnected: isPresenceConnected } = usePresence({
+  const { onlineUsers: allOnlineUsers, typingUsers, sendTyping, isConnected: isPresenceConnected } = usePresence({
     currentUser: presenceUser,
   });
+
+  // Filter online users by workspace membership (cloud mode only)
+  const { memberUsernames } = useWorkspaceMembers({
+    workspaceId: effectiveActiveWorkspaceId ?? undefined,
+    enabled: isCloudMode && !!effectiveActiveWorkspaceId,
+  });
+
+  // Filter online users to only show those with access to current workspace
+  const onlineUsers = useMemo(
+    () => filterOnlineUsersByWorkspace(allOnlineUsers, memberUsernames),
+    [allOnlineUsers, memberUsernames]
+  );
 
   // User profile panel state
   const [selectedUserProfile, setSelectedUserProfile] = useState<UserPresence | null>(null);
@@ -410,6 +440,12 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
     autoPoll: isTrajectoryOpen, // Only poll when panel is open
   });
 
+  // Get the title of the selected trajectory from history
+  const selectedTrajectoryTitle = useMemo(() => {
+    if (!selectedTrajectoryId) return null;
+    return trajectoryHistory.find(t => t.id === selectedTrajectoryId)?.title ?? null;
+  }, [selectedTrajectoryId, trajectoryHistory]);
+
   // Recent repos tracking
   const { recentRepos, addRecentRepo, getRecentProjects } = useRecentRepos();
 
@@ -455,25 +491,11 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
 
   // Merge AI agents, human users, and local agents from linked daemons
   const combinedAgents = useMemo(() => {
-    const merged = [...(data?.agents ?? []), ...(data?.users ?? []), ...localAgents];
-    const byName = new Map<string, Agent>();
-
-    for (const agent of merged) {
-      const key = agent.name.toLowerCase();
-      const existing = byName.get(key);
-      // Local agents should preserve their isLocal flag when merging
-      if (existing) {
-        byName.set(key, {
-          ...existing,
-          ...agent,
-          isLocal: existing.isLocal || agent.isLocal,
-        });
-      } else {
-        byName.set(key, agent);
-      }
-    }
-
-    return Array.from(byName.values());
+    return mergeAgentsForDashboard({
+      agents: data?.agents,
+      users: data?.users,
+      localAgents,
+    });
   }, [data?.agents, data?.users, localAgents]);
 
   // Mark a DM conversation as seen (used for unread badges)
@@ -1751,7 +1773,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
             {/* Content */}
             <div className="flex-1 overflow-hidden p-6">
               <TrajectoryViewer
-                agentName={trajectoryStatus?.task?.slice(0, 30) || 'Current'}
+                agentName={selectedTrajectoryTitle?.slice(0, 30) || trajectoryStatus?.task?.slice(0, 30) || 'Trajectories'}
                 steps={trajectorySteps}
                 history={trajectoryHistory}
                 selectedTrajectoryId={selectedTrajectoryId}
