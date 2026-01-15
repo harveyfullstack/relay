@@ -231,7 +231,10 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           setCloudWorkspaces(result.data.workspaces);
           // Auto-select first workspace if none selected
           if (!activeCloudWorkspaceId && result.data.workspaces.length > 0) {
-            setActiveCloudWorkspaceId(result.data.workspaces[0].id);
+            const firstWorkspaceId = result.data.workspaces[0].id;
+            setActiveCloudWorkspaceId(firstWorkspaceId);
+            // Sync immediately with api module to avoid race conditions
+            setApiWorkspaceId(firstWorkspaceId);
           }
         }
       } catch (err) {
@@ -316,9 +319,14 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const effectiveIsLoading = isCloudMode ? isLoadingCloudWorkspaces : isOrchestratorLoading;
 
   // Sync the active workspace ID with the api module for cloud mode proxying
+  // This useEffect serves as a safeguard and handles initial load/edge cases
+  // The immediate sync in handleEffectiveWorkspaceSelect handles user-initiated changes
   useEffect(() => {
     if (isCloudMode && activeCloudWorkspaceId) {
       setApiWorkspaceId(activeCloudWorkspaceId);
+    } else if (isCloudMode && !activeCloudWorkspaceId) {
+      // In cloud mode but no workspace selected - clear the proxy
+      setApiWorkspaceId(null);
     } else if (!isCloudMode) {
       // Clear the workspace ID when not in cloud mode
       setApiWorkspaceId(null);
@@ -329,6 +337,9 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
   const handleEffectiveWorkspaceSelect = useCallback(async (workspace: { id: string; name: string }) => {
     if (isCloudMode) {
       setActiveCloudWorkspaceId(workspace.id);
+      // Sync immediately with api module to avoid race conditions
+      // This ensures spawn/release calls use the correct workspace before the useEffect runs
+      setApiWorkspaceId(workspace.id);
     } else {
       await switchWorkspace(workspace.id);
     }
