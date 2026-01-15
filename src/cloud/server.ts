@@ -561,23 +561,47 @@ export async function createServer(): Promise<CloudServer> {
       }
 
       // Create the channel
-      const channel = await db.channels.create({
-        workspaceId,
-        channelId,
-        name: displayName,
-        description,
-        visibility: isPrivate ? 'private' : 'public',
-        status: 'active',
-        createdBy,
-      });
+      console.log('[channels] Creating channel:', { workspaceId, channelId, displayName, createdBy });
+      let channel;
+      try {
+        channel = await db.channels.create({
+          workspaceId,
+          channelId,
+          name: displayName,
+          description,
+          visibility: isPrivate ? 'private' : 'public',
+          status: 'active',
+          createdBy,
+        });
+        console.log('[channels] Channel created:', channel.id);
+      } catch (createError) {
+        const err = createError as Error;
+        console.error('[channels] Failed to create channel in database:', {
+          message: err.message,
+          stack: err.stack,
+        });
+        throw createError;
+      }
 
       // Add creator as owner
-      await db.channelMembers.addMember({
-        channelId: channel.id,
-        memberId: createdBy,
-        memberType: 'user',
-        role: 'owner',
-      });
+      try {
+        await db.channelMembers.addMember({
+          channelId: channel.id,
+          memberId: createdBy,
+          memberType: 'user',
+          role: 'owner',
+        });
+        console.log('[channels] Added creator as owner:', createdBy);
+      } catch (memberError) {
+        const err = memberError as Error;
+        console.error('[channels] Failed to add channel member:', {
+          message: err.message,
+          stack: err.stack,
+          channelId: channel.id,
+          memberId: createdBy,
+        });
+        throw memberError;
+      }
 
       // Handle invites if provided
       // Supports: comma-separated string, array of strings, or array of {id, type} objects
@@ -659,8 +683,19 @@ export async function createServer(): Promise<CloudServer> {
         warnings: memberWarnings.length > 0 ? memberWarnings : undefined,
       });
     } catch (error) {
-      console.error('[channels] Error creating channel:', error);
-      res.status(500).json({ error: 'Failed to create channel' });
+      const err = error as Error;
+      console.error('[channels] Error creating channel:', {
+        message: err.message,
+        stack: err.stack,
+        name: err.name,
+        workspaceId: req.body.workspaceId,
+        channelName: req.body.name,
+      });
+      // Include error message for debugging (safe since this is authenticated)
+      res.status(500).json({
+        error: 'Failed to create channel',
+        message: err.message,
+      });
     }
   });
 
