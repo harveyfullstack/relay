@@ -19,11 +19,14 @@ vi.mock('node:net', () => ({
   createConnection: vi.fn(),
 }));
 
+// Create a mock for existsSync that we can control
+const mockExistsSync = vi.fn((path: string) => {
+  // Simulate relay-pty binary exists at any relay-pty path
+  return typeof path === 'string' && path.includes('relay-pty');
+});
+
 vi.mock('node:fs', () => ({
-  existsSync: vi.fn((path: string) => {
-    // Simulate relay-pty binary exists at release path
-    return path.includes('relay-pty/target/release/relay-pty');
-  }),
+  existsSync: mockExistsSync,
 }));
 
 // Mock the client module
@@ -94,6 +97,11 @@ describe('RelayPtyOrchestrator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
+    // Reset existsSync mock to default implementation
+    mockExistsSync.mockImplementation((path: string) => {
+      return typeof path === 'string' && path.includes('relay-pty');
+    });
+
     // Set up mock process
     mockProcess = createMockProcess();
     mockSpawn.mockReturnValue(mockProcess);
@@ -138,20 +146,26 @@ describe('RelayPtyOrchestrator', () => {
     });
 
     it('uses custom binary path if provided', async () => {
+      // Update mock to accept custom path
+      mockExistsSync.mockImplementation((path: string) => {
+        return path === '/custom/path/relay-pty' || (typeof path === 'string' && path.includes('relay-pty'));
+      });
+
       orchestrator = new RelayPtyOrchestrator({
         name: 'TestAgent',
         command: 'claude',
         relayPtyPath: '/custom/path/relay-pty',
       });
 
-      // Mock the custom path exists
-      const existsSync = await import('node:fs').then(m => m.existsSync) as unknown as ReturnType<typeof vi.fn>;
-      existsSync.mockImplementation((path: string) => path === '/custom/path/relay-pty');
-
       await orchestrator.start();
 
       const spawnCall = mockSpawn.mock.calls[0];
       expect(spawnCall[0]).toBe('/custom/path/relay-pty');
+
+      // Reset mock
+      mockExistsSync.mockImplementation((path: string) => {
+        return typeof path === 'string' && path.includes('relay-pty');
+      });
     });
   });
 
