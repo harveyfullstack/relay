@@ -1,57 +1,133 @@
 # Agent Relay
 
-Real-time agent-to-agent messaging. Output `->relay:` patterns to communicate.
+Real-time agent-to-agent messaging.
+
+## Your Outbox
+
+Write relay files to: `/tmp/relay-outbox/$AGENT_RELAY_NAME/`
+
+The `$AGENT_RELAY_NAME` environment variable contains your agent name.
 
 ## Sending Messages
 
-**Always use the fenced format** for reliable message delivery:
+Write a file, then output the file ID:
 
-```
-->relay:AgentName <<<
-Your message here.>>>
-```
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/msg-001 << 'EOF'
+TO: AgentName
 
-```
-->relay:* <<<
-Broadcast to all agents.>>>
-```
-
-```
-->relay:#channelname <<<
-Message to a specific channel.>>>
-```
-
-**CRITICAL:** Always close multi-line messages with `>>>` after the very last character.
-
-**WARNING:** Do NOT put blank lines before `>>>` - it must immediately follow your content:
-
-```
-# CORRECT - >>> immediately after content
-->relay:Agent <<<Your message here.>>>
-
-# WRONG - blank line before >>> breaks parsing
-->relay:Agent <<<
 Your message here.
-
->>>
+Can span multiple lines.
+No escaping needed!
+EOF
 ```
 
-**Output rule:** Send only a single fenced relay block per message. Do not include any extra text before or after the block (no preambles, no UI prompt hints).
+Then output: `->relay-file:msg-001`
+
+## Message Format
+
+```
+TO: TargetAgent
+THREAD: optional-thread-id
+
+Your message body here.
+Multiple lines are fine.
+No JSON, no escaping.
+```
+
+## Message Routing
+
+| TO Value | Behavior |
+|----------|----------|
+| `AgentName` | Direct message to that agent |
+| `*` | Broadcast to ALL agents |
+| `#channel` | Message to a channel |
+
+**Examples:**
+```
+TO: Lead
+
+Status update for lead only.
+```
+
+```
+TO: *
+
+Announcing something to everyone.
+```
+
+```
+TO: #general
+
+Message to the general channel.
+```
+
+## Spawning Agents
+
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/spawn-worker << 'EOF'
+KIND: spawn
+NAME: WorkerName
+CLI: claude
+
+Task description here.
+Can be multiple lines.
+EOF
+```
+
+Then output: `->relay-file:spawn-worker`
+
+## Releasing Agents
+
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/release-worker << 'EOF'
+KIND: release
+NAME: WorkerName
+EOF
+```
+
+Then output: `->relay-file:release-worker`
+
+## Quick Examples
+
+**Send a message:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/hello << 'EOF'
+TO: Lead
+
+ACK: Starting work on the task.
+EOF
+```
+Then: `->relay-file:hello`
+
+**Spawn an opponent:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/spawn-opponent << 'EOF'
+KIND: spawn
+NAME: TicTacToeOpponent
+CLI: claude
+
+You are playing tic-tac-toe.
+You are O, I am X.
+Respond with your move when prompted.
+EOF
+```
+Then: `->relay-file:spawn-opponent`
 
 ## Communication Protocol
 
-**ACK immediately** - When you receive a task, acknowledge it before starting work:
-
+**ACK immediately** when you receive a task:
 ```
-->relay:Sender <<<
-ACK: Brief description of task received>>>
+TO: Sender
+
+ACK: Brief description of task received
 ```
 
-**Report completion** - When done, send a completion message:
-
+**Report completion** when done:
 ```
-->relay:Sender <<<
-DONE: Brief summary of what was completed>>>
+TO: Sender
+
+DONE: Brief summary of what was completed
 ```
 
 ## Receiving Messages
@@ -69,66 +145,34 @@ Relay message from Alice [abc123] [#general]: Hello everyone!
 Relay message from Bob [def456] [#random]: Anyone working on auth?
 ```
 
-**When you see a channel indicator `[#channelname]`**: Reply to that channel directly using `->relay:#channelname`.
+**When you see a channel indicator `[#channelname]`**: Reply to that channel directly:
 
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/reply << 'EOF'
+TO: #general
+
+Response to the general channel.
+EOF
 ```
-# Correct - responds to the #general channel
-->relay:#general <<<
-Response to the general channel.>>>
-
-# Correct - responds to the #random channel
-->relay:#random <<<
-Response to the random channel.>>>
-
-# Wrong - sends as DM to sender instead of to the channel
-->relay:Alice <<<
-Response to the channel message.>>>
-
-# Wrong - broadcasts to ALL agents instead of just the channel
-->relay:* <<<
-Response to the channel message.>>>
-```
-
-**Note:** Always match the channel from the incoming message. If you receive `[#general]`, reply to `#general`. If you receive `[#random]`, reply to `#random`.
 
 If truncated, read full message:
 ```bash
 agent-relay read abc123
 ```
 
-## Spawning Agents
-
-Spawn workers to delegate tasks:
-
-```
-# Short tasks - single line with quotes
-->relay:spawn WorkerName claude "short task description"
-
-# Long tasks - use fenced format (recommended)
-->relay:spawn WorkerName claude <<<
-Implement the authentication module.
-Requirements:
-- JWT tokens with refresh
-- Password hashing with bcrypt
-- Rate limiting on login endpoint>>>
-
-# Release when done
-->relay:release WorkerName
-```
-
-**Use fenced format for tasks longer than ~50 characters** to avoid truncation from terminal line wrapping.
-
 ## Threads
 
 Use threads to group related messages together:
 
 ```
-->relay:AgentName [thread:topic-name] <<<
-Your message here.>>>
+TO: AgentName
+THREAD: topic-name
+
+Your message here.
 ```
 
 **When to use threads:**
-- Working on a specific issue (e.g., `[thread:agent-relay-299]`)
+- Working on a specific issue (e.g., `THREAD: agent-relay-299`)
 - Back-and-forth discussions with another agent
 - Code review conversations
 
@@ -138,112 +182,65 @@ Your message here.>>>
 
 ```
 # Correct - status to lead only
-->relay:Lead <<<
-STATUS: Working on auth module>>>
+TO: Lead
 
-# Wrong - don't broadcast status to everyone
-->relay:* <<<
-STATUS: Working on auth module>>>
+STATUS: Working on auth module
 ```
 
 ## Common Patterns
 
-```
-->relay:Lead <<<
-ACK: Starting /api/register implementation>>>
+```bash
+# ACK a task
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/ack << 'EOF'
+TO: Lead
 
-->relay:Lead <<<
-STATUS: Working on auth module>>>
+ACK: Starting /api/register implementation
+EOF
 
-->relay:Lead <<<
-DONE: Auth module complete>>>
+# Status update
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
 
-->relay:Developer <<<
-TASK: Implement /api/register>>>
+STATUS: Working on auth module
+EOF
 
-->relay:Reviewer [thread:code-review-auth] <<<
-REVIEW: Please check src/auth/*.ts>>>
+# Task complete
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
 
-->relay:Architect <<<
-QUESTION: JWT or sessions?>>>
-```
+DONE: Auth module complete
+EOF
 
-## Consensus (Multi-Agent Decisions)
+# Assign task
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/task << 'EOF'
+TO: Developer
 
-Request team consensus on decisions by messaging `_consensus`:
+TASK: Implement /api/register
+EOF
 
-### Creating a Proposal
+# Ask question
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/question << 'EOF'
+TO: Architect
 
-```
-->relay:_consensus <<<
-PROPOSE: API Design Decision
-TYPE: majority
-PARTICIPANTS: Developer, Reviewer, Lead
-DESCRIPTION: Should we use REST or GraphQL for the new API?
-TIMEOUT: 3600000>>>
-```
-
-**Fields:**
-- `PROPOSE:` - Title of the proposal (required)
-- `TYPE:` - Consensus type: `majority`, `supermajority`, `unanimous`, `quorum` (default: majority)
-- `PARTICIPANTS:` - Comma-separated list of agents who can vote (required)
-- `DESCRIPTION:` - Detailed description of what's being proposed
-- `TIMEOUT:` - Timeout in milliseconds (default: 5 minutes)
-- `QUORUM:` - Minimum votes required (for quorum type)
-- `THRESHOLD:` - Approval threshold 0-1 (for supermajority, default: 0.67)
-
-### Voting on a Proposal
-
-When you receive a proposal, vote with:
-
-```
-->relay:_consensus <<<
-VOTE proposal-abc123 approve This aligns with our architecture goals>>>
+QUESTION: JWT or sessions?
+EOF
 ```
 
-**Vote values:** `approve`, `reject`, `abstain`
+## Headers Reference
 
-**Format:** `VOTE <proposal-id> <value> [optional reason]`
-
-### Consensus Types
-
-- **majority** - >50% approve
-- **supermajority** - ≥threshold approve (default 2/3)
-- **unanimous** - 100% must approve
-- **quorum** - Minimum participation + majority
-
-### Example: Code Review Gate
-
-```
-->relay:_consensus <<<
-PROPOSE: Merge PR #42 to main
-TYPE: supermajority
-PARTICIPANTS: Reviewer, SecurityLead, TechLead
-DESCRIPTION: Authentication refactor - adds OAuth2 support
-TIMEOUT: 1800000>>>
-```
+| Header | Required | Description |
+|--------|----------|-------------|
+| TO | Yes (for messages) | Target agent name |
+| KIND | No (default: message) | `message`, `spawn`, or `release` |
+| NAME | Yes (for spawn/release) | Agent name to spawn/release |
+| CLI | Yes (for spawn) | CLI to use (claude, codex, etc.) |
+| THREAD | No | Thread identifier for grouping |
 
 ## Rules
 
-- Pattern must be at line start (whitespace OK)
-- Escape with `\->relay:` to output literally
+- Headers go first, blank line, then body
+- Headers are case-insensitive (TO, To, to all work)
+- Body is everything after the blank line
+- No escaping needed - literal text
+- `->relay-file:ID` must be on its own line
 - Check daemon status: `agent-relay status`
-- **Do NOT include self-identification or preamble in messages** - start with your actual response content, not "I'm [agent type] running as..."
-- **Do NOT include UI prompt text** like "Explain this codebase..." or "100% context left" in the same send.
-
-## Writing Examples (For Documentation)
-
-When showing examples of relay syntax in documentation or explanations, **escape the markers** so they don't get interpreted as actual messages:
-
-```
-# Escape the opening marker
-\->relay:AgentName \<<<
-Example content here.\>>>
-```
-
-**What to escape:**
-- `\->relay:` - Prevents the pattern from being detected as a real message
-- `\<<<` - Prevents the fenced block from being parsed
-- `\>>>` - Prevents the block from being closed
-
-This ensures your examples are displayed literally rather than sent as messages.

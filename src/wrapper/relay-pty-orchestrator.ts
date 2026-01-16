@@ -116,6 +116,8 @@ export interface RelayPtyOrchestratorConfig extends BaseWrapperConfig {
   onExit?: (code: number) => void;
   /** Callback when injection fails after retries */
   onInjectionFailed?: (messageId: string, error: string) => void;
+  /** Enable debug logging (default: false) */
+  debug?: boolean;
 }
 
 /**
@@ -183,6 +185,15 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   }
 
   /**
+   * Debug log - only outputs when debug is enabled
+   */
+  private log(message: string): void {
+    if (this.config.debug) {
+      this.log(` ${message}`);
+    }
+  }
+
+  /**
    * Get the outbox path for this agent (for documentation purposes)
    */
   get outboxPath(): string {
@@ -199,12 +210,12 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   override async start(): Promise<void> {
     if (this.running) return;
 
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Starting...`);
+    this.log(` Starting...`);
 
     // Clean up any stale socket from previous crashed process
     try {
       if (existsSync(this.socketPath)) {
-        console.log(`[relay-pty-orchestrator:${this.config.name}] Removing stale socket: ${this.socketPath}`);
+        this.log(` Removing stale socket: ${this.socketPath}`);
         unlinkSync(this.socketPath);
       }
     } catch (err: any) {
@@ -217,12 +228,12 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       throw new Error('relay-pty binary not found. Build with: cd relay-pty && cargo build --release');
     }
 
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Using binary: ${binaryPath}`);
+    this.log(` Using binary: ${binaryPath}`);
 
     // Connect to relay daemon first
     try {
       await this.client.connect();
-      console.log(`[relay-pty-orchestrator:${this.config.name}] Relay daemon connected`);
+      this.log(` Relay daemon connected`);
     } catch (err: any) {
       console.error(`[relay-pty-orchestrator:${this.config.name}] Relay connect failed: ${err.message}`);
     }
@@ -236,9 +247,9 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     this.running = true;
     this.readyForMessages = true;
 
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Ready for messages`);
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Socket connected: ${this.socketConnected}`);
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Relay client state: ${this.client.state}`);
+    this.log(` Ready for messages`);
+    this.log(` Socket connected: ${this.socketConnected}`);
+    this.log(` Relay client state: ${this.client.state}`);
 
     // Process any queued messages
     this.processMessageQueue();
@@ -251,7 +262,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     if (!this.running) return;
     this.running = false;
 
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Stopping...`);
+    this.log(` Stopping...`);
 
     // Send shutdown command via socket
     if (this.socket && this.socketConnected) {
@@ -285,7 +296,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     // Cleanup relay client
     this.destroyClient();
 
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Stopped`);
+    this.log(` Stopped`);
   }
 
   /**
@@ -366,7 +377,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       ...(this.config.args ?? []),
     ];
 
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Spawning: ${binaryPath} ${args.join(' ')}`);
+    this.log(` Spawning: ${binaryPath} ${args.join(' ')}`);
 
     // For interactive mode, let Rust directly inherit stdin/stdout from the terminal
     // This is more robust than manual forwarding through pipes
@@ -406,7 +417,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     // Handle exit
     proc.on('exit', (code, signal) => {
       const exitCode = code ?? (signal === 'SIGKILL' ? 137 : 1);
-      console.log(`[relay-pty-orchestrator:${this.config.name}] Process exited: code=${exitCode} signal=${signal}`);
+      this.log(` Process exited: code=${exitCode} signal=${signal}`);
       this.running = false;
       this.emit('exit', exitCode);
       this.config.onExit?.(exitCode);
@@ -466,15 +477,20 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         try {
           const parsed = JSON.parse(line);
           if (parsed.type === 'relay_command' && parsed.kind) {
-            console.log(`[relay-pty-orchestrator:${this.config.name}] Rust parsed [${parsed.kind}]: ${parsed.from} -> ${parsed.to}`);
+            this.log(`Rust parsed [${parsed.kind}]: ${parsed.from} -> ${parsed.to}`);
             this.handleRustParsedCommand(parsed);
           }
         } catch {
-          // Not JSON, just log
-          console.error(`[relay-pty:${this.config.name}] ${line}`);
+          // Not JSON, just log (only in debug mode)
+          if (this.config.debug) {
+            console.error(`[relay-pty:${this.config.name}] ${line}`);
+          }
         }
       } else {
-        console.error(`[relay-pty:${this.config.name}] ${line}`);
+        // Non-JSON stderr - only show in debug mode (logs, info messages)
+        if (this.config.debug) {
+          console.error(`[relay-pty:${this.config.name}] ${line}`);
+        }
       }
     }
   }
@@ -499,14 +515,14 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     switch (parsed.kind) {
       case 'spawn':
         if (parsed.spawn_name && parsed.spawn_cli) {
-          console.log(`[relay-pty-orchestrator:${this.config.name}] Spawn detected: ${parsed.spawn_name} (${parsed.spawn_cli})`);
+          this.log(` Spawn detected: ${parsed.spawn_name} (${parsed.spawn_cli})`);
           this.handleSpawnCommand(parsed.spawn_name, parsed.spawn_cli, parsed.spawn_task || '');
         }
         break;
 
       case 'release':
         if (parsed.release_name) {
-          console.log(`[relay-pty-orchestrator:${this.config.name}] Release detected: ${parsed.release_name}`);
+          this.log(` Release detected: ${parsed.release_name}`);
           this.handleReleaseCommand(parsed.release_name);
         }
         break;
@@ -530,30 +546,30 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   private handleSpawnCommand(name: string, cli: string, task: string): void {
     const key = `spawn:${name}:${cli}`;
     if (this.processedSpawnCommands.has(key)) {
-      console.log(`[relay-pty-orchestrator:${this.config.name}] Spawn already processed: ${key}`);
+      this.log(` Spawn already processed: ${key}`);
       return;
     }
     this.processedSpawnCommands.add(key);
 
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Spawn: ${name} (${cli})`);
-    console.log(`[relay-pty-orchestrator:${this.config.name}] dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn}`);
+    this.log(` Spawn: ${name} (${cli})`);
+    this.log(` dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn}`);
 
     // Try dashboard API first, fall back to callback
     if (this.config.dashboardPort) {
-      console.log(`[relay-pty-orchestrator:${this.config.name}] Calling dashboard API at port ${this.config.dashboardPort}`);
+      this.log(` Calling dashboard API at port ${this.config.dashboardPort}`);
       this.spawnViaDashboardApi(name, cli, task)
         .then(() => {
-          console.log(`[relay-pty-orchestrator:${this.config.name}] Dashboard spawn succeeded for ${name}`);
+          this.log(` Dashboard spawn succeeded for ${name}`);
         })
         .catch(err => {
           console.error(`[relay-pty-orchestrator:${this.config.name}] Dashboard spawn failed: ${err.message}`);
           if (this.config.onSpawn) {
-            console.log(`[relay-pty-orchestrator:${this.config.name}] Falling back to onSpawn callback`);
+            this.log(` Falling back to onSpawn callback`);
             this.config.onSpawn(name, cli, task);
           }
         });
     } else if (this.config.onSpawn) {
-      console.log(`[relay-pty-orchestrator:${this.config.name}] Using onSpawn callback directly`);
+      this.log(` Using onSpawn callback directly`);
       this.config.onSpawn(name, cli, task);
     } else {
       console.error(`[relay-pty-orchestrator:${this.config.name}] No spawn mechanism available!`);
@@ -570,7 +586,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     }
     this.processedReleaseCommands.add(key);
 
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Release: ${name}`);
+    this.log(` Release: ${name}`);
 
     // Try dashboard API first, fall back to callback
     if (this.config.dashboardPort) {
@@ -625,7 +641,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await this.attemptSocketConnection(timeout);
-        console.log(`[relay-pty-orchestrator:${this.config.name}] Socket connected`);
+        this.log(` Socket connected`);
         return;
       } catch (err: any) {
         console.warn(`[relay-pty-orchestrator:${this.config.name}] Socket connect attempt ${attempt}/${maxAttempts} failed: ${err.message}`);
@@ -661,7 +677,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
       this.socket.on('close', () => {
         this.socketConnected = false;
-        console.log(`[relay-pty-orchestrator:${this.config.name}] Socket closed`);
+        this.log(` Socket closed`);
       });
 
       // Handle incoming data (responses)
@@ -735,7 +751,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
         case 'status':
           // Status responses are typically requested explicitly
-          console.log(`[relay-pty-orchestrator:${this.config.name}] Status: idle=${response.agent_idle} queue=${response.queue_length}`);
+          this.log(` Status: idle=${response.agent_idle} queue=${response.queue_length}`);
           break;
 
         case 'backpressure':
@@ -747,7 +763,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
           break;
 
         case 'shutdown_ack':
-          console.log(`[relay-pty-orchestrator:${this.config.name}] Shutdown acknowledged`);
+          this.log(` Shutdown acknowledged`);
           break;
       }
     } catch (err: any) {
@@ -769,7 +785,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       clearTimeout(pending.timeout);
       this.pendingInjections.delete(response.id);
       pending.resolve(true);
-      console.log(`[relay-pty-orchestrator:${this.config.name}] Message ${response.id.substring(0, 8)} delivered`);
+      this.log(` Message ${response.id.substring(0, 8)} delivered`);
     } else if (response.status === 'failed') {
       clearTimeout(pending.timeout);
       this.pendingInjections.delete(response.id);
@@ -792,7 +808,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     this.backpressureActive = !response.accept;
 
     if (this.backpressureActive !== wasActive) {
-      console.log(`[relay-pty-orchestrator:${this.config.name}] Backpressure: ${this.backpressureActive ? 'ACTIVE' : 'cleared'} (queue=${response.queue_length})`);
+      this.log(` Backpressure: ${this.backpressureActive ? 'ACTIVE' : 'cleared'} (queue=${response.queue_length})`);
       this.emit('backpressure', { queueLength: response.queue_length, accept: response.accept });
 
       // Resume processing if backpressure cleared
@@ -810,7 +826,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * Inject a message into the agent via socket
    */
   private async injectMessage(msg: QueuedMessage): Promise<boolean> {
-    console.log(`[relay-pty-orchestrator:${this.config.name}] === INJECT START: ${msg.messageId.substring(0, 8)} from ${msg.from} ===`);
+    this.log(` === INJECT START: ${msg.messageId.substring(0, 8)} from ${msg.from} ===`);
 
     if (!this.socket || !this.socketConnected) {
       console.error(`[relay-pty-orchestrator:${this.config.name}] Cannot inject - socket not connected`);
@@ -819,7 +835,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     // Build injection content
     const content = buildInjectionString(msg);
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Injection content (${content.length} bytes): ${content.substring(0, 100)}...`);
+    this.log(` Injection content (${content.length} bytes): ${content.substring(0, 100)}...`);
 
     // Create request
     const request: InjectRequest = {
@@ -830,7 +846,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       priority: msg.importance ?? 0,
     };
 
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Sending inject request to socket...`);
+    this.log(` Sending inject request to socket...`);
 
     // Create promise for result
     return new Promise<boolean>((resolve, reject) => {
@@ -845,7 +861,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       // Send request
       this.sendSocketRequest(request)
         .then(() => {
-          console.log(`[relay-pty-orchestrator:${this.config.name}] Socket request sent successfully`);
+          this.log(` Socket request sent successfully`);
         })
         .catch((err) => {
           console.error(`[relay-pty-orchestrator:${this.config.name}] Socket request failed: ${err.message}`);
@@ -872,7 +888,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     const msg = this.messageQueue.shift()!;
     const bodyPreview = msg.body.substring(0, 50).replace(/\n/g, '\\n');
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Processing message from ${msg.from}: "${bodyPreview}..." (remaining=${this.messageQueue.length})`);
+    this.log(` Processing message from ${msg.from}: "${bodyPreview}..." (remaining=${this.messageQueue.length})`);
 
     try {
       const success = await this.injectMessage(msg);
@@ -910,10 +926,10 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     meta?: SendMeta,
     originalTo?: string
   ): void {
-    console.log(`[relay-pty-orchestrator:${this.config.name}] === MESSAGE RECEIVED: ${messageId.substring(0, 8)} from ${from} ===`);
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Body preview: ${payload.body?.substring(0, 100) ?? '(no body)'}...`);
+    this.log(` === MESSAGE RECEIVED: ${messageId.substring(0, 8)} from ${from} ===`);
+    this.log(` Body preview: ${payload.body?.substring(0, 100) ?? '(no body)'}...`);
     super.handleIncomingMessage(from, payload, messageId, meta, originalTo);
-    console.log(`[relay-pty-orchestrator:${this.config.name}] Queue length after add: ${this.messageQueue.length}`);
+    this.log(` Queue length after add: ${this.messageQueue.length}`);
     this.processMessageQueue();
   }
 
