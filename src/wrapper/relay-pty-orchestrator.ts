@@ -486,6 +486,10 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         try {
           const parsed = JSON.parse(line);
           if (parsed.type === 'relay_command' && parsed.kind) {
+            // Log release and spawn commands for visibility
+            if (parsed.kind === 'release' || parsed.kind === 'spawn') {
+              console.log(`[RUST-PARSED] ${parsed.kind}: ${JSON.stringify(parsed)}`);
+            }
             this.log(`Rust parsed [${parsed.kind}]: ${parsed.from} -> ${parsed.to}`);
             this.handleRustParsedCommand(parsed);
           }
@@ -531,8 +535,11 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
       case 'release':
         if (parsed.release_name) {
-          this.log(` Release detected: ${parsed.release_name}`);
+          // Always log release commands for debugging
+          console.log(`[RELEASE] ${this.config.name} releasing: ${parsed.release_name}`);
           this.handleReleaseCommand(parsed.release_name);
+        } else {
+          console.log(`[RELEASE] Missing release_name in parsed command:`, JSON.stringify(parsed));
         }
         break;
 
@@ -626,14 +633,14 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * Release agent via dashboard API
    */
   private async releaseViaDashboardApi(name: string): Promise<void> {
-    const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/release`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+    const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/spawned/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
     });
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      const body = await response.json().catch(() => ({ error: 'Unknown' })) as { error?: string };
+      throw new Error(`HTTP ${response.status}: ${body.error || 'Unknown error'}`);
     }
+    console.log(`[RELEASE] Successfully released ${name} via dashboard API`);
   }
 
   // =========================================================================
