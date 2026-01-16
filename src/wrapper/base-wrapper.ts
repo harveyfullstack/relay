@@ -377,6 +377,11 @@ export abstract class BaseWrapper extends EventEmitter {
    * Parse spawn and release commands from output
    */
   protected parseSpawnReleaseCommands(content: string): void {
+    // Debug: check for spawn keyword
+    if (content.includes('->relay:spawn')) {
+      console.log(`[base-wrapper:${this.config.name}] Found spawn keyword in content`);
+    }
+
     // Single-line spawn: ->relay:spawn Name cli "task"
     const spawnPattern = new RegExp(
       `${this.relayPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}spawn\\s+(\\w+)\\s+(\\w+)\\s+"([^"]+)"`
@@ -384,6 +389,7 @@ export abstract class BaseWrapper extends EventEmitter {
     const spawnMatch = content.match(spawnPattern);
     if (spawnMatch) {
       const [, name, cli, task] = spawnMatch;
+      console.log(`[base-wrapper:${this.config.name}] Single-line spawn match: ${name} ${cli}`);
       const cmdHash = `spawn:${name}:${cli}:${task}`;
       if (!this.processedSpawnCommands.has(cmdHash)) {
         this.processedSpawnCommands.add(cmdHash);
@@ -393,11 +399,12 @@ export abstract class BaseWrapper extends EventEmitter {
 
     // Fenced spawn: ->relay:spawn Name cli <<<\ntask\n>>>
     const fencedSpawnPattern = new RegExp(
-      `${this.relayPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}spawn\\s+(\\w+)\\s+(\\w+)\\s+<<<\\n?([\\s\\S]*?)>>>`
+      `${this.relayPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}spawn\\s+(\\w+)\\s+(\\w+)\\s*<<<[\\s]*([\\s\\S]*?)>>>`
     );
     const fencedSpawnMatch = content.match(fencedSpawnPattern);
     if (fencedSpawnMatch) {
       const [, name, cli, task] = fencedSpawnMatch;
+      console.log(`[base-wrapper:${this.config.name}] Fenced spawn match: ${name} ${cli}`);
       const cmdHash = `spawn:${name}:${cli}:${task.trim()}`;
       if (!this.processedSpawnCommands.has(cmdHash)) {
         this.processedSpawnCommands.add(cmdHash);

@@ -9,7 +9,8 @@ import path from 'node:path';
 import { sleep } from './utils.js';
 import { getProjectPaths } from '../utils/project-namespace.js';
 import { resolveCommand } from '../utils/command-resolver.js';
-import { PtyWrapper, type PtyWrapperConfig, type SummaryEvent, type SessionEndEvent } from '../wrapper/pty-wrapper.js';
+import { RelayPtyOrchestrator, type RelayPtyOrchestratorConfig } from '../wrapper/relay-pty-orchestrator.js';
+import type { SummaryEvent, SessionEndEvent } from '../wrapper/pty-wrapper.js';
 import { selectShadowCli } from './shadow-cli.js';
 import { AgentPolicyService, type CloudPolicyFetcher } from '../policy/agent-policy.js';
 import { buildClaudeArgs } from '../utils/agent-config.js';
@@ -56,7 +57,7 @@ interface ListenerBindings {
 }
 
 interface ActiveWorker extends WorkerInfo {
-  pty: PtyWrapper;
+  pty: RelayPtyOrchestrator;
   logFile?: string;
   listeners?: ListenerBindings;
   userId?: string;
@@ -179,7 +180,7 @@ export class AgentSpawner {
   }
 
   /**
-   * Set cloud persistence handler for forwarding PtyWrapper events.
+   * Set cloud persistence handler for forwarding RelayPtyOrchestrator events.
    * When set, 'summary' and 'session-end' events from spawned agents
    * are forwarded to the handler for cloud persistence (PostgreSQL/Redis).
    *
@@ -191,10 +192,10 @@ export class AgentSpawner {
   }
 
   /**
-   * Bind cloud persistence event handlers to a PtyWrapper.
+   * Bind cloud persistence event handlers to a RelayPtyOrchestrator.
    * Returns the listener references for cleanup.
    */
-  private bindCloudPersistenceEvents(name: string, pty: PtyWrapper): Partial<ListenerBindings> {
+  private bindCloudPersistenceEvents(name: string, pty: RelayPtyOrchestrator): Partial<ListenerBindings> {
     if (!this.cloudPersistence) return {};
 
     const summaryListener = async (event: SummaryEvent) => {
@@ -220,9 +221,9 @@ export class AgentSpawner {
   }
 
   /**
-   * Unbind all tracked listeners from a PtyWrapper.
+   * Unbind all tracked listeners from a RelayPtyOrchestrator.
    */
-  private unbindListeners(pty: PtyWrapper, listeners?: ListenerBindings): void {
+  private unbindListeners(pty: RelayPtyOrchestrator, listeners?: ListenerBindings): void {
     if (!listeners) return;
 
     if (listeners.output) {
@@ -340,17 +341,15 @@ export class AgentSpawner {
       }
 
       if (debug) console.log(`[spawner:debug] Socket path for ${name}: ${this.socketPath ?? 'undefined'}`);
-      const ptyConfig: PtyWrapperConfig = {
+      const ptyConfig: RelayPtyOrchestratorConfig = {
         name,
         command,
         args,
         socketPath: this.socketPath,
         cwd: agentCwd,
-        logsDir: this.logsDir,
         dashboardPort: this.dashboardPort,
         env: userEnv,
-        // Interactive mode - disables auto-accept for auth setup flows
-        interactive: request.interactive,
+        streamLogs: true,
         // Shadow agent configuration
         shadowOf: request.shadowOf,
         shadowSpeakOn: request.shadowSpeakOn,
@@ -404,8 +403,8 @@ export class AgentSpawner {
         },
       };
 
-      // Create and start the pty wrapper
-      const pty = new PtyWrapper(ptyConfig);
+      // Create and start the relay-pty orchestrator
+      const pty = new RelayPtyOrchestrator(ptyConfig);
 
       // Track listener references for proper cleanup
       const listeners: ListenerBindings = {};

@@ -17,6 +17,8 @@ import { Command } from 'commander';
 import { config as dotenvConfig } from 'dotenv';
 import { Daemon } from '../daemon/server.js';
 import { RelayClient } from '../wrapper/client.js';
+import { RelayPtyOrchestrator } from '../wrapper/relay-pty-orchestrator.js';
+import { AgentSpawner } from '../bridge/spawner.js';
 import { generateAgentName } from '../utils/name-generator.js';
 import { getTmuxPath } from '../utils/tmux-resolver.js';
 import { readWorkersMetadata, getWorkerLogsDir } from '../bridge/spawner.js';
@@ -99,9 +101,6 @@ program
       }
     }
 
-    const { TmuxWrapper } = await import('../wrapper/tmux-wrapper.js');
-    const { AgentSpawner } = await import('../bridge/spawner.js');
-
     // Determine dashboard port for spawn/release API
     // Priority: CLI flag > env var > auto-detect default port
     let dashboardPort: number | undefined;
@@ -136,16 +135,15 @@ program
     // Create spawner as fallback for direct spawn (if dashboard API not available)
     const spawner = new AgentSpawner(paths.projectRoot, undefined, dashboardPort);
 
-    const wrapper = new TmuxWrapper({
+    const wrapper = new RelayPtyOrchestrator({
       name: agentName,
       command: mainCommand,
       args: finalArgs,
       socketPath: paths.socketPath,
-      debug: options.debug ?? false,
+      cwd: paths.projectRoot,
       relayPrefix: options.prefix,
-      useInbox: true,
-      inboxDir: paths.dataDir, // Use the project-specific data directory for the inbox
       skipInstructions: options.skipInstructions,
+      streamLogs: true,
       // Use dashboard API for spawn/release when available (preferred - works from any context)
       dashboardPort,
       // Wire up spawn/release callbacks as fallback (if no dashboardPort)
@@ -521,21 +519,11 @@ const MEGA_SYSTEM_PROMPT = [
 async function startDashboardCoordinator(operator: string): Promise<void> {
   const { spawn } = await import('node:child_process');
   const { getProjectPaths } = await import('../utils/project-namespace.js');
-  const { resolveTmux, TmuxNotFoundError } = await import('../utils/tmux-resolver.js');
-
-  // Check for tmux first
-  const tmuxInfo = resolveTmux();
-  if (!tmuxInfo) {
-    const error = new TmuxNotFoundError();
-    console.error(`Error: ${error.message}`);
-    process.exit(1);
-  }
 
   const paths = getProjectPaths();
 
   console.log(`Starting Dashboard with ${operator}...`);
   console.log(`Project: ${paths.projectRoot}`);
-  console.log(`Tmux: ${tmuxInfo.path} (v${tmuxInfo.version})`);
 
   // Step 1: Check if daemon is already running, start if needed
   console.log('\n[1/3] Checking daemon...');
@@ -1284,8 +1272,6 @@ program
     // Spawn architect agent if --architect flag is set
     let architectWrapper: any = null;
     if (options.architect !== undefined) {
-      const { TmuxWrapper } = await import('../wrapper/tmux-wrapper.js');
-
       // Determine CLI to use (default to claude)
       const architectCli = typeof options.architect === 'string' ? options.architect : 'claude';
 
@@ -1357,14 +1343,13 @@ Start by greeting the project leads and asking for status updates.`;
       }
 
       try {
-        architectWrapper = new TmuxWrapper({
+        architectWrapper = new RelayPtyOrchestrator({
           name: 'Architect',
           command,
           args,
           socketPath: basePaths.socketPath,
-          debug: false,
-          useInbox: true,
-          inboxDir: basePaths.dataDir,
+          cwd: baseProject.path,
+          streamLogs: true,
         });
 
         await architectWrapper.start();
@@ -1374,7 +1359,6 @@ Start by greeting the project leads and asking for status updates.`;
           try {
             await architectWrapper.injectMessage(architectPrompt);
             console.log('Architect agent started and initialized.');
-            console.log('Attach to session: tmux attach -t relay-Architect');
             console.log('');
           } catch (err) {
             console.error('Failed to inject architect prompt:', err);
@@ -2897,17 +2881,15 @@ program
 
     // Use the regular wrapper but with profiling environment
     const paths = getProjectPaths();
-    const { TmuxWrapper } = await import('../wrapper/tmux-wrapper.js');
 
-    const wrapper = new TmuxWrapper({
+    const wrapper = new RelayPtyOrchestrator({
       name: agentName,
       command: cmd,
       args,
       socketPath: paths.socketPath,
-      debug: true,
+      cwd: paths.projectRoot,
       env: profileEnv,
-      useInbox: true,
-      inboxDir: paths.dataDir,
+      streamLogs: true,
     });
 
     // Start memory sampling
