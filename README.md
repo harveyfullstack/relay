@@ -190,7 +190,7 @@ npx prpm install @agent-relay/agent-relay-snippet
 npx prpm install @agent-relay/agent-relay-snippet --location CLAUDE.md
 ```
 
-View the rest of our packages on on [prpm organization page](https://prpm.dev/orgs?name=Agent%20Relay)
+View the rest of our packages on our [prpm organization page](https://prpm.dev/orgs?name=Agent%20Relay)
 
 Or manually add the relay patterns to your agent instructions.
 
