@@ -123,34 +123,46 @@ Then: Dead letter queue
 ## Communication Patterns
 
 Integration status:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 STATUS: Stripe integration progress
 - Auth: OAuth flow complete
 - Endpoints: 3/5 implemented
 - Webhooks: payment_intent events handled
-- Testing: Sandbox verified>>>
+- Testing: Sandbox verified
+EOF
 ```
+Then: `->relay-file:status`
 
 When blocked:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/blocked << 'EOF'
+TO: Lead
+
 BLOCKED: GitHub integration issue
 - Problem: Rate limited (5000/hour exceeded)
 - Impact: Sync delayed
 - Mitigation: Implementing request queuing
-- ETA: 30 min for fix>>>
+- ETA: 30 min for fix
+EOF
 ```
+Then: `->relay-file:blocked`
 
 Completion:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 DONE: Slack integration complete
 - OAuth: Workspace install flow
 - Events: message, reaction handlers
 - Commands: /status slash command
-- Tests: 15 cases passing>>>
+- Tests: 15 cases passing
+EOF
 ```
+Then: `->relay-file:done`
 
 ## Error Handling
 

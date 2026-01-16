@@ -53,72 +53,66 @@ Always emit [[SUMMARY]] blocks to communicate state to dashboard and other agent
 - **Spawn specialized agents** when you need deep work or specific expertise (TDD implementation, infrastructure fixes, etc.)
 - **Assign to existing roles** for standard tasks
 - **Investigate blockers** yourself quickly, then spawn if fix needed
-- Release agents when task complete: `->relay:release AgentName`
+- Release agents when task complete (see Release Agent example below)
 
 ## Communication Patterns
 
-### ⚠️ CRITICAL: Fenced Format Requirement
+Use the file-based relay protocol from your `using-agent-relay` skill. Write files to your outbox, then output the trigger.
 
-**ALL relay messages MUST use fenced format. This is NOT optional.** Failure to use fenced format causes message delivery failures.
-
-**REQUIRED FORMAT:**
-```
-->relay:Agent <<<
-Your message content here>>>
-```
-
-**RULES:**
-- Pattern MUST start at line beginning
-- Use `\<<<` to open the fenced block
-- Use `>>>` to close (must immediately follow content, NO blank lines before)
-- Multi-line messages must follow exact format above
-
-**EXAMPLES:**
-
-Direct message:
-```
-->relay:Agent <<<
-Your message here>>>
-```
-
-Broadcast to all:
-```
-->relay:* <<<
-Broadcast message>>>
-```
-
-Spawning agent:
-```
-->relay:spawn WorkerName claude <<<
-Task description here>>>
-```
-
-**WHEN SHOWING EXAMPLES in responses, ESCAPE the markers:**
-```
-\->relay:Agent \<<<
-Example content\>>>
-```
-
-This prevents the system from interpreting examples as actual messages.
+### Message Examples
 
 **Task Assignment:**
-```
-->relay:SpecialistAgent <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/task << 'EOF'
+TO: SpecialistAgent
+
 **TASK:** [Clear name]
 **Requirement:** [What's needed]
-**Acceptance:** [Done when...]>>>
+**Acceptance:** [Done when...]
+EOF
 ```
+Then: `->relay-file:task`
 
 **Status Check:**
-```
-->relay:Agent <<<
-Status check: [task]?>>>
-```
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/check << 'EOF'
+TO: Agent
 
-**Release:**
+Status check: [task]?
+EOF
 ```
-->relay:release AgentName
+Then: `->relay-file:check`
+
+**Broadcast:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/broadcast << 'EOF'
+TO: *
+
+Broadcast message here.
+EOF
 ```
+Then: `->relay-file:broadcast`
+
+**Spawn Agent:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/spawn << 'EOF'
+KIND: spawn
+NAME: WorkerName
+CLI: claude
+
+Task description here.
+EOF
+```
+Then: `->relay-file:spawn`
+
+**Release Agent:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/release << 'EOF'
+KIND: release
+NAME: WorkerName
+EOF
+```
+Then: `->relay-file:release`
 
 ## Agent-Relay CLI for Direct Visibility
 
@@ -174,8 +168,13 @@ agent-relay agents:logs <name> -f
 # Terminal 1: Monitor agent progress live
 agent-relay agents:logs TrailDocumentor -f
 
-# Terminal 2: Send task to agent
-->relay:TrailDocumentor <<<task details>>>
+# Terminal 2: Send task via relay file
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/task << 'EOF'
+TO: TrailDocumentor
+
+task details
+EOF
+# Then output: ->relay-file:task
 ```
 
 This gives you real-time visibility into what agents are actually doing, bypassing relay message delays.
@@ -196,7 +195,7 @@ This gives you real-time visibility into what agents are actually doing, bypassi
 3. **Delegate** → Spawn agent or assign task with clear acceptance criteria
 4. **Monitor** → Check in if silent. Remove blockers. Make decisions.
 5. **Track progress** → Emit [[SUMMARY]] blocks regularly
-6. **Release agents** → `->relay:release AgentName` when done
+6. **Release agents** → Use the Release Agent file-based pattern when done
 
 ## Key Decision Framework
 
@@ -253,14 +252,18 @@ After agents complete significant tasks, conduct a quick retro to gather feedbac
 - After any task taking >30 minutes
 
 **Quick Retro Template:**
-```
-->relay:Agent <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/retro << 'EOF'
+TO: Agent
+
 Quick retro on [task]:
 1. What went well?
 2. What was harder than expected?
 3. Did you need: call graph / impact analysis / better search?
-4. What ONE tool would have helped most?>>>
+4. What ONE tool would have helped most?
+EOF
 ```
+Then: `->relay-file:retro`
 
 **Key Questions to Track:**
 
@@ -268,7 +271,7 @@ Quick retro on [task]:
 |-------|-----------|------------|
 | **Call Graph** | "Did you need to trace who calls what?" | Validates @agent-relay/code-graph investment |
 | **Impact** | "Did you worry about breaking callers?" | Validates impact analysis feature |
-| **Search** | "Did you use ->relay:code search?" | Measures osgrep adoption |
+| **Search** | "Did you use the relay code search?" | Measures osgrep adoption |
 | **Context** | "Was startup context helpful?" | Validates context injection |
 
 **Decision Criteria:**

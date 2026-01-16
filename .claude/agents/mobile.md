@@ -96,24 +96,32 @@ View ← ViewModel ← Repository ← DataSource
 ## Communication Patterns
 
 Development update:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 STATUS: Mobile feature progress
 - Screen: ProfileEdit 80% complete
 - Blocking: API endpoint not ready
 - Testing: iPhone 12, Pixel 6 verified
-- Next: Form validation, error states>>>
+- Next: Form validation, error states
+EOF
 ```
+Then: `->relay-file:status`
 
 Completion:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 DONE: ProfileEdit screen complete
 - iOS: SwiftUI implementation
 - Android: Compose implementation
 - Tests: UI tests passing
-- Accessibility: VoiceOver/TalkBack verified>>>
+- Accessibility: VoiceOver/TalkBack verified
+EOF
 ```
+Then: `->relay-file:done`
 
 ## Testing Checklist
 

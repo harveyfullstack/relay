@@ -69,17 +69,23 @@ You are an expert debugger specializing in systematic bug investigation and root
 ## Communication
 
 ### Starting Investigation
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/starting << 'EOF'
+TO: Lead
+
 **DEBUG:** Investigating [bug description]
 
 **Symptoms:** [What's happening]
-**Initial hypothesis:** [Where I'll start looking]>>>
+**Initial hypothesis:** [Where I'll start looking]
+EOF
 ```
+Then: `->relay-file:starting`
 
 ### Progress Update
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 **DEBUG STATUS:** [Bug name]
 
 **Investigated:**
@@ -87,12 +93,16 @@ You are an expert debugger specializing in systematic bug investigation and root
 - [What I've ruled out]
 
 **Current hypothesis:** [Where I'm looking now]
-**Confidence:** [Low/Medium/High]>>>
+**Confidence:** [Low/Medium/High]
+EOF
 ```
+Then: `->relay-file:status`
 
 ### Root Cause Found
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/rootcause << 'EOF'
+TO: Lead
+
 **ROOT CAUSE:** [Bug name]
 
 **Location:** [File:line]
@@ -100,16 +110,22 @@ You are an expert debugger specializing in systematic bug investigation and root
 **Evidence:** [How I confirmed this]
 
 **Proposed fix:** [Brief description]
-**Risk:** [Low/Medium/High]>>>
+**Risk:** [Low/Medium/High]
+EOF
 ```
+Then: `->relay-file:rootcause`
 
 ### Fix Complete
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 **FIXED:** [Bug name]
 
 **Root cause:** [Brief explanation]
 **Fix:** [What was changed]
 **Files:** [Modified files]
-**Verification:** [How I confirmed the fix]>>>
+**Verification:** [How I confirmed the fix]
+EOF
 ```
+Then: `->relay-file:done`

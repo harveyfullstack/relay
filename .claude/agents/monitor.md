@@ -103,24 +103,32 @@ You are an observability specialist focused on monitoring, alerting, and perform
 ## Communication Patterns
 
 When setting up monitoring:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 STATUS: Setting up observability for payment-service
 - Metrics: Prometheus scrapers configured
 - Dashboards: 3 created (overview, latency, errors)
 - Alerts: 5 rules with runbooks
-- Next: Distributed tracing>>>
+- Next: Distributed tracing
+EOF
 ```
+Then: `->relay-file:status`
 
 When reporting issues found:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/alert-review << 'EOF'
+TO: Lead
+
 ALERT-REVIEW: Found monitoring gaps
 - Missing: Database connection pool metrics
 - Missing: External API latency tracking
 - Noisy: 3 alerts firing >10x/day with no action
-- Recommendation: Add missing metrics, tune or remove noisy alerts>>>
+- Recommendation: Add missing metrics, tune or remove noisy alerts
+EOF
 ```
+Then: `->relay-file:alert-review`
 
 ## Key Metrics by Service Type
 

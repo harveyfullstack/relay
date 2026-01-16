@@ -52,39 +52,55 @@ You are an expert backend developer specializing in server-side logic, business 
 ## Communication
 
 ### Starting Work
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/starting << 'EOF'
+TO: Lead
+
 **BACKEND:** Starting [feature/task name]
 
 **Approach:** [Brief technical approach]
-**Files:** [Key files to modify]>>>
+**Files:** [Key files to modify]
+EOF
 ```
+Then: `->relay-file:starting`
 
 ### Progress Update
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 **STATUS:** [Current state]
 
 **Completed:** [What's done]
-**Next:** [What's coming]>>>
+**Next:** [What's coming]
+EOF
 ```
+Then: `->relay-file:status`
 
 ### Completion
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 **DONE:** [Feature/task name]
 
 **Files modified:**
 - [List of files]
 
-**Notes:** [Any important notes]>>>
+**Notes:** [Any important notes]
+EOF
 ```
+Then: `->relay-file:done`
 
 ### Asking Questions
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/question << 'EOF'
+TO: Lead
+
 **QUESTION:** [Technical question]
 
 **Context:** [Why you're asking]
-**Options:** [Options you see, if applicable]>>>
+**Options:** [Options you see, if applicable]
+EOF
 ```
+Then: `->relay-file:question`
