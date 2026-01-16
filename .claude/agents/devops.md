@@ -65,25 +65,37 @@ You are a DevOps specialist focused on CI/CD pipelines, infrastructure as code, 
 ## Communication Patterns
 
 ### Task Acknowledgment
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/ack << 'EOF'
+TO: Sender
+
+ACK: Setting up CI/CD pipeline for [project]
+EOF
 ```
-->relay:Sender <<<
-ACK: Setting up CI/CD pipeline for [project]>>>
-```
+Then: `->relay-file:ack`
 
 ### Status Updates
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
+STATUS: Pipeline configuration 70% complete, testing deployment stage
+EOF
 ```
-->relay:Lead <<<
-STATUS: Pipeline configuration 70% complete, testing deployment stage>>>
-```
+Then: `->relay-file:status`
 
 ### Completion
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 DONE: CI/CD pipeline deployed
 - Build: 2-3 min average
 - Tests: Automated gate
-- Deploy: Blue-green to staging>>>
+- Deploy: Blue-green to staging
+EOF
 ```
+Then: `->relay-file:done`
 
 ## Anti-Patterns to Avoid
 

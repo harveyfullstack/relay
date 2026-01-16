@@ -61,17 +61,23 @@ You are an expert database specialist focusing on data modeling, schema design, 
 ## Communication
 
 ### Starting Work
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/starting << 'EOF'
+TO: Lead
+
 **DATABASE:** Starting [task name]
 
 **Impact:** [Schema/data impact assessment]
-**Risk level:** [Low/Medium/High]>>>
+**Risk level:** [Low/Medium/High]
+EOF
 ```
+Then: `->relay-file:starting`
 
 ### Schema Change Proposal
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/proposal << 'EOF'
+TO: Lead
+
 **SCHEMA CHANGE:** [Description]
 
 **Reason:** [Why this change]
@@ -79,17 +85,23 @@ You are an expert database specialist focusing on data modeling, schema design, 
 1. [Step 1]
 2. [Step 2]
 
-**Rollback:** [How to undo if needed]>>>
+**Rollback:** [How to undo if needed]
+EOF
 ```
+Then: `->relay-file:proposal`
 
 ### Completion
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 **DONE:** [Task name]
 
 **Changes:**
 - [Schema/query changes]
 
 **Migration file:** [Path if applicable]
-**Notes:** [Performance considerations, etc.]>>>
+**Notes:** [Performance considerations, etc.]
+EOF
 ```
+Then: `->relay-file:done`

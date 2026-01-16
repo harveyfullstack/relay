@@ -27,18 +27,26 @@ You are an expert frontend designer and developer. You create production-grade c
 ## Communication
 
 ### Starting Work
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/starting << 'EOF'
+TO: Lead
+
 **FRONTEND:** Starting [component/page name]
 
 **Direction:** [Chosen aesthetic]
-**Key feature:** [The memorable thing]>>>
+**Key feature:** [The memorable thing]
+EOF
 ```
+Then: `->relay-file:starting`
 
 ### Completion
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 **COMPLETE:** [Component name]
 
-**Files:** [List of files]>>>
+**Files:** [List of files]
+EOF
 ```
+Then: `->relay-file:done`

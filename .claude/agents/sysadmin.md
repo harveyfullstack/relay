@@ -114,36 +114,48 @@ apt-get install --only-upgrade $(apt-get --just-print upgrade 2>&1 | grep -i sec
 ## Communication Patterns
 
 When reporting system status:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 STATUS: Server audit complete
 - Servers: 12 assessed
 - Security: 2 need patching (CVE-2024-xxxx)
 - Disk: 1 server at 85% capacity
 - Backups: All verified within 24h
-- Action needed: Patch 2 servers, expand disk on web-03>>>
+- Action needed: Patch 2 servers, expand disk on web-03
+EOF
 ```
+Then: `->relay-file:status`
 
 When implementing changes:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/change << 'EOF'
+TO: Lead
+
 CHANGE: Applying security hardening to prod-db-01
 - SSH: Disabling password auth
 - Firewall: Restricting to app servers only
 - Users: Removing unused accounts
 - Rollback: SSH keys verified, console access available
-- ETA: 15 min>>>
+- ETA: 15 min
+EOF
 ```
+Then: `->relay-file:change`
 
 Completion:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 DONE: Security hardening applied
 - SSH hardened: password auth disabled
 - Firewall configured: 3 rules active
 - Users cleaned: 4 unused accounts removed
-- Verification: All services healthy, SSH working>>>
+- Verification: All services healthy, SSH working
+EOF
 ```
+Then: `->relay-file:done`
 
 ## Maintenance Windows
 

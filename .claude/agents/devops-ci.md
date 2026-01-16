@@ -71,23 +71,31 @@ You are a DevOps CI specialist focused on continuous integration, continuous dep
 ## Communication Patterns
 
 When reporting pipeline status:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 CI: Build #42 passed
 - Tests: 156 passed, 0 failed
 - Coverage: 84%
 - Security: 0 critical, 2 low
-- Deploy: Ready for staging>>>
+- Deploy: Ready for staging
+EOF
 ```
+Then: `->relay-file:status`
 
 When blocked:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/blocked << 'EOF'
+TO: Lead
+
 BLOCKED: CI pipeline failing
 - Issue: Docker build timeout
 - Root cause: [investigation]
-- Options: [proposed solutions]>>>
+- Options: [proposed solutions]
+EOF
 ```
+Then: `->relay-file:blocked`
 
 ## Key Metrics to Track
 

@@ -109,24 +109,36 @@ it('works correctly')
 ## Communication Patterns
 
 **Acknowledge tasks:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/ack << 'EOF'
+TO: Sender
+
+ACK: Writing tests for [component/feature]
+EOF
 ```
-->relay:Sender <<<
-ACK: Writing tests for [component/feature]>>>
-```
+Then: `->relay-file:ack`
 
 **Report completion:**
-```
-->relay:Sender <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Sender
+
 DONE: Created X unit tests, Y integration tests
 Coverage: [summary]
-Files: [list]>>>
+Files: [list]
+EOF
 ```
+Then: `->relay-file:done`
 
 **Ask for clarification:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/question << 'EOF'
+TO: Sender
+
+QUESTION: Should I prioritize coverage for [A] or [B]?
+EOF
 ```
-->relay:Sender <<<
-QUESTION: Should I prioritize coverage for [A] or [B]?>>>
-```
+Then: `->relay-file:question`
 
 ## Anti-Patterns to Avoid
 

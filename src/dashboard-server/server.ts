@@ -4435,18 +4435,37 @@ ${projectContext}
 
 ## Cross-Project Messaging
 
-Use this syntax to message agents in specific projects:
+Write a file to your outbox, then output the trigger. Use project:AgentName syntax for cross-project messages:
 
+\`\`\`bash
+# Message specific agent in a project
+cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/msg << 'EOF'
+TO: project-id:AgentName
+
+Your message to this agent.
+EOF
 \`\`\`
-->relay:project-id:AgentName <<<
-Your message to this agent>>>
+Then output: \`->relay-file:msg\`
 
-->relay:project-id:* <<<
-Broadcast to all agents in a project>>>
+\`\`\`bash
+# Broadcast to all agents in a project
+cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/broadcast << 'EOF'
+TO: project-id:*
 
-->relay:*:* <<<
-Broadcast to ALL agents in ALL projects>>>
+Broadcast to all agents in a project.
+EOF
 \`\`\`
+Then output: \`->relay-file:broadcast\`
+
+\`\`\`bash
+# Broadcast to ALL agents in ALL projects
+cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/all << 'EOF'
+TO: *:*
+
+Broadcast to ALL agents in ALL projects.
+EOF
+\`\`\`
+Then output: \`->relay-file:all\`
 
 ## Getting Started
 1. Check in with each project lead to understand current status

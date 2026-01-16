@@ -89,18 +89,24 @@ You are an expert performance engineer specializing in identifying bottlenecks, 
 ## Communication
 
 ### Starting Investigation
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/starting << 'EOF'
+TO: Lead
+
 **PERF:** Investigating [area/endpoint]
 
 **Symptom:** [What's slow/resource-heavy]
 **Target:** [Performance goal]
-**Approach:** [How I'll profile]>>>
+**Approach:** [How I'll profile]
+EOF
 ```
+Then: `->relay-file:starting`
 
 ### Profiling Results
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/analysis << 'EOF'
+TO: Lead
+
 **PERF ANALYSIS:** [Area]
 
 **Baseline:** [Current metrics]
@@ -110,12 +116,16 @@ You are an expert performance engineer specializing in identifying bottlenecks, 
 - [Component 2]: X ms (Y%)
 
 **Recommended fix:** [What to optimize]
-**Expected improvement:** [Target metrics]>>>
+**Expected improvement:** [Target metrics]
+EOF
 ```
+Then: `->relay-file:analysis`
 
 ### Optimization Complete
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 **PERF DONE:** [Area]
 
 **Before:** [Baseline metrics]
@@ -125,16 +135,22 @@ You are an expert performance engineer specializing in identifying bottlenecks, 
 **Changes:**
 - [What was optimized]
 
-**Tradeoffs:** [Any downsides]>>>
+**Tradeoffs:** [Any downsides]
+EOF
 ```
+Then: `->relay-file:done`
 
 ### Performance Concern
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/warning << 'EOF'
+TO: Lead
+
 **PERF WARNING:** [Concern]
 
 **Found:** [What I discovered]
 **Impact:** [How bad is it]
 **Recommendation:** [What should be done]
-**Priority:** [Now/Soon/Later]>>>
+**Priority:** [Now/Soon/Later]
+EOF
 ```
+Then: `->relay-file:warning`
