@@ -20,13 +20,12 @@ import { join, dirname } from 'node:path';
 import { existsSync, unlinkSync } from 'node:fs';
 import { getProjectPaths } from '../utils/project-namespace.js';
 import { fileURLToPath } from 'node:url';
-import { EventEmitter } from 'node:events';
 
 // Get the directory where this module is located
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { BaseWrapper, type BaseWrapperConfig } from './base-wrapper.js';
-import { OutputParser, type ParsedCommand, parseSummaryWithDetails, parseSessionEndFromOutput } from './parser.js';
+import type { parseSummaryWithDetails, parseSessionEndFromOutput } from './parser.js';
 import type { SendPayload, SendMeta } from '../protocol/types.js';
 import {
   type QueuedMessage,
@@ -526,10 +525,6 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         try {
           const parsed = JSON.parse(line);
           if (parsed.type === 'relay_command' && parsed.kind) {
-            // Log release and spawn commands for visibility
-            if (parsed.kind === 'release' || parsed.kind === 'spawn') {
-              console.log(`[RUST-PARSED] ${parsed.kind}: ${JSON.stringify(parsed)}`);
-            }
             this.log(`Rust parsed [${parsed.kind}]: ${parsed.from} -> ${parsed.to}`);
             this.handleRustParsedCommand(parsed);
           }
@@ -575,11 +570,10 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
       case 'release':
         if (parsed.release_name) {
-          // Always log release commands for debugging
-          console.log(`[RELEASE] ${this.config.name} releasing: ${parsed.release_name}`);
+          this.log(`Release: ${parsed.release_name}`);
           this.handleReleaseCommand(parsed.release_name);
         } else {
-          console.log(`[RELEASE] Missing release_name in parsed command:`, JSON.stringify(parsed));
+          this.logError(`Missing release_name in parsed command: ${JSON.stringify(parsed)}`);
         }
         break;
 
@@ -680,7 +674,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       const body = await response.json().catch(() => ({ error: 'Unknown' })) as { error?: string };
       throw new Error(`HTTP ${response.status}: ${body.error || 'Unknown error'}`);
     }
-    console.log(`[RELEASE] Successfully released ${name} via dashboard API`);
+    this.log(`Released ${name} via dashboard API`);
   }
 
   // =========================================================================
