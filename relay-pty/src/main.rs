@@ -29,7 +29,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, Level};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 /// PTY wrapper for reliable agent message injection
@@ -139,7 +139,9 @@ async fn main() -> Result<()> {
     let log_file: Option<Arc<Mutex<File>>> = if let Some(ref log_path) = args.log_file {
         // Create parent directory if needed
         if let Some(parent) = Path::new(log_path).parent() {
-            std::fs::create_dir_all(parent).ok();
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                warn!("Failed to create log directory {:?}: {}", parent, e);
+            }
         }
         let file = OpenOptions::new()
             .create(true)
@@ -187,7 +189,9 @@ async fn main() -> Result<()> {
         let outbox_path = std::path::PathBuf::from(outbox);
         // Create outbox directory if needed
         if !outbox_path.exists() {
-            std::fs::create_dir_all(&outbox_path).ok();
+            if let Err(e) = std::fs::create_dir_all(&outbox_path) {
+                warn!("Failed to create outbox directory {:?}: {}", outbox_path, e);
+            }
         }
         info!("File-based relay enabled, outbox: {}", outbox);
         OutputParser::with_outbox(

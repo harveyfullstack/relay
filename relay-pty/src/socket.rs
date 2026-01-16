@@ -67,7 +67,8 @@ impl SocketServer {
 
         // Create parent directory if needed
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            std::fs::create_dir_all(parent)
+                .context(format!("Failed to create socket directory {:?}", parent))?;
         }
 
         // Bind the socket
@@ -79,7 +80,9 @@ impl SocketServer {
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&self.socket_path, perms).ok();
+            if let Err(e) = std::fs::set_permissions(&self.socket_path, perms) {
+                warn!("Failed to set socket permissions: {}", e);
+            }
         }
 
         info!("Socket server listening at {}", self.socket_path);

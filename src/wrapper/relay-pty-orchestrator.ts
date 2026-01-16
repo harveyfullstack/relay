@@ -197,12 +197,10 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   }
 
   /**
-   * Error log - only outputs when debug is enabled
+   * Error log - always outputs (errors are important)
    */
   private logError(message: string): void {
-    if (this.config.debug) {
-      this.logError(` ${message}`);
-    }
+    console.error(`[relay-pty-orchestrator:${this.config.name}] ERROR: ${message}`);
   }
 
   /**
@@ -307,6 +305,16 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     // Cleanup relay client
     this.destroyClient();
+
+    // Clean up socket file
+    try {
+      if (existsSync(this.socketPath)) {
+        unlinkSync(this.socketPath);
+        this.log(` Cleaned up socket: ${this.socketPath}`);
+      }
+    } catch (err: any) {
+      this.logError(` Failed to clean up socket: ${err.message}`);
+    }
 
     this.log(` Stopped`);
   }
