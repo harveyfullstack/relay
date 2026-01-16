@@ -70,9 +70,15 @@ impl Injector {
         let mut recent = self.recent_output.lock().await;
         recent.push_str(output);
 
-        // Limit buffer size
+        // Limit buffer size (must find valid UTF-8 char boundary)
         if recent.len() > 10000 {
-            let start = recent.len() - 10000;
+            let target_start = recent.len() - 10000;
+            // Find the next valid char boundary at or after target_start
+            let start = recent
+                .char_indices()
+                .map(|(i, _)| i)
+                .find(|&i| i >= target_start)
+                .unwrap_or(recent.len());
             *recent = recent[start..].to_string();
         }
     }
@@ -155,20 +161,22 @@ impl Injector {
 
     /// Inject a single message
     async fn inject_message(&self, msg: &QueuedMessage) -> Result<bool> {
+        info!("=== INJECT START: {} from {} ===", msg.id, msg.from);
+
         // Wait for injection window
         let window_timeout = Duration::from_secs(10);
         let start = Instant::now();
 
         while start.elapsed() < window_timeout {
             if self.check_idle() {
+                info!("Agent is idle, proceeding with injection");
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
         if !self.check_idle() {
-            warn!("Injection window timeout for message {}", msg.id);
-            // Proceed anyway - agent might be in a state where it accepts input
+            warn!("Injection window timeout for message {}, proceeding anyway", msg.id);
         }
 
         // Clear recent output for verification
@@ -177,20 +185,34 @@ impl Injector {
             recent.clear();
         }
 
-        // Format and inject the message
+        // Format the message (without Enter key)
         let formatted = msg.format_for_injection();
-        let to_inject = format!("{}\n", formatted);
 
-        debug!("Injecting: {}", formatted);
+        info!("Step 1: Writing message content ({} bytes): {}", formatted.len(), &formatted[..formatted.len().min(100)]);
 
-        // Write to PTY via channel
+        // Step 1: Write message content (no Enter)
         self.pty_tx
-            .send(to_inject.as_bytes().to_vec())
+            .send(formatted.as_bytes().to_vec())
+            .await
+            .map_err(|_| anyhow::anyhow!("PTY channel closed"))?;
+
+        info!("Step 2: Waiting 200ms...");
+
+        // Step 2: Wait for CLI to process the input
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        info!("Step 3: Sending Enter key (\\r)");
+
+        // Step 3: Send Enter key (\r = carriage return)
+        self.pty_tx
+            .send(vec![0x0d]) // \r
             .await
             .map_err(|_| anyhow::anyhow!("PTY channel closed"))?;
 
         // Mark as not idle (we just sent input)
         self.is_idle.store(false, Ordering::SeqCst);
+
+        info!("=== INJECT COMPLETE: {} ===", msg.id);
 
         // Assume delivery after successful PTY write; many CLIs don't echo input.
         Ok(true)

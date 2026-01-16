@@ -16,9 +16,15 @@
 
 import { spawn, ChildProcess } from 'node:child_process';
 import { createConnection, Socket } from 'node:net';
-import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { existsSync, unlinkSync } from 'node:fs';
+import { getProjectPaths } from '../utils/project-namespace.js';
+import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
+
+// Get the directory where this module is located
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 import { BaseWrapper, type BaseWrapperConfig } from './base-wrapper.js';
 import { OutputParser, type ParsedCommand, parseSummaryWithDetails, parseSessionEndFromOutput } from './parser.js';
 import type { SendPayload, SendMeta } from '../protocol/types.js';
@@ -137,6 +143,8 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   // Process management
   private relayPtyProcess?: ChildProcess;
   private socketPath: string;
+  private _logPath: string;
+  private _outboxPath: string;
   private socket?: Socket;
   private socketConnected = false;
 
@@ -144,6 +152,9 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   private outputBuffer = '';
   private rawBuffer = '';
   private lastParsedLength = 0;
+
+  // Interactive mode (show output to terminal)
+  private isInteractive = false;
 
   // Injection state
   private pendingInjections: Map<string, {
@@ -160,6 +171,22 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     super(config);
     this.config = config;
     this.socketPath = `/tmp/relay-pty-${config.name}.sock`;
+    // Generate log path using same project paths as daemon
+    // Use cwd from config if specified, otherwise detect from current directory
+    const paths = getProjectPaths(config.cwd);
+    this._logPath = join(paths.teamDir, 'worker-logs', `${config.name}.log`);
+    // Outbox for file-based relay messages (agent writes here)
+    // Use fixed /tmp path so agents can find it without configuration
+    this._outboxPath = `/tmp/relay-outbox/${config.name}`;
+    // Check if we're running interactively (stdin is a TTY)
+    this.isInteractive = process.stdin.isTTY === true;
+  }
+
+  /**
+   * Get the outbox path for this agent (for documentation purposes)
+   */
+  get outboxPath(): string {
+    return this._outboxPath;
   }
 
   // =========================================================================
@@ -173,6 +200,16 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     if (this.running) return;
 
     console.log(`[relay-pty-orchestrator:${this.config.name}] Starting...`);
+
+    // Clean up any stale socket from previous crashed process
+    try {
+      if (existsSync(this.socketPath)) {
+        console.log(`[relay-pty-orchestrator:${this.config.name}] Removing stale socket: ${this.socketPath}`);
+        unlinkSync(this.socketPath);
+      }
+    } catch (err: any) {
+      console.warn(`[relay-pty-orchestrator:${this.config.name}] Failed to clean up socket: ${err.message}`);
+    }
 
     // Find relay-pty binary
     const binaryPath = this.findRelayPtyBinary();
@@ -200,6 +237,8 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     this.readyForMessages = true;
 
     console.log(`[relay-pty-orchestrator:${this.config.name}] Ready for messages`);
+    console.log(`[relay-pty-orchestrator:${this.config.name}] Socket connected: ${this.socketConnected}`);
+    console.log(`[relay-pty-orchestrator:${this.config.name}] Relay client state: ${this.client.state}`);
 
     // Process any queued messages
     this.processMessageQueue();
@@ -278,15 +317,22 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       return this.config.relayPtyPath;
     }
 
+    // Get the package root (two levels up from dist/wrapper/)
+    const packageRoot = join(__dirname, '..', '..');
+
     // Check common locations
     const candidates = [
-      // Local build
+      // Relative to package installation (primary - for npm linked/installed)
+      join(packageRoot, 'relay-pty', 'target', 'release', 'relay-pty'),
+      join(packageRoot, 'relay-pty', 'target', 'debug', 'relay-pty'),
+      // Local build in cwd (for development)
       join(process.cwd(), 'relay-pty', 'target', 'release', 'relay-pty'),
       join(process.cwd(), 'relay-pty', 'target', 'debug', 'relay-pty'),
-      // Installed
+      // Installed globally
       '/usr/local/bin/relay-pty',
       // In node_modules (future: npm package)
       join(process.cwd(), 'node_modules', '.bin', 'relay-pty'),
+      join(packageRoot, 'node_modules', '.bin', 'relay-pty'),
     ];
 
     for (const candidate of candidates) {
@@ -302,17 +348,34 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * Spawn the relay-pty process
    */
   private async spawnRelayPty(binaryPath: string): Promise<void> {
+    // Get terminal dimensions for proper rendering
+    const rows = process.stdout.rows || 24;
+    const cols = process.stdout.columns || 80;
+
     const args = [
       '--name', this.config.name,
       '--socket', this.socketPath,
       '--idle-timeout', String(this.config.idleBeforeInjectMs ?? 500),
+      '--json-output', // Enable Rust parsing output
+      '--rows', String(rows),
+      '--cols', String(cols),
+      '--log-level', 'warn', // Only show warnings and errors
+      '--log-file', this._logPath, // Enable output logging
+      '--outbox', this._outboxPath, // Enable file-based relay messages
       '--', this.config.command,
       ...(this.config.args ?? []),
     ];
 
     console.log(`[relay-pty-orchestrator:${this.config.name}] Spawning: ${binaryPath} ${args.join(' ')}`);
 
-    this.relayPtyProcess = spawn(binaryPath, args, {
+    // For interactive mode, let Rust directly inherit stdin/stdout from the terminal
+    // This is more robust than manual forwarding through pipes
+    // We still pipe stderr to capture JSON parsed commands
+    const stdio: ('inherit' | 'pipe')[] = this.isInteractive
+      ? ['inherit', 'inherit', 'pipe']  // Rust handles terminal directly
+      : ['pipe', 'pipe', 'pipe'];       // Headless mode - we handle I/O
+
+    const proc = spawn(binaryPath, args, {
       cwd: this.config.cwd ?? process.cwd(),
       env: {
         ...process.env,
@@ -320,23 +383,28 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         AGENT_RELAY_NAME: this.config.name,
         TERM: 'xterm-256color',
       },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio,
     });
+    this.relayPtyProcess = proc;
 
-    // Handle stdout (agent output)
-    this.relayPtyProcess.stdout?.on('data', (data: Buffer) => {
-      const text = data.toString();
-      this.handleOutput(text);
-    });
+    // Handle stdout (agent output) - only in headless mode
+    if (!this.isInteractive && proc.stdout) {
+      proc.stdout.on('data', (data: Buffer) => {
+        const text = data.toString();
+        this.handleOutput(text);
+      });
+    }
 
-    // Handle stderr (relay-pty logs and JSON output)
-    this.relayPtyProcess.stderr?.on('data', (data: Buffer) => {
-      const text = data.toString();
-      this.handleStderr(text);
-    });
+    // Handle stderr (relay-pty logs and JSON output) - always needed
+    if (proc.stderr) {
+      proc.stderr.on('data', (data: Buffer) => {
+        const text = data.toString();
+        this.handleStderr(text);
+      });
+    }
 
     // Handle exit
-    this.relayPtyProcess.on('exit', (code, signal) => {
+    proc.on('exit', (code, signal) => {
       const exitCode = code ?? (signal === 'SIGKILL' ? 137 : 1);
       console.log(`[relay-pty-orchestrator:${this.config.name}] Process exited: code=${exitCode} signal=${signal}`);
       this.running = false;
@@ -345,7 +413,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     });
 
     // Handle error
-    this.relayPtyProcess.on('error', (err) => {
+    proc.on('error', (err) => {
       console.error(`[relay-pty-orchestrator:${this.config.name}] Process error: ${err.message}`);
       this.emit('error', err);
     });
@@ -353,13 +421,14 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     // Wait for process to start
     await sleep(500);
 
-    if (this.relayPtyProcess.exitCode !== null) {
-      throw new Error(`relay-pty exited immediately with code ${this.relayPtyProcess.exitCode}`);
+    if (proc.exitCode !== null) {
+      throw new Error(`relay-pty exited immediately with code ${proc.exitCode}`);
     }
   }
 
   /**
-   * Handle output from relay-pty stdout
+   * Handle output from relay-pty stdout (headless mode only)
+   * In interactive mode, stdout goes directly to terminal via inherited stdio
    */
   private handleOutput(data: string): void {
     this.rawBuffer += data;
@@ -389,16 +458,16 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * Handle stderr from relay-pty (logs and JSON parsed commands)
    */
   private handleStderr(data: string): void {
-    // relay-pty can output JSON parsed commands to stderr with --json-output
-    // For now, just log to console for debugging
+    // relay-pty outputs JSON parsed commands to stderr with --json-output
     const lines = data.split('\n').filter(l => l.trim());
     for (const line of lines) {
       if (line.startsWith('{')) {
-        // JSON output - could be parsed relay command
+        // JSON output - parsed relay command from Rust
         try {
           const parsed = JSON.parse(line);
-          if (parsed.type === 'relay_command') {
-            console.log(`[relay-pty-orchestrator:${this.config.name}] Parsed command: ${parsed.from} -> ${parsed.to}`);
+          if (parsed.type === 'relay_command' && parsed.kind) {
+            console.log(`[relay-pty-orchestrator:${this.config.name}] Rust parsed [${parsed.kind}]: ${parsed.from} -> ${parsed.to}`);
+            this.handleRustParsedCommand(parsed);
           }
         } catch {
           // Not JSON, just log
@@ -407,6 +476,138 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       } else {
         console.error(`[relay-pty:${this.config.name}] ${line}`);
       }
+    }
+  }
+
+  /**
+   * Handle a parsed command from Rust relay-pty
+   * Rust outputs structured JSON with 'kind' field: "message", "spawn", "release"
+   */
+  private handleRustParsedCommand(parsed: {
+    type: string;
+    kind: string;
+    from: string;
+    to: string;
+    body: string;
+    raw: string;
+    thread?: string;
+    spawn_name?: string;
+    spawn_cli?: string;
+    spawn_task?: string;
+    release_name?: string;
+  }): void {
+    switch (parsed.kind) {
+      case 'spawn':
+        if (parsed.spawn_name && parsed.spawn_cli) {
+          console.log(`[relay-pty-orchestrator:${this.config.name}] Spawn detected: ${parsed.spawn_name} (${parsed.spawn_cli})`);
+          this.handleSpawnCommand(parsed.spawn_name, parsed.spawn_cli, parsed.spawn_task || '');
+        }
+        break;
+
+      case 'release':
+        if (parsed.release_name) {
+          console.log(`[relay-pty-orchestrator:${this.config.name}] Release detected: ${parsed.release_name}`);
+          this.handleReleaseCommand(parsed.release_name);
+        }
+        break;
+
+      case 'message':
+      default:
+        this.sendRelayCommand({
+          to: parsed.to,
+          kind: 'message',
+          body: parsed.body,
+          thread: parsed.thread,
+          raw: parsed.raw,
+        });
+        break;
+    }
+  }
+
+  /**
+   * Handle spawn command
+   */
+  private handleSpawnCommand(name: string, cli: string, task: string): void {
+    const key = `spawn:${name}:${cli}`;
+    if (this.processedSpawnCommands.has(key)) {
+      console.log(`[relay-pty-orchestrator:${this.config.name}] Spawn already processed: ${key}`);
+      return;
+    }
+    this.processedSpawnCommands.add(key);
+
+    console.log(`[relay-pty-orchestrator:${this.config.name}] Spawn: ${name} (${cli})`);
+    console.log(`[relay-pty-orchestrator:${this.config.name}] dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn}`);
+
+    // Try dashboard API first, fall back to callback
+    if (this.config.dashboardPort) {
+      console.log(`[relay-pty-orchestrator:${this.config.name}] Calling dashboard API at port ${this.config.dashboardPort}`);
+      this.spawnViaDashboardApi(name, cli, task)
+        .then(() => {
+          console.log(`[relay-pty-orchestrator:${this.config.name}] Dashboard spawn succeeded for ${name}`);
+        })
+        .catch(err => {
+          console.error(`[relay-pty-orchestrator:${this.config.name}] Dashboard spawn failed: ${err.message}`);
+          if (this.config.onSpawn) {
+            console.log(`[relay-pty-orchestrator:${this.config.name}] Falling back to onSpawn callback`);
+            this.config.onSpawn(name, cli, task);
+          }
+        });
+    } else if (this.config.onSpawn) {
+      console.log(`[relay-pty-orchestrator:${this.config.name}] Using onSpawn callback directly`);
+      this.config.onSpawn(name, cli, task);
+    } else {
+      console.error(`[relay-pty-orchestrator:${this.config.name}] No spawn mechanism available!`);
+    }
+  }
+
+  /**
+   * Handle release command
+   */
+  private handleReleaseCommand(name: string): void {
+    const key = `release:${name}`;
+    if (this.processedReleaseCommands.has(key)) {
+      return;
+    }
+    this.processedReleaseCommands.add(key);
+
+    console.log(`[relay-pty-orchestrator:${this.config.name}] Release: ${name}`);
+
+    // Try dashboard API first, fall back to callback
+    if (this.config.dashboardPort) {
+      this.releaseViaDashboardApi(name).catch(err => {
+        console.error(`[relay-pty-orchestrator:${this.config.name}] Dashboard release failed: ${err.message}`);
+        this.config.onRelease?.(name);
+      });
+    } else if (this.config.onRelease) {
+      this.config.onRelease(name);
+    }
+  }
+
+  /**
+   * Spawn agent via dashboard API
+   */
+  private async spawnViaDashboardApi(name: string, cli: string, task: string): Promise<void> {
+    const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/spawn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, cli, task }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+  }
+
+  /**
+   * Release agent via dashboard API
+   */
+  private async releaseViaDashboardApi(name: string): Promise<void> {
+    const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/release`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
   }
 
@@ -609,6 +810,8 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * Inject a message into the agent via socket
    */
   private async injectMessage(msg: QueuedMessage): Promise<boolean> {
+    console.log(`[relay-pty-orchestrator:${this.config.name}] === INJECT START: ${msg.messageId.substring(0, 8)} from ${msg.from} ===`);
+
     if (!this.socket || !this.socketConnected) {
       console.error(`[relay-pty-orchestrator:${this.config.name}] Cannot inject - socket not connected`);
       return false;
@@ -616,6 +819,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     // Build injection content
     const content = buildInjectionString(msg);
+    console.log(`[relay-pty-orchestrator:${this.config.name}] Injection content (${content.length} bytes): ${content.substring(0, 100)}...`);
 
     // Create request
     const request: InjectRequest = {
@@ -626,9 +830,12 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       priority: msg.importance ?? 0,
     };
 
+    console.log(`[relay-pty-orchestrator:${this.config.name}] Sending inject request to socket...`);
+
     // Create promise for result
     return new Promise<boolean>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        console.error(`[relay-pty-orchestrator:${this.config.name}] Inject timeout for ${msg.messageId.substring(0, 8)}`);
         this.pendingInjections.delete(msg.messageId);
         resolve(false); // Timeout = failure
       }, 30000); // 30 second timeout for injection
@@ -636,11 +843,16 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       this.pendingInjections.set(msg.messageId, { resolve, reject, timeout });
 
       // Send request
-      this.sendSocketRequest(request).catch((err) => {
-        clearTimeout(timeout);
-        this.pendingInjections.delete(msg.messageId);
-        resolve(false);
-      });
+      this.sendSocketRequest(request)
+        .then(() => {
+          console.log(`[relay-pty-orchestrator:${this.config.name}] Socket request sent successfully`);
+        })
+        .catch((err) => {
+          console.error(`[relay-pty-orchestrator:${this.config.name}] Socket request failed: ${err.message}`);
+          clearTimeout(timeout);
+          this.pendingInjections.delete(msg.messageId);
+          resolve(false);
+        });
     });
   }
 
@@ -698,7 +910,10 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     meta?: SendMeta,
     originalTo?: string
   ): void {
+    console.log(`[relay-pty-orchestrator:${this.config.name}] === MESSAGE RECEIVED: ${messageId.substring(0, 8)} from ${from} ===`);
+    console.log(`[relay-pty-orchestrator:${this.config.name}] Body preview: ${payload.body?.substring(0, 100) ?? '(no body)'}...`);
     super.handleIncomingMessage(from, payload, messageId, meta, originalTo);
+    console.log(`[relay-pty-orchestrator:${this.config.name}] Queue length after add: ${this.messageQueue.length}`);
     this.processMessageQueue();
   }
 
@@ -891,5 +1106,55 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    */
   get pid(): number | undefined {
     return this.relayPtyProcess?.pid;
+  }
+
+  /**
+   * Get the log file path (not used by relay-pty, returns undefined)
+   */
+  get logPath(): string | undefined {
+    return this._logPath;
+  }
+
+  /**
+   * Kill the process forcefully
+   */
+  async kill(): Promise<void> {
+    if (this.relayPtyProcess && !this.relayPtyProcess.killed) {
+      this.relayPtyProcess.kill('SIGKILL');
+    }
+    this.running = false;
+    this.disconnectSocket();
+    this.destroyClient();
+  }
+
+  /**
+   * Get output lines (for compatibility with PtyWrapper)
+   * @param limit Maximum number of lines to return
+   */
+  getOutput(limit?: number): string[] {
+    const lines = this.rawBuffer.split('\n');
+    if (limit && limit > 0) {
+      return lines.slice(-limit);
+    }
+    return lines;
+  }
+
+  /**
+   * Write data directly to the process stdin
+   * @param data Data to write
+   */
+  async write(data: string | Buffer): Promise<void> {
+    if (!this.relayPtyProcess || !this.relayPtyProcess.stdin) {
+      throw new Error('Process not running');
+    }
+    const buffer = typeof data === 'string' ? Buffer.from(data) : data;
+    this.relayPtyProcess.stdin.write(buffer);
+  }
+
+  /**
+   * Get the agent ID (from continuity if available)
+   */
+  getAgentId(): string | undefined {
+    return this.agentId;
   }
 }

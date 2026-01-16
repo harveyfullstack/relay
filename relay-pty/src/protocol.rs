@@ -87,12 +87,14 @@ pub enum InjectStatus {
 /// Parsed relay command from agent output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedRelayCommand {
-    /// Type identifier
+    /// Type identifier (always "relay_command")
     #[serde(rename = "type")]
     pub cmd_type: String,
+    /// Command kind: "message", "spawn", "release"
+    pub kind: String,
     /// Sender (the agent name)
     pub from: String,
-    /// Target (agent name, channel, or broadcast)
+    /// Target (agent name, channel, or broadcast) - for messages
     pub to: String,
     /// Message body
     pub body: String,
@@ -101,17 +103,66 @@ pub struct ParsedRelayCommand {
     /// Optional thread identifier
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread: Option<String>,
+    /// For spawn: agent name to spawn
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spawn_name: Option<String>,
+    /// For spawn: CLI to use
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spawn_cli: Option<String>,
+    /// For spawn: task description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spawn_task: Option<String>,
+    /// For release: agent name to release
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_name: Option<String>,
 }
 
 impl ParsedRelayCommand {
-    pub fn new(from: String, to: String, body: String, raw: String) -> Self {
+    pub fn new_message(from: String, to: String, body: String, raw: String) -> Self {
         Self {
             cmd_type: "relay_command".to_string(),
+            kind: "message".to_string(),
             from,
             to,
             body,
             raw,
             thread: None,
+            spawn_name: None,
+            spawn_cli: None,
+            spawn_task: None,
+            release_name: None,
+        }
+    }
+
+    pub fn new_spawn(from: String, name: String, cli: String, task: String, raw: String) -> Self {
+        Self {
+            cmd_type: "relay_command".to_string(),
+            kind: "spawn".to_string(),
+            from,
+            to: "spawn".to_string(),
+            body: task.clone(),
+            raw,
+            thread: None,
+            spawn_name: Some(name),
+            spawn_cli: Some(cli),
+            spawn_task: Some(task),
+            release_name: None,
+        }
+    }
+
+    pub fn new_release(from: String, name: String, raw: String) -> Self {
+        Self {
+            cmd_type: "relay_command".to_string(),
+            kind: "release".to_string(),
+            from,
+            to: "release".to_string(),
+            body: name.clone(),
+            raw,
+            thread: None,
+            spawn_name: None,
+            spawn_cli: None,
+            spawn_task: None,
+            release_name: Some(name),
         }
     }
 

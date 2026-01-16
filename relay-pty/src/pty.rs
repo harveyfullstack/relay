@@ -40,18 +40,27 @@ unsafe impl Send for Pty {}
 
 impl Pty {
     /// Create a new PTY and spawn the given command
-    pub fn spawn(command: &[String]) -> Result<Self> {
+    /// Optional rows/cols override terminal detection (for headless mode)
+    pub fn spawn(command: &[String], rows: Option<u16>, cols: Option<u16>) -> Result<Self> {
         if command.is_empty() {
             anyhow::bail!("Command cannot be empty");
         }
 
-        // Get current terminal size
-        let winsize = get_terminal_size().unwrap_or(Winsize {
-            ws_row: 40,
-            ws_col: 120,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        });
+        // Get terminal size: use provided values, or detect, or use defaults
+        let winsize = match (rows, cols) {
+            (Some(r), Some(c)) => Winsize {
+                ws_row: r,
+                ws_col: c,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            },
+            _ => get_terminal_size().unwrap_or(Winsize {
+                ws_row: 24,
+                ws_col: 80,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            }),
+        };
 
         // Open PTY pair
         let OpenptyResult { master, slave } =
@@ -88,7 +97,7 @@ impl Pty {
 
                 // Set controlling terminal
                 unsafe {
-                    libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY, 0);
+                    libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY as libc::c_ulong, 0);
                 }
 
                 // Redirect stdin/stdout/stderr to slave
@@ -135,9 +144,22 @@ impl Pty {
         Arc::clone(&self.running)
     }
 
-    /// Set raw mode on stdin for transparent terminal passthrough
-    pub fn set_raw_mode() -> Result<()> {
+    /// Check if stdin is a TTY
+    pub fn is_tty() -> bool {
+        unsafe { libc::isatty(libc::STDIN_FILENO) != 0 }
+    }
+
+    /// Set raw mode on stdin for transparent terminal passthrough.
+    /// Returns Ok(false) if stdin is not a TTY (headless mode).
+    /// Returns Ok(true) if raw mode was successfully set.
+    pub fn set_raw_mode() -> Result<bool> {
         let stdin_fd = libc::STDIN_FILENO;
+
+        // Check if stdin is a TTY - if not, skip raw mode (headless mode)
+        if !Self::is_tty() {
+            debug!("stdin is not a TTY, skipping raw mode (headless mode)");
+            return Ok(false);
+        }
 
         unsafe {
             // Save original settings
@@ -159,7 +181,7 @@ impl Pty {
         }
 
         debug!("Terminal set to raw mode");
-        Ok(())
+        Ok(true)
     }
 
     /// Restore original terminal settings

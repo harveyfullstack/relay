@@ -21,12 +21,14 @@ use protocol::Config;
 use pty::{AsyncPty, Pty};
 use queue::MessageQueue;
 use socket::{SocketServer, StatusInfo, StatusQuery};
-use std::io::{self, Read};
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Write as IoWrite};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, Level};
 use tracing_subscriber::EnvFilter;
 
@@ -72,6 +74,22 @@ struct Args {
     #[arg(long, default_value = "info")]
     log_level: String,
 
+    /// Terminal rows (for headless mode)
+    #[arg(long)]
+    rows: Option<u16>,
+
+    /// Terminal columns (for headless mode)
+    #[arg(long)]
+    cols: Option<u16>,
+
+    /// Log file path for agent output (tees stdout to file)
+    #[arg(long)]
+    log_file: Option<String>,
+
+    /// Outbox directory for file-based relay messages
+    #[arg(long)]
+    outbox: Option<String>,
+
     /// Command to run (after --)
     #[arg(last = true, required = true)]
     command: Vec<String>,
@@ -113,12 +131,37 @@ async fn main() -> Result<()> {
     };
 
     info!("Socket: {}", socket_path);
+    if let (Some(r), Some(c)) = (args.rows, args.cols) {
+        info!("Terminal size: {}x{}", c, r);
+    }
+
+    // Open log file if specified
+    let log_file: Option<Arc<Mutex<File>>> = if let Some(ref log_path) = args.log_file {
+        // Create parent directory if needed
+        if let Some(parent) = Path::new(log_path).parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)
+            .context(format!("Failed to open log file: {}", log_path))?;
+        info!("Logging output to: {}", log_path);
+        Some(Arc::new(Mutex::new(file)))
+    } else {
+        None
+    };
 
     // Create PTY and spawn agent
-    let pty = Pty::spawn(&args.command).context("Failed to spawn agent")?;
+    let pty = Pty::spawn(&args.command, args.rows, args.cols).context("Failed to spawn agent")?;
 
-    // Set raw mode for transparent terminal passthrough
-    Pty::set_raw_mode().context("Failed to set raw mode")?;
+    // Set raw mode for transparent terminal passthrough (if TTY available)
+    let is_interactive = Pty::set_raw_mode().context("Failed to set raw mode")?;
+    if is_interactive {
+        info!("Running in interactive mode (TTY)");
+    } else {
+        info!("Running in headless mode (no TTY)");
+    }
 
     // Wrap in async PTY
     let mut async_pty = AsyncPty::new(pty);
@@ -140,10 +183,24 @@ async fn main() -> Result<()> {
     ));
 
     // Create output parser
-    let mut parser = OutputParser::new(
-        config.name.clone(),
-        &config.prompt_pattern,
-    );
+    let mut parser = if let Some(ref outbox) = args.outbox {
+        let outbox_path = std::path::PathBuf::from(outbox);
+        // Create outbox directory if needed
+        if !outbox_path.exists() {
+            std::fs::create_dir_all(&outbox_path).ok();
+        }
+        info!("File-based relay enabled, outbox: {}", outbox);
+        OutputParser::with_outbox(
+            config.name.clone(),
+            &config.prompt_pattern,
+            outbox_path,
+        )
+    } else {
+        OutputParser::new(
+            config.name.clone(),
+            &config.prompt_pattern,
+        )
+    };
 
     // Start socket server
     let socket_server = SocketServer::new(
@@ -172,7 +229,7 @@ async fn main() -> Result<()> {
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigwinch = signal(SignalKind::window_change())?;
 
-    // Create stdin reader
+    // Create stdin reader (always - for both interactive and piped input)
     let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(32);
     std::thread::spawn(move || {
         let mut stdin = io::stdin();
@@ -225,6 +282,7 @@ async fn main() -> Result<()> {
 
             // Handle stdin (user input)
             Some(data) = stdin_rx.recv() => {
+                debug!("Received {} bytes from stdin", data.len());
                 if let Err(e) = async_pty.send(data).await {
                     error!("Failed to send to PTY: {}", e);
                 }
@@ -243,6 +301,13 @@ async fn main() -> Result<()> {
                     // Write to stdout
                     stdout.write_all(&data).await?;
                     stdout.flush().await?;
+
+                    // Write to log file if configured
+                    if let Some(ref log) = log_file {
+                        let mut file = log.lock().await;
+                        let _ = file.write_all(&data);
+                        let _ = file.flush();
+                    }
 
                     // Parse output
                     let text = String::from_utf8_lossy(&data);
