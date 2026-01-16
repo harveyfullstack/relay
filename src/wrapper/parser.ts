@@ -84,6 +84,23 @@ const MAX_INLINE_CONTINUATION_LINES = 30;
 const SPAWN_COMMAND_PATTERN = /->relay:spawn\s+\S+/i;
 const RELEASE_COMMAND_PATTERN = /->relay:release\s+\S+/i;
 
+// JSON relay format: ->relay.json:{...}
+// Simple single-line format that's resilient and won't interfere with normal conversation
+const JSON_RELAY_PATTERN = /->relay\.json:(\{[^\n]+\})/;
+
+/**
+ * Parsed JSON relay message structure
+ */
+interface JsonRelayMessage {
+  kind: 'message' | 'spawn' | 'release';
+  to?: string;
+  body?: string;
+  name?: string;
+  cli?: string;
+  task?: string;
+  thread?: string;
+}
+
 /**
  * Check if a line is a spawn or release command that should be handled
  * by the wrapper's spawn subsystem, not parsed as a relay message.
@@ -764,9 +781,42 @@ export class OutputParser {
     const thinkingBase = this.options.thinkingPrefix.replace(/:$/, '');
     const hasRelayPattern = line.includes(relayBase) || line.includes(thinkingBase);
     const hasBlockPattern = line.includes('[[') || line.includes('```');
+    const hasJsonRelay = line.includes('->relay.json:');
 
-    if (!hasRelayPattern && !hasBlockPattern) {
+    if (!hasRelayPattern && !hasBlockPattern && !hasJsonRelay) {
       return { command: null, output: line };
+    }
+
+    // Check for JSON relay format first (preferred): ->relay.json:{...}
+    if (hasJsonRelay) {
+      const stripped = stripAnsi(line);
+      const jsonMatch = stripped.match(JSON_RELAY_PATTERN);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1]) as JsonRelayMessage;
+          const kind = parsed.kind || 'message';
+
+          // Handle different command kinds
+          if (kind === 'message' && parsed.to) {
+            return {
+              command: {
+                to: parsed.to,
+                kind: 'message',
+                body: parsed.body || '',
+                thread: parsed.thread,
+                raw: jsonMatch[0],
+              },
+              output: null,
+            };
+          }
+          // spawn/release are handled by the wrapper, not here
+          // But we still strip the line from output
+          return { command: null, output: null };
+        } catch {
+          // Invalid JSON, pass through
+          console.error('[parser] Invalid JSON in ->relay.json:', jsonMatch[1]);
+        }
+      }
     }
 
     // Strip ANSI codes for pattern matching (only when potentially needed)
