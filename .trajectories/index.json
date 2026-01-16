@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-13T11:45:51.825Z",
+  "lastUpdated": "2026-01-16T10:28:28.644Z",
   "trajectories": {
     "traj_ozd98si6a7ns": {
       "title": "Fix thinking indicator showing on all messages",
@@ -631,6 +631,55 @@
       "startedAt": "2026-01-13T10:04:08.386Z",
       "completedAt": "2026-01-13T11:45:51.802Z",
       "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_jq7uaqojoj31.json"
+    },
+    "traj_z7m9mahtdri8": {
+      "title": "Relay messaging reliability architecture decisions",
+      "status": "completed",
+      "startedAt": "2026-01-16T09:14:53.389Z",
+      "completedAt": "2026-01-16T09:17:27.393Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_z7m9mahtdri8.json"
+    },
+    "traj_5awukmeedbd1": {
+      "title": "Document relay-pty improvements implementation",
+      "status": "completed",
+      "startedAt": "2026-01-16T09:22:00.599Z",
+      "completedAt": "2026-01-16T09:22:10.563Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_5awukmeedbd1.json"
+    },
+    "traj_9c0r3tnzzjsc": {
+      "title": "Add agent-controlled blocking syntax",
+      "status": "completed",
+      "startedAt": "2026-01-16T09:36:54.645Z",
+      "completedAt": "2026-01-16T09:37:03.584Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_9c0r3tnzzjsc.json"
+    },
+    "traj_z8yyes5zq69m": {
+      "title": "Relay-PTY architecture decisions and continuity redesign",
+      "status": "completed",
+      "startedAt": "2026-01-16T10:19:23.664Z",
+      "completedAt": "2026-01-16T10:20:11.898Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_z8yyes5zq69m.json"
+    },
+    "traj_28yacuxuke7u": {
+      "title": "Decide Rust relay-pty cloud build strategy",
+      "status": "completed",
+      "startedAt": "2026-01-16T10:22:49.324Z",
+      "completedAt": "2026-01-16T10:23:30.414Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_28yacuxuke7u.json"
+    },
+    "traj_9a9l921apycv": {
+      "title": "Review and confirm relay-pty cloud build decision",
+      "status": "completed",
+      "startedAt": "2026-01-16T10:25:02.275Z",
+      "completedAt": "2026-01-16T10:25:21.870Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_9a9l921apycv.json"
+    },
+    "traj_e68cbt5rmmbp": {
+      "title": "Revise relay-pty build location decision",
+      "status": "completed",
+      "startedAt": "2026-01-16T10:27:59.063Z",
+      "completedAt": "2026-01-16T10:28:28.633Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_e68cbt5rmmbp.json"
     }
   }
 }

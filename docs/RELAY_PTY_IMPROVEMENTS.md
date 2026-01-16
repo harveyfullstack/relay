@@ -17,44 +17,43 @@ The Rust `relay-pty` implementation uses direct PTY writes for message injection
 
 The remaining failure mode with PTY injection is **timing** - injecting while the agent is mid-thought or in a state where input isn't processed correctly.
 
-## Planned Improvements
+## Implemented Improvements
 
-### 1. Escalating Retry with Visibility
+> **Status:** Implemented in PR #197 (commit 9022ea2, merged Jan 16 2026)
+
+### 1. Escalating Retry with Visibility ✅
 
 **Problem:** Message is injected but agent doesn't acknowledge or respond.
 
-**Solution:** Implement escalating retry logic with increasing urgency markers.
+**Solution:** Escalating retry logic with increasing urgency markers.
 
+```rust
+// relay-pty/src/protocol.rs
+match self.retries {
+    0 => base_msg,                                           // "Relay message from..."
+    1 => format!("[RETRY] {}", base_msg),                    // "[RETRY] Relay message..."
+    _ => format!("[URGENT - PLEASE ACKNOWLEDGE] {}", base_msg), // "[URGENT...]"
+}
 ```
-Attempt 1 (t=0):     "Relay message from Alice: ..."
-Attempt 2 (t=60s):   "[RETRY] Relay message from Alice: ..."
-Attempt 3 (t=120s):  "[URGENT - PLEASE ACKNOWLEDGE] Relay message from Alice: ..."
-Attempt 4 (t=180s):  Alert human operator
-```
 
-**Implementation location:** `relay-pty/src/inject.rs` and `relay-pty/src/queue.rs`
-
-**Tracking:** `agent-relay-pty-escalating-retry`
+**Implementation:** `relay-pty/src/protocol.rs` - `QueuedMessage::format_for_injection()`
 
 ---
 
-### 2. Unread Message Indicator in Output
+### 2. Unread Message Indicator in Output ✅
 
 **Problem:** During long tasks, agent may process tool outputs without noticing pending messages.
 
-**Solution:** The wrapper intercepts output and appends unread message count when messages are pending.
+**Solution:** Wrapper appends unread message count when messages are pending.
 
+```typescript
+// relay-pty-orchestrator.ts - formatUnreadIndicator()
+// Output: ───────────────────────────
+//         📬 2 unread messages (from: Alice, Bob)
+// 5-second cooldown to avoid spamming
 ```
-[Normal tool output here]
-───────────────────────────
-📬 2 unread messages (from: Alice, Bob)
-```
 
-This ensures the agent sees a reminder in every tool response while messages are pending.
-
-**Implementation location:** `src/wrapper/relay-pty-orchestrator.ts` output handling
-
-**Tracking:** `agent-relay-pty-unread-indicator`
+**Implementation:** `src/wrapper/relay-pty-orchestrator.ts` - `formatUnreadIndicator()`
 
 ---
 
@@ -71,14 +70,14 @@ This ensures the agent sees a reminder in every tool response while messages are
 
 Analyzed `src/wrapper/parser.ts` for dead code:
 
-| Function | Lines | Decision | Reason |
+| Function | Lines | Decision | Status |
 |----------|-------|----------|--------|
-| `formatIncomingMessage` | 1262-1265 | **Remove** | Replaced by `buildInjectionString` in shared.ts |
-| `parseRelayMetadataFromOutput` | 1301-1316 | Keep | `importance` field aligns with escalating retry feature |
+| `formatIncomingMessage` | 1262-1265 | **Remove** | ✅ Removed in PR #197 |
+| `parseRelayMetadataFromOutput` | 1301-1316 | Keep | `importance` field aligns with escalating retry |
 | `MetadataParseResult` | 1280-1285 | Keep | Used by above |
 | `parseSummaryFromOutput` | 1352-1355 | Keep | Simple API wrapper, minimal cost |
 
-**Tracking:** `agent-relay-482` - Remove dead formatIncomingMessage function
+**Completed:** `agent-relay-482` - formatIncomingMessage removed in PR #197
 
 ---
 
