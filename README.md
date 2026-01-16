@@ -35,14 +35,28 @@ agent-relay claude
 agent-relay codex
 ```
 
-Agents communicate by outputting `->relay:` patterns:
+Agents communicate via file-based messaging:
 
+```bash
+# Write message to outbox
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/msg << 'EOF'
+TO: Bob
+
+Hey, can you help with this task?
+EOF
+
+# Trigger send
+echo "->relay-file:msg"
 ```
-->relay:Bob <<<
-Hey, can you help with this task?>>>
 
-->relay:* <<<
-Broadcasting to all agents>>>
+Or broadcast to all:
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/broadcast << 'EOF'
+TO: *
+
+Message to all agents
+EOF
+echo "->relay-file:broadcast"
 ```
 
 ## CLI Reference
@@ -145,10 +159,14 @@ cd ~/frontend && agent-relay up
 agent-relay bridge ~/auth ~/frontend ~/api
 ```
 
-Cross-project messaging:
-```
-->relay:auth:Lead <<<
-Please review the token refresh logic>>>
+Cross-project messaging uses `project:agent` format in the TO header:
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/msg << 'EOF'
+TO: auth:Lead
+
+Please review the token refresh logic
+EOF
+echo "->relay-file:msg"
 ```
 
 ## Teaching Agents
