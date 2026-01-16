@@ -1757,6 +1757,9 @@ export async function startDashboard(
         // Exclude agents starting with __ (internal/system agents)
         if (agent.name.startsWith('__')) return false;
 
+        // Exclude _DashboardUI (system client for sending dashboard messages)
+        if (agent.name === '_DashboardUI') return false;
+
         // Exclude agents without a proper CLI (improperly registered or stale)
         if (!agent.cli || agent.cli === 'Unknown') return false;
 
@@ -2337,6 +2340,11 @@ export async function startDashboard(
               // Add this connection to existing user
               existing.connections.add(ws);
               existing.info.lastSeen = now;
+
+              // Update userBridge to use the new WebSocket for message delivery
+              // This ensures messages are sent to an active connection, not a stale one
+              userBridge.updateWebSocket(username, ws);
+
               // Only log at milestones to reduce noise
               const count = existing.connections.size;
               if (count === 2 || count === 5 || count === 10 || count % 50 === 0) {
