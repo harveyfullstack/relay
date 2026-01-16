@@ -180,15 +180,17 @@ echo "->relay-file:msg"
 
 ## Teaching Agents
 
-Install the messaging skill for your agents:
+Install the messaging skill for your agents via [prpm](https://prpm.dev):
 
 ```bash
 # Install snippet for AGENTS.md
-prpm install @agent-relay/agent-relay-snippet
+npx prpm install @agent-relay/agent-relay-snippet
 
 # Install snippet for CLAUDE.md
-prpm install @agent-relay/agent-relay-snippet --location CLAUDE.md
+npx prpm install @agent-relay/agent-relay-snippet --location CLAUDE.md
 ```
+
+View the rest of our packages on on [prpm organization page](https://prpm.dev/orgs?name=Agent%20Relay)
 
 Or manually add the relay patterns to your agent instructions.
 
