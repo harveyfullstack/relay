@@ -189,7 +189,16 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    */
   private log(message: string): void {
     if (this.config.debug) {
-      this.log(` ${message}`);
+      console.log(`[relay-pty-orchestrator:${this.config.name}] ${message}`);
+    }
+  }
+
+  /**
+   * Error log - only outputs when debug is enabled
+   */
+  private logError(message: string): void {
+    if (this.config.debug) {
+      this.logError(` ${message}`);
     }
   }
 
@@ -219,7 +228,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         unlinkSync(this.socketPath);
       }
     } catch (err: any) {
-      console.warn(`[relay-pty-orchestrator:${this.config.name}] Failed to clean up socket: ${err.message}`);
+      this.logError(` Failed to clean up socket: ${err.message}`);
     }
 
     // Find relay-pty binary
@@ -235,7 +244,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       await this.client.connect();
       this.log(` Relay daemon connected`);
     } catch (err: any) {
-      console.error(`[relay-pty-orchestrator:${this.config.name}] Relay connect failed: ${err.message}`);
+      this.logError(` Relay connect failed: ${err.message}`);
     }
 
     // Spawn relay-pty process
@@ -425,7 +434,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     // Handle error
     proc.on('error', (err) => {
-      console.error(`[relay-pty-orchestrator:${this.config.name}] Process error: ${err.message}`);
+      this.logError(` Process error: ${err.message}`);
       this.emit('error', err);
     });
 
@@ -562,7 +571,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
           this.log(` Dashboard spawn succeeded for ${name}`);
         })
         .catch(err => {
-          console.error(`[relay-pty-orchestrator:${this.config.name}] Dashboard spawn failed: ${err.message}`);
+          this.logError(` Dashboard spawn failed: ${err.message}`);
           if (this.config.onSpawn) {
             this.log(` Falling back to onSpawn callback`);
             this.config.onSpawn(name, cli, task);
@@ -572,7 +581,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       this.log(` Using onSpawn callback directly`);
       this.config.onSpawn(name, cli, task);
     } else {
-      console.error(`[relay-pty-orchestrator:${this.config.name}] No spawn mechanism available!`);
+      this.logError(` No spawn mechanism available!`);
     }
   }
 
@@ -591,7 +600,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     // Try dashboard API first, fall back to callback
     if (this.config.dashboardPort) {
       this.releaseViaDashboardApi(name).catch(err => {
-        console.error(`[relay-pty-orchestrator:${this.config.name}] Dashboard release failed: ${err.message}`);
+        this.logError(` Dashboard release failed: ${err.message}`);
         this.config.onRelease?.(name);
       });
     } else if (this.config.onRelease) {
@@ -644,7 +653,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         this.log(` Socket connected`);
         return;
       } catch (err: any) {
-        console.warn(`[relay-pty-orchestrator:${this.config.name}] Socket connect attempt ${attempt}/${maxAttempts} failed: ${err.message}`);
+        this.logError(` Socket connect attempt ${attempt}/${maxAttempts} failed: ${err.message}`);
         if (attempt < maxAttempts) {
           await sleep(1000 * attempt); // Exponential backoff
         }
@@ -759,7 +768,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
           break;
 
         case 'error':
-          console.error(`[relay-pty-orchestrator:${this.config.name}] Socket error: ${response.message}`);
+          this.logError(` Socket error: ${response.message}`);
           break;
 
         case 'shutdown_ack':
@@ -767,7 +776,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
           break;
       }
     } catch (err: any) {
-      console.error(`[relay-pty-orchestrator:${this.config.name}] Failed to parse socket response: ${err.message}`);
+      this.logError(` Failed to parse socket response: ${err.message}`);
     }
   }
 
@@ -790,7 +799,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       clearTimeout(pending.timeout);
       this.pendingInjections.delete(response.id);
       pending.resolve(false);
-      console.error(`[relay-pty-orchestrator:${this.config.name}] Message ${response.id.substring(0, 8)} failed: ${response.error}`);
+      this.logError(` Message ${response.id.substring(0, 8)} failed: ${response.error}`);
       this.emit('injection-failed', {
         messageId: response.id,
         from: 'unknown',
@@ -829,7 +838,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     this.log(` === INJECT START: ${msg.messageId.substring(0, 8)} from ${msg.from} ===`);
 
     if (!this.socket || !this.socketConnected) {
-      console.error(`[relay-pty-orchestrator:${this.config.name}] Cannot inject - socket not connected`);
+      this.logError(` Cannot inject - socket not connected`);
       return false;
     }
 
@@ -851,7 +860,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     // Create promise for result
     return new Promise<boolean>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        console.error(`[relay-pty-orchestrator:${this.config.name}] Inject timeout for ${msg.messageId.substring(0, 8)}`);
+        this.logError(` Inject timeout for ${msg.messageId.substring(0, 8)}`);
         this.pendingInjections.delete(msg.messageId);
         resolve(false); // Timeout = failure
       }, 30000); // 30 second timeout for injection
@@ -864,7 +873,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
           this.log(` Socket request sent successfully`);
         })
         .catch((err) => {
-          console.error(`[relay-pty-orchestrator:${this.config.name}] Socket request failed: ${err.message}`);
+          this.logError(` Socket request failed: ${err.message}`);
           clearTimeout(timeout);
           this.pendingInjections.delete(msg.messageId);
           resolve(false);
@@ -894,7 +903,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       const success = await this.injectMessage(msg);
 
       if (!success) {
-        console.error(`[relay-pty-orchestrator:${this.config.name}] Injection failed for message ${msg.messageId.substring(0, 8)}`);
+        this.logError(` Injection failed for message ${msg.messageId.substring(0, 8)}`);
         this.injectionMetrics.failed++;
         this.config.onInjectionFailed?.(msg.messageId, 'Injection failed');
       } else {
@@ -903,7 +912,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
       this.injectionMetrics.total++;
     } catch (err: any) {
-      console.error(`[relay-pty-orchestrator:${this.config.name}] Injection error: ${err.message}`);
+      this.logError(` Injection error: ${err.message}`);
       this.injectionMetrics.failed++;
       this.injectionMetrics.total++;
     } finally {
