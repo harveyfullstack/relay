@@ -6,6 +6,9 @@
 //! Usage:
 //!   relay-pty --name myagent -- claude --model opus
 
+// Allow dead code - this binary has public API components that may not be used internally
+#![allow(dead_code)]
+
 mod inject;
 mod parser;
 mod protocol;
@@ -100,8 +103,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Initialize logging
-    let filter = EnvFilter::try_new(&args.log_level)
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_new(&args.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -178,11 +180,7 @@ async fn main() -> Result<()> {
     let queue = Arc::new(MessageQueue::new(config.queue_max, response_tx.clone()));
 
     // Create injector
-    let injector = Arc::new(Injector::new(
-        inject_tx,
-        Arc::clone(&queue),
-        config.clone(),
-    ));
+    let injector = Arc::new(Injector::new(inject_tx, Arc::clone(&queue), config.clone()));
 
     // Create output parser
     let mut parser = if let Some(ref outbox) = args.outbox {
@@ -194,16 +192,9 @@ async fn main() -> Result<()> {
             }
         }
         info!("File-based relay enabled, outbox: {}", outbox);
-        OutputParser::with_outbox(
-            config.name.clone(),
-            &config.prompt_pattern,
-            outbox_path,
-        )
+        OutputParser::with_outbox(config.name.clone(), &config.prompt_pattern, outbox_path)
     } else {
-        OutputParser::new(
-            config.name.clone(),
-            &config.prompt_pattern,
-        )
+        OutputParser::new(config.name.clone(), &config.prompt_pattern)
     };
 
     // Start socket server

@@ -11,11 +11,10 @@ use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::libc;
 use nix::pty::{openpty, OpenptyResult, Winsize};
 use nix::sys::signal::{self, Signal};
-use nix::sys::termios::{self, LocalFlags, SetArg, Termios};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{dup2, execvp, fork, read, setsid, write, ForkResult, Pid};
 use std::ffi::CString;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -119,7 +118,10 @@ impl Pty {
                     .collect();
 
                 execvp(&cmd, &args).expect("Failed to exec");
-                unreachable!()
+                #[allow(unreachable_code)]
+                {
+                    unreachable!("execvp should never return")
+                }
             }
         }
     }

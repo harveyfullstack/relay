@@ -38,11 +38,7 @@ unsafe impl Sync for Injector {}
 
 impl Injector {
     /// Create a new injector
-    pub fn new(
-        pty_tx: mpsc::Sender<Vec<u8>>,
-        queue: Arc<MessageQueue>,
-        config: Config,
-    ) -> Self {
+    pub fn new(pty_tx: mpsc::Sender<Vec<u8>>, queue: Arc<MessageQueue>, config: Config) -> Self {
         Self {
             pty_tx,
             queue,
@@ -62,7 +58,8 @@ impl Injector {
 
     /// Record new output (updates last_output_ms and recent_output)
     pub async fn record_output(&self, output: &str) {
-        self.last_output_ms.store(current_timestamp_ms(), Ordering::SeqCst);
+        self.last_output_ms
+            .store(current_timestamp_ms(), Ordering::SeqCst);
         if !is_relay_echo(output) {
             self.is_idle.store(false, Ordering::SeqCst);
         }
@@ -176,7 +173,10 @@ impl Injector {
         }
 
         if !self.check_idle() {
-            warn!("Injection window timeout for message {}, proceeding anyway", msg.id);
+            warn!(
+                "Injection window timeout for message {}, proceeding anyway",
+                msg.id
+            );
         }
 
         // Clear recent output for verification
@@ -188,7 +188,11 @@ impl Injector {
         // Format the message (without Enter key)
         let formatted = msg.format_for_injection();
 
-        info!("Step 1: Writing message content ({} bytes): {}", formatted.len(), &formatted[..formatted.len().min(100)]);
+        info!(
+            "Step 1: Writing message content ({} bytes): {}",
+            formatted.len(),
+            &formatted[..formatted.len().min(100)]
+        );
 
         // Step 1: Write message content (no Enter)
         self.pty_tx
