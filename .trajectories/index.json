@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-17T08:30:10.220Z",
+  "lastUpdated": "2026-01-17T08:32:37.801Z",
   "trajectories": {
     "traj_ozd98si6a7ns": {
       "title": "Fix thinking indicator showing on all messages",
@@ -702,32 +702,18 @@
       "completedAt": "2026-01-16T21:59:33.734Z",
       "path": ".trajectories/completed/2026-01/traj_6q0b9kzmdb1f.json"
     },
-    "traj_v6hbi0c9ctqj": {
-      "title": "Tasks from TASKS_2026_01_16.md - Cloud deployment, workspace namespacing, and quick wins",
+    "traj_yc3lmi81o4id": {
+      "title": "agent-relay-512: Role-specific prompts",
       "status": "completed",
-      "startedAt": "2026-01-17T06:30:47.033Z",
-      "completedAt": "2026-01-17T06:39:49.141Z",
-      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_v6hbi0c9ctqj.json"
+      "startedAt": "2026-01-17T08:30:59.892Z",
+      "completedAt": "2026-01-17T08:32:04.330Z",
+      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_yc3lmi81o4id.json"
     },
-    "traj_f7h08tknz4oy": {
-      "title": "Model selection hookup - wire up model field from agent profiles to spawner",
-      "status": "abandoned",
-      "startedAt": "2026-01-17T08:27:07.035Z",
-      "completedAt": "2026-01-17T08:27:46.876Z",
-      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_f7h08tknz4oy.json"
-    },
-    "traj_ts01xzyj8uwm": {
-      "title": "agent-relay-511: Documentation sprint",
-      "status": "completed",
-      "startedAt": "2026-01-17T08:27:52.340Z",
-      "completedAt": "2026-01-17T08:29:35.666Z",
-      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_ts01xzyj8uwm.json"
-    },
-    "traj_kaw0wmkhti5d": {
-      "title": "Add Rust tests to CI workflow",
+    "traj_y8qkatv78zc4": {
+      "title": "Workspace cleanup - clean /tmp/relay/{id}/ on workspace deletion",
       "status": "active",
-      "startedAt": "2026-01-17T08:30:10.206Z",
-      "path": "/data/repos/relay/.trajectories/active/traj_kaw0wmkhti5d.json"
+      "startedAt": "2026-01-17T08:32:37.797Z",
+      "path": "/data/repos/relay/.trajectories/active/traj_y8qkatv78zc4.json"
     }
   }
 }
