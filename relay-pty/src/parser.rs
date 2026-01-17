@@ -130,8 +130,7 @@ fn file_relay_pattern() -> &'static Regex {
 }
 
 fn relay_pattern() -> &'static Regex {
-    RELAY_PATTERN
-        .get_or_init(|| Regex::new(r"(?m)^[\s>$%#\-*]*->relay:(\S+)\s+(.+)$").unwrap())
+    RELAY_PATTERN.get_or_init(|| Regex::new(r"(?m)^[\s>$%#\-*]*->relay:(\S+)\s+(.+)$").unwrap())
 }
 
 fn fenced_pattern() -> &'static Regex {
@@ -288,7 +287,10 @@ impl OutputParser {
                         file_path_json,
                     )
                 } else {
-                    debug!("Relay file not found: {:?} or {:?}", file_path_txt, file_path_json);
+                    debug!(
+                        "Relay file not found: {:?} or {:?}",
+                        file_path_txt, file_path_json
+                    );
                     continue;
                 };
 
