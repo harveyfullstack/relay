@@ -118,6 +118,10 @@ impl Pty {
                     .collect();
 
                 execvp(&cmd, &args).expect("Failed to exec");
+                #[allow(unreachable_code)]
+                {
+                    unreachable!("execvp should never return")
+                }
             }
         }
     }
