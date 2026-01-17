@@ -2,7 +2,7 @@
  * Prompt Composer
  *
  * Dynamically composes role-specific prompts for agents based on their profile.
- * Loads prompts from .claude/prompts/roles/ and injects them into agent context.
+ * Loads prompts from .claude/agents/roles/ and injects them into agent context.
  *
  * Part of agent-relay-512: Role-specific prompts
  */
@@ -86,7 +86,7 @@ async function loadPromptFile(
     return promptCache.get(cacheKey);
   }
 
-  const promptPath = path.join(projectRoot, '.claude', 'prompts', 'roles', filename);
+  const promptPath = path.join(projectRoot, '.claude', 'agents', 'roles', filename);
 
   try {
     const content = await fs.readFile(promptPath, 'utf-8');
@@ -180,7 +180,7 @@ ${profile.customPrompt}
  * Get available role prompts in the project
  */
 export async function getAvailableRoles(projectRoot: string): Promise<AgentRole[]> {
-  const rolesDir = path.join(projectRoot, '.claude', 'prompts', 'roles');
+  const rolesDir = path.join(projectRoot, '.claude', 'agents', 'roles');
   const available: AgentRole[] = [];
 
   try {
