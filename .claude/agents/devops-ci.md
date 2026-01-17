@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: devops-ci
 description: Use for CI/CD pipelines, infrastructure as code, build automation, and DevOps workflows.
 tools: Read, Grep, Glob, Bash, Edit, Write

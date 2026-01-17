@@ -18,7 +18,7 @@ import { selectShadowCli } from './shadow-cli.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { AgentPolicyService, type CloudPolicyFetcher } from '../policy/agent-policy.js';
-import { buildClaudeArgs } from '../utils/agent-config.js';
+import { buildClaudeArgs, findAgentConfig } from '../utils/agent-config.js';
 import { getUserDirectoryService } from '../daemon/user-directory.js';
 import type {
   SpawnRequest,
@@ -391,10 +391,17 @@ export class AgentSpawner {
       // Apply agent config (model, --agent flag) from .claude/agents/ if available
       // This ensures spawned agents respect their profile settings
       if (isClaudeCli) {
+        // Get agent config for model tracking
+        const agentConfig = findAgentConfig(name, this.projectRoot);
+        const model = agentConfig?.model || 'sonnet'; // Default to sonnet
+
         const configuredArgs = buildClaudeArgs(name, args, this.projectRoot);
         // Replace args with configured version (includes --model and --agent if found)
         args.length = 0;
         args.push(...configuredArgs);
+
+        // Cost tracking: log which model is being used
+        console.log(`[spawner] Agent ${name}: model=${model}, cli=${cli}`);
         if (debug) console.log(`[spawner:debug] Applied agent config for ${name}: ${args.join(' ')}`);
       }
 

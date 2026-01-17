@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: deployer
 description: Use for deployment automation, release management, rollouts, and production deployments.
 tools: Read, Grep, Glob, Bash, Edit, Write

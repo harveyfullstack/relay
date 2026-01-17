@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: cli
 description: Use for CLI tool development, command-line interfaces, terminal utilities, and shell scripting.
 tools: Read, Grep, Glob, Bash, Edit, Write

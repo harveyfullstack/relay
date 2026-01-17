@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: data
 description: Use for data processing, ETL pipelines, data transformation, and batch processing tasks.
 tools: Read, Grep, Glob, Bash, Edit, Write

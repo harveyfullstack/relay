@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: refactorer
 description: Code refactoring and tech debt reduction. Use for improving code structure, extracting abstractions, reducing duplication, and improving maintainability without changing behavior.
 tools: Read, Write, Edit, Grep, Glob, Bash, WebSearch, WebFetch

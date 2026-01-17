@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: researcher
 description: Research tasks and codebase exploration. Investigates questions, finds patterns, and gathers information.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch

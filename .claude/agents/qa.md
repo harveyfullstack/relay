@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: qa
 description: Quality assurance, testing protocols, and defect management. Creates test plans and validates feature completeness.
 tools: Read, Grep, Glob, Bash, WebFetch

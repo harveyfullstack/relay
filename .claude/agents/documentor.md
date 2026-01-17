@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: documentor
 description: Technical documentation, API docs, READMEs. Creates clear, comprehensive documentation for codebases.
 tools: Read, Grep, Glob, Write, Edit

@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: prototyper
 description: Use for rapid prototyping, MVPs, proof-of-concepts, and quick experimental implementations.
 tools: Read, Grep, Glob, Bash, Edit, Write

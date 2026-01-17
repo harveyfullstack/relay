@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: monitor
 description: Use for monitoring setup, alerting configuration, observability, and performance analysis.
 tools: Read, Grep, Glob, Bash, Edit, Write

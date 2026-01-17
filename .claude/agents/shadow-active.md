@@ -1,4 +1,5 @@
 ---
+model: sonnet
 name: shadow-active
 description: Actively monitors all agent activity and provides real-time guidance. Assign as a shadow for high-stakes or learning scenarios.
 tools: Read, Grep, Glob
