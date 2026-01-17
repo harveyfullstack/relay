@@ -11,7 +11,6 @@ use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::libc;
 use nix::pty::{openpty, OpenptyResult, Winsize};
 use nix::sys::signal::{self, Signal};
-use nix::sys::termios;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{dup2, execvp, fork, read, setsid, write, ForkResult, Pid};
 use std::ffi::CString;
@@ -119,7 +118,6 @@ impl Pty {
                     .collect();
 
                 execvp(&cmd, &args).expect("Failed to exec");
-                unreachable!()
             }
         }
     }

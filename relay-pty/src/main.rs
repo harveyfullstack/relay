@@ -6,6 +6,9 @@
 //! Usage:
 //!   relay-pty --name myagent -- claude --model opus
 
+// Allow dead code - this binary has public API components that may not be used internally
+#![allow(dead_code)]
+
 mod inject;
 mod parser;
 mod protocol;

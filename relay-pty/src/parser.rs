@@ -359,7 +359,7 @@ impl OutputParser {
                             None
                         }
                     }
-                    "message" | _ => {
+                    _ => {
                         if let Some(to) = &msg.to {
                             debug!("Parsed file message: {} -> {}", self.agent_name, to);
                             let mut cmd = ParsedRelayCommand::new_message(
