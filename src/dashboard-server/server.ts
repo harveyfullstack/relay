@@ -2753,7 +2753,10 @@ export async function startDashboard(
       return res.status(400).json({ error: 'channel and invites are required' });
     }
 
-    const channelId = channel.startsWith('#') ? channel : `#${channel}`;
+    // Don't add '#' prefix to DM channels (they use 'dm:' prefix)
+    const channelId = channel.startsWith('dm:')
+      ? channel
+      : (channel.startsWith('#') ? channel : `#${channel}`);
     const inviteList = invites.split(',').map((s) => s.trim()).filter(Boolean);
 
     try {
@@ -2805,7 +2808,10 @@ export async function startDashboard(
       return res.status(400).json({ error: 'username and channel required' });
     }
     const workspaceId = resolveWorkspaceId(req);
-    const channelId = channel.startsWith('#') ? channel : `#${channel}`;
+    // Don't add '#' prefix to DM channels (they use 'dm:' prefix)
+    const channelId = channel.startsWith('dm:')
+      ? channel
+      : (channel.startsWith('#') ? channel : `#${channel}`);
 
     let success = false;
 
@@ -3097,7 +3103,10 @@ export async function startDashboard(
       const joinedChannels: string[] = [];
       const channelList = channels || ['#general'];
       for (const channel of channelList) {
-        const channelId = channel.startsWith('#') ? channel : `#${channel}`;
+        // Don't add '#' prefix to DM channels (they use 'dm:' prefix)
+        const channelId = channel.startsWith('dm:')
+          ? channel
+          : (channel.startsWith('#') ? channel : `#${channel}`);
         const joined = client.joinChannel(channelId, username);
         if (joined) {
           joinedChannels.push(channelId);
@@ -3128,7 +3137,10 @@ export async function startDashboard(
     }
 
     const workspaceId = resolveWorkspaceId(req);
-    const channelId = channel.startsWith('#') ? channel : `#${channel}`;
+    // Don't add '#' prefix to DM channels (they use 'dm:' prefix)
+    const channelId = channel.startsWith('dm:')
+      ? channel
+      : (channel.startsWith('#') ? channel : `#${channel}`);
 
     // SIMPLE APPROACH: Always try relay client first for sending
     // userBridge is only useful for users connected via local WebSocket
