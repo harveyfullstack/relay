@@ -9,7 +9,6 @@
 use crate::protocol::{InjectResponse, InjectStatus, QueuedMessage};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
-use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex, Notify};
 use tracing::{debug, info, warn};
