@@ -230,9 +230,10 @@ describe('RelayClient', () => {
         (client as any).send = sendMock;
 
         const promise = client.sendAndWait('Bob', 'ping', { timeoutMs: 50 });
+        const rejection = expect(promise).rejects.toThrow('ACK timeout');
         await vi.advanceTimersByTimeAsync(60);
 
-        await expect(promise).rejects.toThrow('ACK timeout');
+        await rejection;
       } finally {
         vi.useRealTimers();
       }
