@@ -179,6 +179,9 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   private lastUnreadIndicatorTime = 0;
   private readonly UNREAD_INDICATOR_COOLDOWN_MS = 5000; // Don't spam indicators
 
+  // Track whether any output has been received from the CLI
+  private hasReceivedOutput = false;
+
   // Note: sessionEndProcessed and lastSummaryRawContent are inherited from BaseWrapper
 
   constructor(config: RelayPtyOrchestratorConfig) {
@@ -526,6 +529,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   private handleOutput(data: string): void {
     this.rawBuffer += data;
     this.outputBuffer += data;
+    this.hasReceivedOutput = true;
 
     // Feed to idle detector
     this.feedIdleDetectorOutput(data);
@@ -661,7 +665,11 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   }
 
   /**
-   * Handle spawn command
+   * Handle spawn command (from Rust stderr JSON parsing)
+   *
+   * Note: We do NOT send the initial task message here because the spawner
+   * now handles it after waitUntilCliReady(). Sending it here would cause
+   * duplicate task delivery.
    */
   private handleSpawnCommand(name: string, cli: string, task: string): void {
     const key = `spawn:${name}:${cli}`;
@@ -675,6 +683,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     this.log(` dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn}`);
 
     // Try dashboard API first, fall back to callback
+    // The spawner will send the task after waitUntilCliReady()
     if (this.config.dashboardPort) {
       this.log(` Calling dashboard API at port ${this.config.dashboardPort}`);
       this.spawnViaDashboardApi(name, cli, task)
@@ -685,12 +694,14 @@ export class RelayPtyOrchestrator extends BaseWrapper {
           this.logError(` Dashboard spawn failed: ${err.message}`);
           if (this.config.onSpawn) {
             this.log(` Falling back to onSpawn callback`);
-            this.config.onSpawn(name, cli, task);
+            Promise.resolve(this.config.onSpawn(name, cli, task))
+              .catch(e => this.logError(` onSpawn callback failed: ${e.message}`));
           }
         });
     } else if (this.config.onSpawn) {
       this.log(` Using onSpawn callback directly`);
-      this.config.onSpawn(name, cli, task);
+      Promise.resolve(this.config.onSpawn(name, cli, task))
+        .catch(e => this.logError(` onSpawn callback failed: ${e.message}`));
     } else {
       this.logError(` No spawn mechanism available!`);
     }
@@ -726,7 +737,12 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/spawn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, cli, task }),
+      body: JSON.stringify({
+        name,
+        cli,
+        task,
+        spawnerName: this.config.name, // Include spawner name so task appears from correct agent
+      }),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -895,9 +911,12 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * Handle injection result response
    */
   private handleInjectResult(response: InjectResultResponse): void {
+    this.log(` handleInjectResult: id=${response.id.substring(0, 8)} status=${response.status}`);
+
     const pending = this.pendingInjections.get(response.id);
     if (!pending) {
       // Response for unknown message - might be from a previous session
+      this.log(` No pending injection found for ${response.id.substring(0, 8)}`);
       return;
     }
 
@@ -971,7 +990,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     // Create promise for result
     return new Promise<boolean>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        this.logError(` Inject timeout for ${msg.messageId.substring(0, 8)}`);
+        this.logError(` Inject timeout for ${msg.messageId.substring(0, 8)} after 30s`);
         this.pendingInjections.delete(msg.messageId);
         resolve(false); // Timeout = failure
       }, 30000); // 30 second timeout for injection
@@ -981,10 +1000,10 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       // Send request
       this.sendSocketRequest(request)
         .then(() => {
-          this.log(` Socket request sent successfully`);
+          this.log(` Socket request sent for ${msg.messageId.substring(0, 8)}`);
         })
         .catch((err) => {
-          this.logError(` Socket request failed: ${err.message}`);
+          this.logError(` Socket request failed for ${msg.messageId.substring(0, 8)}: ${err.message}`);
           clearTimeout(timeout);
           this.pendingInjections.delete(msg.messageId);
           resolve(false);
@@ -1214,6 +1233,61 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Wait for the CLI to be ready to receive messages.
+   * This waits for:
+   * 1. The CLI to produce at least one output (it has started)
+   * 2. The CLI to become idle (it's ready for input)
+   *
+   * This is more reliable than a random sleep because it waits for
+   * actual signals from the CLI rather than guessing how long it takes to start.
+   *
+   * @param timeoutMs Maximum time to wait (default: 30s)
+   * @param pollMs Polling interval (default: 100ms)
+   * @returns true if CLI is ready, false if timeout
+   */
+  async waitUntilCliReady(timeoutMs = 30000, pollMs = 100): Promise<boolean> {
+    const startTime = Date.now();
+    this.log(` Waiting for CLI to be ready (timeout: ${timeoutMs}ms)`);
+
+    // Phase 1: Wait for first output (CLI has started)
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.hasReceivedOutput) {
+        this.log(` CLI has started producing output`);
+        break;
+      }
+      await sleep(pollMs);
+    }
+
+    if (!this.hasReceivedOutput) {
+      this.log(` Timeout waiting for CLI to produce output`);
+      return false;
+    }
+
+    // Phase 2: Wait for idle state (CLI is ready for input)
+    const remainingTime = timeoutMs - (Date.now() - startTime);
+    if (remainingTime <= 0) {
+      return false;
+    }
+
+    const idleResult = await this.waitForIdleState(remainingTime, pollMs);
+    if (idleResult.isIdle) {
+      this.log(` CLI is idle and ready (confidence: ${idleResult.confidence.toFixed(2)})`);
+      return true;
+    }
+
+    this.log(` Timeout waiting for CLI to become idle`);
+    return false;
+  }
+
+  /**
+   * Check if the CLI has produced any output yet.
+   * Useful for checking if the CLI has started without blocking.
+   */
+  hasCliStarted(): boolean {
+    return this.hasReceivedOutput;
   }
 
   /**
