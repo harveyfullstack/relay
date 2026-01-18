@@ -667,12 +667,18 @@ export class Daemon {
         }
       }
 
-      // Replay pending deliveries for resumed sessions
+      // Replay pending deliveries for resumed sessions (unacked messages from previous session)
       if (connection.isResumed) {
         this.router.replayPending(connection).catch(err => {
           log.error('Failed to replay pending messages', { error: String(err) });
         });
       }
+
+      // Deliver any messages that were sent while this agent was offline
+      // This handles messages sent during spawn timing gaps or brief disconnections
+      this.router.deliverPendingMessages(connection).catch(err => {
+        log.error('Failed to deliver pending messages', { error: String(err) });
+      });
 
       // Notify cloud sync about agent changes
       this.notifyCloudSync();

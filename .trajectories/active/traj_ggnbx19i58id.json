@@ -95,6 +95,18 @@
             "reasoning": "User chose quick fix over full solution. 1-2 hours implementation using existing infrastructure (registry + storage). TDD approach with tests written first, but tests and build run only in CI, not locally."
           },
           "significance": "high"
+        },
+        {
+          "ts": 1768744446995,
+          "type": "decision",
+          "content": "Quick fix implementation completed by RelayDebugger: Quick fix implementation completed by RelayDebugger",
+          "raw": {
+            "question": "Quick fix implementation completed by RelayDebugger",
+            "chosen": "Quick fix implementation completed by RelayDebugger",
+            "alternatives": [],
+            "reasoning": "Implementation complete: 4 files modified (+413 lines), 8 new tests written TDD-style, TypeScript compiles. Changes: agent-registry.has() method, router queues messages for known-offline agents, server delivers pending on connect. Ready for CI validation."
+          },
+          "significance": "high"
         }
       ]
     }
