@@ -142,7 +142,10 @@ fn parse_continuity_format(content: &str) -> Option<ContinuityMessage> {
 
     let parts: Vec<&str> = content.splitn(2, "\n\n").collect();
     let headers = parts.first()?;
-    let body = parts.get(1).map(|s| s.trim().to_string()).unwrap_or_default();
+    let body = parts
+        .get(1)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
 
     let mut kind = None;
 
@@ -381,11 +384,11 @@ impl OutputParser {
                 }
 
                 // Try relay header format next (simpler, more robust)
-                let msg: Option<RelayMessage> =
-                    if let Some(parsed) = parse_header_format(&content) {
-                        debug!("Parsed header format successfully");
-                        Some(parsed)
-                    } else {
+                let msg: Option<RelayMessage> = if let Some(parsed) = parse_header_format(&content)
+                {
+                    debug!("Parsed header format successfully");
+                    Some(parsed)
+                } else {
                     // Fall back to JSON format
                     let sanitized = sanitize_json_from_shell(&content);
                     match serde_json::from_str::<JsonRelayMessage>(&sanitized) {
@@ -405,7 +408,7 @@ impl OutputParser {
                             None
                         }
                     }
-                    };
+                };
 
                 let Some(msg) = msg else {
                     continue;
@@ -1152,9 +1155,7 @@ mod tests {
 
         assert_eq!(result.continuity_commands.len(), 1);
         assert_eq!(result.continuity_commands[0].action, "uncertain");
-        assert!(result.continuity_commands[0]
-            .content
-            .contains("rate limit"));
+        assert!(result.continuity_commands[0].content.contains("rate limit"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

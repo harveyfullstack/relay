@@ -364,7 +364,8 @@ mod tests {
 
         let queue = Arc::new(MessageQueue::new(1, response_tx));
 
-        let response = handle_request(InjectRequest::Status, &queue, &status_tx, &shutdown_tx).await;
+        let response =
+            handle_request(InjectRequest::Status, &queue, &status_tx, &shutdown_tx).await;
 
         match response {
             InjectResponse::Error { message } => {
@@ -386,10 +387,11 @@ mod tests {
             handle_request(InjectRequest::Shutdown, &queue, &status_tx, &shutdown_tx).await;
         assert!(matches!(response, InjectResponse::ShutdownAck));
 
-        let received = tokio::time::timeout(tokio::time::Duration::from_millis(200), shutdown_rx.recv())
-            .await
-            .ok()
-            .flatten();
+        let received =
+            tokio::time::timeout(tokio::time::Duration::from_millis(200), shutdown_rx.recv())
+                .await
+                .ok()
+                .flatten();
         assert!(received.is_some());
     }
 
@@ -414,7 +416,13 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(first, InjectResponse::InjectResult { status: InjectStatus::Queued, .. }));
+        assert!(matches!(
+            first,
+            InjectResponse::InjectResult {
+                status: InjectStatus::Queued,
+                ..
+            }
+        ));
 
         let second = handle_request(
             InjectRequest::Inject {
