@@ -564,6 +564,10 @@ export class Router {
 
   /**
    * Send a direct message to a specific agent.
+   *
+   * If the target agent is offline but known (has connected before),
+   * the message is persisted for delivery when the agent reconnects.
+   * This prevents silent message drops during brief disconnections or spawn timing issues.
    */
   private sendDirect(
     from: string,
@@ -586,7 +590,16 @@ export class Router {
         routerLog.info(`Routing to remote user: ${to}`, { daemonName: remoteUser.daemonName });
         return this.sendToRemoteAgent(from, to, envelope, remoteUser);
       }
-      routerLog.warn(`Target "${to}" not found`, { availableAgents: Array.from(this.agents.keys()) });
+
+      // Check if this is a known agent (has connected before) - queue for later delivery
+      // This prevents message drops during brief disconnections or spawn timing issues
+      if (this.registry?.has(to)) {
+        routerLog.info(`Target "${to}" offline but known, queueing message for delivery on reconnect`);
+        this.persistMessageForOfflineAgent(from, to, envelope);
+        return true; // Message accepted (queued), not dropped
+      }
+
+      routerLog.warn(`Target "${to}" not found and unknown`, { availableAgents: Array.from(this.agents.keys()) });
       return false;
     }
 
@@ -757,6 +770,114 @@ export class Router {
     }).catch((err) => {
       routerLog.error('Failed to persist message', { error: String(err) });
     });
+  }
+
+  /**
+   * Persist a message for an offline agent.
+   * Called when a message is sent to a known agent that is not currently connected.
+   * The message is marked with _offlineQueued and will be delivered when the agent reconnects.
+   */
+  private persistMessageForOfflineAgent(from: string, to: string, envelope: SendEnvelope): void {
+    if (!this.storage) {
+      routerLog.warn('Cannot queue offline message: no storage configured');
+      return;
+    }
+
+    this.storage.saveMessage({
+      id: envelope.id || generateId(),
+      ts: Date.now(),
+      from,
+      to,
+      topic: envelope.topic,
+      kind: envelope.payload.kind,
+      body: envelope.payload.body,
+      data: {
+        ...envelope.payload.data,
+        _offlineQueued: true,  // Mark as queued for offline delivery
+        _queuedAt: Date.now(),
+      },
+      payloadMeta: envelope.payload_meta,
+      thread: envelope.payload.thread,
+      status: 'unread',  // Unread = pending delivery
+      is_urgent: false,
+      is_broadcast: false,
+    }).catch((err) => {
+      routerLog.error('Failed to persist offline message', { error: String(err), to });
+    });
+  }
+
+  /**
+   * Deliver pending messages to an agent that just connected.
+   * Queries for unread messages addressed to this agent that were queued while offline.
+   * This handles messages that were sent while the agent was offline.
+   */
+  async deliverPendingMessages(connection: RoutableConnection): Promise<void> {
+    const agentName = connection.agentName;
+    if (!agentName) return;
+    if (!this.storage?.getMessages) return;
+
+    try {
+      // Query for unread messages addressed to this agent
+      const pendingMessages = await this.storage.getMessages({
+        to: agentName,
+        unreadOnly: true,
+        order: 'asc',  // Deliver oldest first
+      });
+
+      // Filter to only include offline-queued messages (not already-delivered unacked messages)
+      const offlineMessages = pendingMessages.filter(
+        msg => msg.data?._offlineQueued === true
+      ).sort((a, b) => a.ts - b.ts);
+
+      if (offlineMessages.length === 0) return;
+
+      routerLog.info(`Delivering ${offlineMessages.length} pending messages to ${agentName}`);
+
+      for (const msg of offlineMessages) {
+        // Create deliver envelope
+        const deliverEnvelope: DeliverEnvelope = {
+          v: PROTOCOL_VERSION,
+          type: 'DELIVER',
+          id: generateId(),
+          ts: Date.now(),
+          from: msg.from,
+          to: agentName,
+          topic: msg.topic,
+          payload: {
+            body: msg.body,
+            kind: msg.kind,
+            data: msg.data,
+            thread: msg.thread,
+          },
+          payload_meta: msg.payloadMeta,
+          delivery: {
+            seq: connection.getNextSeq(msg.topic ?? 'default', msg.from),
+            session_id: connection.sessionId,
+          },
+        };
+
+        const sent = connection.send(deliverEnvelope);
+        if (sent) {
+          this.trackDelivery(connection, deliverEnvelope);
+          this.registry?.recordReceive(agentName);
+          this.setProcessing(agentName, deliverEnvelope.id);
+
+          // Mark original message as delivered (update status)
+          if (this.storage.updateMessageStatus) {
+            await this.storage.updateMessageStatus(msg.id, 'read');
+          }
+
+          routerLog.info(`Delivered pending message to ${agentName}`, {
+            from: msg.from,
+            preview: msg.body.substring(0, 40),
+          });
+        } else {
+          routerLog.warn(`Failed to deliver pending message to ${agentName}`);
+        }
+      }
+    } catch (err) {
+      routerLog.error('Failed to deliver pending messages', { error: String(err), agentName });
+    }
   }
 
   /**

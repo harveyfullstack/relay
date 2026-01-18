@@ -1346,4 +1346,280 @@ describe('Router', () => {
       expect(savedMsg?.data?._targetDaemonName).toBe('remote-machine');
     });
   });
+
+  describe('Offline Message Queue', () => {
+    /**
+     * Mock AgentRegistry for testing offline queue behavior.
+     */
+    class MockAgentRegistry {
+      private knownAgents = new Set<string>();
+
+      has(agentName: string): boolean {
+        return this.knownAgents.has(agentName);
+      }
+
+      addKnownAgent(agentName: string): void {
+        this.knownAgents.add(agentName);
+      }
+
+      registerOrUpdate(agent: { name: string }): void {
+        this.knownAgents.add(agent.name);
+      }
+
+      recordSend(_agentName: string): void {}
+      recordReceive(_agentName: string): void {}
+    }
+
+    it('should queue message for known offline agent', async () => {
+      const registry = new MockAgentRegistry();
+      registry.addKnownAgent('offline-agent');
+
+      const routerWithRegistry = new Router({
+        storage,
+        registry: registry as any,
+      });
+
+      const sender = new MockConnection('conn-1', 'agent1');
+      routerWithRegistry.register(sender);
+
+      // Send to known but offline agent
+      const envelope = createSendEnvelope('agent1', 'offline-agent');
+      routerWithRegistry.route(sender, envelope);
+
+      // Wait for async storage operation
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // Message should be queued (saved to storage with _offlineQueued marker)
+      const queuedMsg = saved.find(m => m.to === 'offline-agent');
+      expect(queuedMsg).toBeDefined();
+      expect(queuedMsg?.data?._offlineQueued).toBe(true);
+    });
+
+    it('should not queue message for unknown agent', () => {
+      const registry = new MockAgentRegistry();
+      // Do NOT add 'unknown-agent' to registry
+
+      const routerWithRegistry = new Router({
+        storage,
+        registry: registry as any,
+      });
+
+      const sender = new MockConnection('conn-1', 'agent1');
+      routerWithRegistry.register(sender);
+
+      // Send to unknown agent
+      const envelope = createSendEnvelope('agent1', 'unknown-agent');
+      routerWithRegistry.route(sender, envelope);
+
+      // Message should NOT be queued
+      const queuedMsg = saved.find(m => m.to === 'unknown-agent');
+      expect(queuedMsg).toBeUndefined();
+    });
+
+    it('should deliver queued messages when agent connects', async () => {
+      const registry = new MockAgentRegistry();
+      registry.addKnownAgent('offline-agent');
+
+      // Pre-populate storage with a queued message
+      const queuedMessage: StoredMessage = {
+        id: 'queued-msg-1',
+        ts: Date.now() - 1000,
+        from: 'sender-agent',
+        to: 'offline-agent',
+        kind: 'message',
+        body: 'You missed this message',
+        data: { _offlineQueued: true, _queuedAt: Date.now() - 1000 },
+        status: 'unread',
+        is_urgent: false,
+      };
+      saved.push(queuedMessage);
+
+      const routerWithRegistry = new Router({
+        storage,
+        registry: registry as any,
+      });
+
+      // Agent connects
+      const offlineAgent = new MockConnection('conn-2', 'offline-agent');
+      routerWithRegistry.register(offlineAgent);
+
+      // Deliver pending messages
+      await routerWithRegistry.deliverPendingMessages(offlineAgent);
+
+      // Agent should receive the queued message
+      expect(offlineAgent.sentEnvelopes.length).toBe(1);
+      const delivered = offlineAgent.sentEnvelopes[0] as DeliverEnvelope;
+      expect(delivered.type).toBe('DELIVER');
+      expect(delivered.payload.body).toBe('You missed this message');
+      expect(delivered.from).toBe('sender-agent');
+    });
+
+    it('should not deliver non-offline-queued messages', async () => {
+      const registry = new MockAgentRegistry();
+      registry.addKnownAgent('agent2');
+
+      // Pre-populate storage with a regular message (not offline-queued)
+      const regularMessage: StoredMessage = {
+        id: 'regular-msg-1',
+        ts: Date.now() - 1000,
+        from: 'sender-agent',
+        to: 'agent2',
+        kind: 'message',
+        body: 'Regular message',
+        status: 'unread',
+        is_urgent: false,
+      };
+      saved.push(regularMessage);
+
+      const routerWithRegistry = new Router({
+        storage,
+        registry: registry as any,
+      });
+
+      const agent = new MockConnection('conn-2', 'agent2');
+      routerWithRegistry.register(agent);
+
+      await routerWithRegistry.deliverPendingMessages(agent);
+
+      // Should NOT deliver regular unread messages (only offline-queued ones)
+      expect(agent.sentEnvelopes.length).toBe(0);
+    });
+
+    it('should mark delivered messages as read', async () => {
+      const registry = new MockAgentRegistry();
+      registry.addKnownAgent('offline-agent');
+
+      const queuedMessage: StoredMessage = {
+        id: 'queued-msg-2',
+        ts: Date.now() - 1000,
+        from: 'sender-agent',
+        to: 'offline-agent',
+        kind: 'message',
+        body: 'Queued message',
+        data: { _offlineQueued: true },
+        status: 'unread',
+        is_urgent: false,
+      };
+      saved.push(queuedMessage);
+
+      // Add updateMessageStatus to storage mock
+      const statusUpdates: { id: string; status: string }[] = [];
+      const storageWithUpdate = {
+        ...storage,
+        updateMessageStatus: async (id: string, status: string) => {
+          statusUpdates.push({ id, status });
+        },
+      };
+
+      const routerWithRegistry = new Router({
+        storage: storageWithUpdate,
+        registry: registry as any,
+      });
+
+      const offlineAgent = new MockConnection('conn-2', 'offline-agent');
+      routerWithRegistry.register(offlineAgent);
+
+      await routerWithRegistry.deliverPendingMessages(offlineAgent);
+
+      // Message status should be updated to 'read'
+      expect(statusUpdates).toContainEqual({ id: 'queued-msg-2', status: 'read' });
+    });
+
+    it('should deliver messages in order (oldest first)', async () => {
+      const registry = new MockAgentRegistry();
+      registry.addKnownAgent('offline-agent');
+
+      // Add messages in reverse order
+      const msg1: StoredMessage = {
+        id: 'msg-oldest',
+        ts: Date.now() - 3000,
+        from: 'sender',
+        to: 'offline-agent',
+        kind: 'message',
+        body: 'First message',
+        data: { _offlineQueued: true },
+        status: 'unread',
+        is_urgent: false,
+      };
+      const msg2: StoredMessage = {
+        id: 'msg-middle',
+        ts: Date.now() - 2000,
+        from: 'sender',
+        to: 'offline-agent',
+        kind: 'message',
+        body: 'Second message',
+        data: { _offlineQueued: true },
+        status: 'unread',
+        is_urgent: false,
+      };
+      const msg3: StoredMessage = {
+        id: 'msg-newest',
+        ts: Date.now() - 1000,
+        from: 'sender',
+        to: 'offline-agent',
+        kind: 'message',
+        body: 'Third message',
+        data: { _offlineQueued: true },
+        status: 'unread',
+        is_urgent: false,
+      };
+      saved.push(msg3, msg1, msg2); // Add in random order
+
+      const routerWithRegistry = new Router({
+        storage,
+        registry: registry as any,
+      });
+
+      const offlineAgent = new MockConnection('conn-2', 'offline-agent');
+      routerWithRegistry.register(offlineAgent);
+
+      await routerWithRegistry.deliverPendingMessages(offlineAgent);
+
+      // Should deliver in timestamp order (oldest first)
+      expect(offlineAgent.sentEnvelopes.length).toBe(3);
+      expect((offlineAgent.sentEnvelopes[0] as DeliverEnvelope).payload.body).toBe('First message');
+      expect((offlineAgent.sentEnvelopes[1] as DeliverEnvelope).payload.body).toBe('Second message');
+      expect((offlineAgent.sentEnvelopes[2] as DeliverEnvelope).payload.body).toBe('Third message');
+    });
+
+    it('should handle empty queue gracefully', async () => {
+      const registry = new MockAgentRegistry();
+      registry.addKnownAgent('agent-with-no-messages');
+
+      const routerWithRegistry = new Router({
+        storage,
+        registry: registry as any,
+      });
+
+      const agent = new MockConnection('conn-2', 'agent-with-no-messages');
+      routerWithRegistry.register(agent);
+
+      // Should not throw
+      await expect(routerWithRegistry.deliverPendingMessages(agent)).resolves.not.toThrow();
+      expect(agent.sentEnvelopes.length).toBe(0);
+    });
+
+    it('should prefer local delivery over queueing when agent is connected', () => {
+      const registry = new MockAgentRegistry();
+      registry.addKnownAgent('agent2');
+
+      const routerWithRegistry = new Router({
+        storage,
+        registry: registry as any,
+      });
+
+      const sender = new MockConnection('conn-1', 'agent1');
+      const receiver = new MockConnection('conn-2', 'agent2');
+      routerWithRegistry.register(sender);
+      routerWithRegistry.register(receiver);
+
+      const envelope = createSendEnvelope('agent1', 'agent2');
+      routerWithRegistry.route(sender, envelope);
+
+      // Should deliver directly, not queue
+      expect(receiver.sentEnvelopes.length).toBe(1);
+      const queuedMsg = saved.find(m => m.data?._offlineQueued === true);
+      expect(queuedMsg).toBeUndefined();
+    });
+  });
 });
