@@ -650,9 +650,46 @@ export class AgentSpawner {
         };
       }
 
-      // Note: Task is NOT sent here. The spawning agent (wrapper) waits for the worker
-      // to come online and then sends the task via normal relay message.
-      // This avoids race conditions with the agent's readyForMessages state.
+      // Send task to the newly spawned agent if provided
+      // We do this AFTER registration AND after the CLI is ready to receive input
+      if (task && task.trim() && this.dashboardPort) {
+        try {
+          // Wait for the CLI to be ready (has produced output AND is idle)
+          // This is more reliable than a random sleep because it waits for actual signals
+          if (useRelayPty && 'waitUntilCliReady' in pty) {
+            const orchestrator = pty as RelayPtyOrchestrator;
+            const ready = await orchestrator.waitUntilCliReady(15000, 100);
+            if (!ready) {
+              console.warn(`[spawner] CLI for ${name} did not become ready within timeout, sending task anyway`);
+            } else if (debug) {
+              console.log(`[spawner:debug] CLI for ${name} is ready to receive messages`);
+            }
+          } else {
+            // PtyWrapper fallback - use short delay as it doesn't have waitUntilCliReady
+            await sleep(500);
+          }
+
+          const sendResponse = await fetch(
+            `http://localhost:${this.dashboardPort}/api/send`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                to: name,
+                message: task,
+              }),
+            }
+          );
+
+          if (sendResponse.ok) {
+            if (debug) console.log(`[spawner:debug] Task sent to ${name}`);
+          } else {
+            console.error(`[spawner] Failed to send task to ${name}: ${sendResponse.status}`);
+          }
+        } catch (err: any) {
+          console.error(`[spawner] Error sending task to ${name}:`, err.message);
+        }
+      }
 
       // Track the worker
       const workerInfo: ActiveWorker = {
