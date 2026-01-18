@@ -59,6 +59,18 @@
             "reasoning": "RelayDebugger discovered AgentRegistry tracks all known agents. Can check registry.has(to) to decide whether to queue message (known agent offline) vs reject (unknown agent). Confidence increased from 85% to 90%."
           },
           "significance": "high"
+        },
+        {
+          "ts": 1768742370355,
+          "type": "decision",
+          "content": "Change from quick fix to comprehensive long-term solution: Change from quick fix to comprehensive long-term solution",
+          "raw": {
+            "question": "Change from quick fix to comprehensive long-term solution",
+            "chosen": "Change from quick fix to comprehensive long-term solution",
+            "alternatives": [],
+            "reasoning": "User (khaliqgant) explicitly requested sustainable long-term fix instead of quick win. Redirecting to implement full offline message queue with TTL, delivery status tracking, sender notifications, and production-ready quality. Higher effort but proper architectural solution."
+          },
+          "significance": "high"
         }
       ]
     }
