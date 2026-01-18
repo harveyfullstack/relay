@@ -827,7 +827,7 @@ export class Router {
       // Filter to only include offline-queued messages (not already-delivered unacked messages)
       const offlineMessages = pendingMessages.filter(
         msg => msg.data?._offlineQueued === true
-      );
+      ).sort((a, b) => a.ts - b.ts);
 
       if (offlineMessages.length === 0) return;
 
