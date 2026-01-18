@@ -8,7 +8,7 @@
       "id": "agent-relay-5xx"
     }
   },
-  "status": "active",
+  "status": "completed",
   "startedAt": "2026-01-18T13:10:38.589Z",
   "agents": [
     {
@@ -108,11 +108,18 @@
           },
           "significance": "high"
         }
-      ]
+      ],
+      "endedAt": "2026-01-18T13:55:53.715Z"
     }
   ],
   "commits": [],
   "filesChanged": [],
   "projectId": "/data/repos/relay",
-  "tags": []
+  "tags": [],
+  "completedAt": "2026-01-18T13:55:53.715Z",
+  "retrospective": {
+    "summary": "Implemented offline message queue quick fix for relay protocol. Messages to known-but-offline agents are now queued and delivered on reconnect. 4 files modified, 8 new tests written TDD-style. PR #215 created.",
+    "approach": "Standard approach",
+    "confidence": 0.9
+  }
 }

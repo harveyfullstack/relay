@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-18T13:54:07.075Z",
+  "lastUpdated": "2026-01-18T13:55:54.206Z",
   "trajectories": {
     "traj_ozd98si6a7ns": {
       "title": "Fix thinking indicator showing on all messages",
@@ -711,9 +711,10 @@
     },
     "traj_ggnbx19i58id": {
       "title": "Investigate and fix relay message delivery delays/drops",
-      "status": "active",
+      "status": "completed",
       "startedAt": "2026-01-18T13:10:38.589Z",
-      "path": "/data/repos/relay/.trajectories/active/traj_ggnbx19i58id.json"
+      "completedAt": "2026-01-18T13:55:53.715Z",
+      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_ggnbx19i58id.json"
     }
   }
 }
