@@ -1,0 +1,46 @@
+{
+  "id": "traj_ggnbx19i58id",
+  "version": 1,
+  "task": {
+    "title": "Investigate and fix relay message delivery delays/drops",
+    "source": {
+      "system": "plain",
+      "id": "agent-relay-5xx"
+    }
+  },
+  "status": "active",
+  "startedAt": "2026-01-18T13:10:38.589Z",
+  "agents": [
+    {
+      "name": "default",
+      "role": "lead",
+      "joinedAt": "2026-01-18T13:10:48.996Z"
+    }
+  ],
+  "chapters": [
+    {
+      "id": "chap_fpr0waaqgotz",
+      "title": "Work",
+      "agentName": "default",
+      "startedAt": "2026-01-18T13:10:48.996Z",
+      "events": [
+        {
+          "ts": 1768741848997,
+          "type": "decision",
+          "content": "RelayDebugger identified root cause in router.ts message delivery: RelayDebugger identified root cause in router.ts message delivery",
+          "raw": {
+            "question": "RelayDebugger identified root cause in router.ts message delivery",
+            "chosen": "RelayDebugger identified root cause in router.ts message delivery",
+            "alternatives": [],
+            "reasoning": "Messages to unregistered agents are silently dropped without retry or queuing. This explains intermittent failures when agents disconnect or aren't fully connected yet."
+          },
+          "significance": "high"
+        }
+      ]
+    }
+  ],
+  "commits": [],
+  "filesChanged": [],
+  "projectId": "/data/repos/relay",
+  "tags": []
+}
