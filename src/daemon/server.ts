@@ -255,6 +255,78 @@ export class Daemon {
       fs.mkdirSync(socketDir, { recursive: true });
     }
 
+    // Set up inbox symlink for workspace namespacing
+    // Daemon delivers to legacy path (/tmp/relay-inbox), symlink points to workspace path
+    // This allows agents to use simple instructions while maintaining workspace isolation
+    const workspaceId = process.env.RELAY_WORKSPACE_ID
+      || process.env.AGENT_RELAY_WORKSPACE_ID
+      || process.env.WORKSPACE_ID;
+
+    const legacyInboxPath = '/tmp/relay-inbox';
+    let inboxPath = legacyInboxPath;
+
+    if (workspaceId) {
+      // Workspace-namespaced inbox directory
+      inboxPath = `/tmp/relay/${workspaceId}/inbox`;
+
+      try {
+        // Ensure workspace inbox directory exists
+        const inboxDir = path.dirname(inboxPath);
+        if (!fs.existsSync(inboxDir)) {
+          fs.mkdirSync(inboxDir, { recursive: true });
+        }
+        if (!fs.existsSync(inboxPath)) {
+          fs.mkdirSync(inboxPath, { recursive: true });
+        }
+
+        // Ensure legacy inbox parent directory exists
+        const legacyInboxParent = path.dirname(legacyInboxPath);
+        if (!fs.existsSync(legacyInboxParent)) {
+          fs.mkdirSync(legacyInboxParent, { recursive: true });
+        }
+
+        // Create symlink from legacy path to workspace path
+        // If legacy path exists as a regular directory, remove it first
+        if (fs.existsSync(legacyInboxPath)) {
+          try {
+            const stats = fs.lstatSync(legacyInboxPath);
+            if (stats.isSymbolicLink()) {
+              // Already a symlink - remove and recreate to ensure correct target
+              fs.unlinkSync(legacyInboxPath);
+            } else if (stats.isDirectory()) {
+              // Regular directory - remove it (may have stale files from previous run)
+              fs.rmSync(legacyInboxPath, { recursive: true, force: true });
+            }
+          } catch {
+            // Ignore errors during cleanup
+          }
+        }
+
+        // Create the symlink: legacy path -> workspace path
+        fs.symlinkSync(inboxPath, legacyInboxPath);
+        log.info('Created inbox symlink', { from: legacyInboxPath, to: inboxPath });
+      } catch (err: any) {
+        log.error('Failed to set up inbox symlink', { error: err.message });
+        // Fall back to creating legacy directory directly
+        try {
+          if (!fs.existsSync(legacyInboxPath)) {
+            fs.mkdirSync(legacyInboxPath, { recursive: true });
+          }
+        } catch {
+          // Ignore
+        }
+      }
+    } else {
+      // No workspace ID - just ensure legacy inbox directory exists
+      try {
+        if (!fs.existsSync(legacyInboxPath)) {
+          fs.mkdirSync(legacyInboxPath, { recursive: true });
+        }
+      } catch (err: any) {
+        log.error('Failed to create inbox directory', { error: err.message });
+      }
+    }
+
     return new Promise((resolve, reject) => {
       this.server.on('error', reject);
       this.server.listen(this.config.socketPath, () => {
