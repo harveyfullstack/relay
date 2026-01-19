@@ -799,11 +799,7 @@ mod tests {
         std::fs::write(temp_dir.join(format!("{}.json", msg_id)), json).unwrap();
 
         // Create parser with outbox path
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
@@ -828,11 +824,7 @@ mod tests {
         let json = r#"{"kind":"spawn","name":"Worker1","cli":"claude","task":"Do the thing"}"#;
         std::fs::write(temp_dir.join(format!("{}.json", msg_id)), json).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
@@ -857,11 +849,7 @@ mod tests {
         let json = r#"{"kind":"release","name":"Worker1"}"#;
         std::fs::write(temp_dir.join(format!("{}.json", msg_id)), json).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
@@ -881,11 +869,7 @@ mod tests {
         let json = r#"{"kind":"message","to":"Bob","body":"Threaded msg","thread":"task-123"}"#;
         std::fs::write(temp_dir.join(format!("{}.json", msg_id)), json).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
@@ -901,11 +885,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         // Don't write any file
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = "->relay-file:nonexistent\n";
         let result = parser.process(input.as_bytes());
 
@@ -934,11 +914,7 @@ mod tests {
         let json = r#"{"kind":"message","to":"Bob","body":"Hello!"}"#;
         std::fs::write(temp_dir.join(format!("{}.json", msg_id)), json).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!(
             "I'm going to send a message now.\n->relay-file:{}\nAnd that's done.\n",
             msg_id
@@ -984,11 +960,7 @@ mod tests {
         let json = "{\"kind\":\"message\",\"to\":\"Bob\",\"body\":\"Hello\\! World\nLine 2\"}";
         std::fs::write(temp_dir.join(format!("{}.json", msg_id)), json).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
@@ -1047,11 +1019,7 @@ mod tests {
         let content = "TO: Bob\n\nHello from header format!\nMultiple lines work great.";
         std::fs::write(temp_dir.join(msg_id), content).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
@@ -1074,11 +1042,7 @@ mod tests {
         );
         std::fs::write(temp_dir.join(msg_id), content).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
@@ -1180,11 +1144,7 @@ mod tests {
         let content = "TO: Bob\nAWAIT: 30s\n\nYour turn. Play a card.";
         std::fs::write(temp_dir.join(msg_id), content).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
@@ -1193,7 +1153,10 @@ mod tests {
         assert!(result.commands[0].body.contains("Your turn"));
 
         // Check sync metadata
-        let sync = result.commands[0].sync.as_ref().expect("sync should be present");
+        let sync = result.commands[0]
+            .sync
+            .as_ref()
+            .expect("sync should be present");
         assert!(sync.blocking);
         assert_eq!(sync.timeout_ms, Some(30_000));
 
@@ -1209,18 +1172,17 @@ mod tests {
         let content = "TO: Bob\nAWAIT: true\n\nBlocking with default timeout";
         std::fs::write(temp_dir.join(msg_id), content).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
         assert_eq!(result.commands.len(), 1);
 
         // Check sync metadata - timeout_ms should be None for default
-        let sync = result.commands[0].sync.as_ref().expect("sync should be present");
+        let sync = result.commands[0]
+            .sync
+            .as_ref()
+            .expect("sync should be present");
         assert!(sync.blocking);
         assert_eq!(sync.timeout_ms, None); // 0 converted to None
 
@@ -1236,18 +1198,17 @@ mod tests {
         let content = "TO: Bob\nAWAIT: 60s\nTHREAD: game-123\n\nYour move in the game";
         std::fs::write(temp_dir.join(msg_id), content).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
         assert_eq!(result.commands.len(), 1);
         assert_eq!(result.commands[0].thread, Some("game-123".to_string()));
 
-        let sync = result.commands[0].sync.as_ref().expect("sync should be present");
+        let sync = result.commands[0]
+            .sync
+            .as_ref()
+            .expect("sync should be present");
         assert!(sync.blocking);
         assert_eq!(sync.timeout_ms, Some(60_000));
 
@@ -1263,11 +1224,7 @@ mod tests {
         let content = "TO: Bob\n\nFire and forget message";
         std::fs::write(temp_dir.join(msg_id), content).unwrap();
 
-        let mut parser = OutputParser::with_outbox(
-            "Alice".to_string(),
-            r"^> $",
-            temp_dir.clone(),
-        );
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
         let input = format!("->relay-file:{}\n", msg_id);
         let result = parser.process(input.as_bytes());
 
