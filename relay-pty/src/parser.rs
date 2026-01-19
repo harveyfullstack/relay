@@ -6,7 +6,7 @@
 //! - Prompt patterns (to detect idle state)
 //! - `->pty:ready` explicit ready signal
 
-use crate::protocol::ParsedRelayCommand;
+use crate::protocol::{ParsedRelayCommand, SyncMeta};
 use regex::Regex;
 use serde::Deserialize;
 use std::sync::OnceLock;
@@ -37,6 +37,8 @@ struct RelayMessage {
     cli: Option<String>,
     /// Optional thread identifier
     thread: Option<String>,
+    /// Optional await timeout in milliseconds (for blocking messages)
+    await_timeout_ms: Option<u64>,
 }
 
 /// JSON format (for backwards compatibility)
@@ -62,6 +64,45 @@ struct JsonRelayMessage {
     /// Optional thread identifier
     #[serde(default)]
     thread: Option<String>,
+}
+
+/// Parse AWAIT header value into milliseconds.
+/// Supported formats:
+/// - `30s` - 30 seconds
+/// - `1m` - 1 minute
+/// - `1h` - 1 hour
+/// - `30000` - 30000 milliseconds (bare number)
+/// - Empty/`true` - uses default (returns Some(0) to indicate "use default")
+fn parse_await_value(value: &str) -> Option<u64> {
+    let value = value.trim();
+
+    // Empty or "true" means blocking with default timeout
+    if value.is_empty() || value.eq_ignore_ascii_case("true") {
+        return Some(0); // 0 means "use default timeout"
+    }
+
+    // Try parsing with time suffix
+    let len = value.len();
+    if len >= 2 {
+        let (num_str, suffix) = value.split_at(len - 1);
+        if let Ok(num) = num_str.parse::<u64>() {
+            match suffix.to_lowercase().as_str() {
+                "s" => return Some(num * 1000),
+                "m" => return Some(num * 60 * 1000),
+                "h" => return Some(num * 60 * 60 * 1000),
+                _ => {}
+            }
+        }
+    }
+
+    // Try parsing as bare number (milliseconds)
+    if let Ok(ms) = value.parse::<u64>() {
+        return Some(ms);
+    }
+
+    // Invalid format - still treat as blocking with default
+    debug!("Invalid AWAIT value '{}', using default timeout", value);
+    Some(0)
 }
 
 /// Parse simple header-based format:
@@ -99,6 +140,9 @@ fn parse_header_format(content: &str) -> Option<RelayMessage> {
                 "NAME" => msg.name = Some(value),
                 "CLI" => msg.cli = Some(value),
                 "THREAD" => msg.thread = Some(value),
+                "AWAIT" => {
+                    msg.await_timeout_ms = parse_await_value(&value);
+                }
                 _ => {} // Ignore unknown headers
             }
         }
@@ -317,6 +361,7 @@ impl OutputParser {
                                 name: json_msg.name,
                                 cli: json_msg.cli,
                                 thread: json_msg.thread,
+                                await_timeout_ms: None, // JSON format doesn't support AWAIT yet
                             })
                         }
                         Err(e) => {
@@ -370,6 +415,13 @@ impl OutputParser {
                             );
                             if let Some(thread) = msg.thread {
                                 cmd = cmd.with_thread(thread);
+                            }
+                            // Apply sync metadata if AWAIT header was present
+                            if let Some(timeout_ms) = msg.await_timeout_ms {
+                                cmd = cmd.with_sync(SyncMeta {
+                                    blocking: true,
+                                    timeout_ms: if timeout_ms > 0 { Some(timeout_ms) } else { None },
+                                });
                             }
                             Some(cmd)
                         } else {
@@ -996,6 +1048,173 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("tic-tac-toe"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    // =========================================================================
+    // AWAIT header parsing tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_await_value_seconds() {
+        assert_eq!(parse_await_value("30s"), Some(30_000));
+        assert_eq!(parse_await_value("1s"), Some(1_000));
+        assert_eq!(parse_await_value("120s"), Some(120_000));
+    }
+
+    #[test]
+    fn test_parse_await_value_minutes() {
+        assert_eq!(parse_await_value("1m"), Some(60_000));
+        assert_eq!(parse_await_value("5m"), Some(300_000));
+        assert_eq!(parse_await_value("30m"), Some(1_800_000));
+    }
+
+    #[test]
+    fn test_parse_await_value_hours() {
+        assert_eq!(parse_await_value("1h"), Some(3_600_000));
+        assert_eq!(parse_await_value("2h"), Some(7_200_000));
+    }
+
+    #[test]
+    fn test_parse_await_value_milliseconds() {
+        assert_eq!(parse_await_value("30000"), Some(30_000));
+        assert_eq!(parse_await_value("1000"), Some(1_000));
+        assert_eq!(parse_await_value("60000"), Some(60_000));
+    }
+
+    #[test]
+    fn test_parse_await_value_default() {
+        // Empty or "true" means blocking with default timeout (represented as 0)
+        assert_eq!(parse_await_value(""), Some(0));
+        assert_eq!(parse_await_value("true"), Some(0));
+        assert_eq!(parse_await_value("TRUE"), Some(0));
+        assert_eq!(parse_await_value("True"), Some(0));
+    }
+
+    #[test]
+    fn test_parse_await_value_invalid() {
+        // Invalid values still return Some(0) to indicate "blocking with default"
+        assert_eq!(parse_await_value("invalid"), Some(0));
+        assert_eq!(parse_await_value("30x"), Some(0));
+    }
+
+    #[test]
+    fn test_parse_header_format_with_await_seconds() {
+        let content = "TO: Bob\nAWAIT: 30s\n\nBlocking message";
+        let msg = parse_header_format(content).unwrap();
+        assert_eq!(msg.to, Some("Bob".to_string()));
+        assert_eq!(msg.await_timeout_ms, Some(30_000));
+    }
+
+    #[test]
+    fn test_parse_header_format_with_await_minutes() {
+        let content = "TO: Bob\nAWAIT: 1m\n\nBlocking message";
+        let msg = parse_header_format(content).unwrap();
+        assert_eq!(msg.await_timeout_ms, Some(60_000));
+    }
+
+    #[test]
+    fn test_parse_header_format_with_await_default() {
+        let content = "TO: Bob\nAWAIT: true\n\nBlocking message with default timeout";
+        let msg = parse_header_format(content).unwrap();
+        assert_eq!(msg.await_timeout_ms, Some(0)); // 0 means default timeout
+    }
+
+    #[test]
+    fn test_parse_header_format_no_await() {
+        let content = "TO: Bob\n\nNon-blocking message";
+        let msg = parse_header_format(content).unwrap();
+        assert_eq!(msg.await_timeout_ms, None);
+    }
+
+    #[test]
+    fn test_file_relay_with_await() {
+        let temp_dir = std::env::temp_dir().join("relay-test-await");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let msg_id = "test-await-001";
+        let content = "TO: Bob\nAWAIT: 30s\n\nYour turn. Play a card.";
+        std::fs::write(temp_dir.join(msg_id), content).unwrap();
+
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
+        let input = format!("->relay-file:{}\n", msg_id);
+        let result = parser.process(input.as_bytes());
+
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.commands[0].to, "Bob");
+        assert!(result.commands[0].body.contains("Your turn"));
+
+        // Check sync metadata
+        let sync = result.commands[0].sync.as_ref().expect("sync should be present");
+        assert!(sync.blocking);
+        assert_eq!(sync.timeout_ms, Some(30_000));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_relay_with_await_default_timeout() {
+        let temp_dir = std::env::temp_dir().join("relay-test-await-default");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let msg_id = "test-await-default";
+        let content = "TO: Bob\nAWAIT: true\n\nBlocking with default timeout";
+        std::fs::write(temp_dir.join(msg_id), content).unwrap();
+
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
+        let input = format!("->relay-file:{}\n", msg_id);
+        let result = parser.process(input.as_bytes());
+
+        assert_eq!(result.commands.len(), 1);
+
+        // Check sync metadata - timeout_ms should be None for default
+        let sync = result.commands[0].sync.as_ref().expect("sync should be present");
+        assert!(sync.blocking);
+        assert_eq!(sync.timeout_ms, None); // 0 converted to None
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_relay_with_await_and_thread() {
+        let temp_dir = std::env::temp_dir().join("relay-test-await-thread");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let msg_id = "test-await-thread";
+        let content = "TO: Bob\nAWAIT: 60s\nTHREAD: game-123\n\nYour move in the game";
+        std::fs::write(temp_dir.join(msg_id), content).unwrap();
+
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
+        let input = format!("->relay-file:{}\n", msg_id);
+        let result = parser.process(input.as_bytes());
+
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.commands[0].thread, Some("game-123".to_string()));
+
+        let sync = result.commands[0].sync.as_ref().expect("sync should be present");
+        assert!(sync.blocking);
+        assert_eq!(sync.timeout_ms, Some(60_000));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_relay_without_await() {
+        let temp_dir = std::env::temp_dir().join("relay-test-no-await");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let msg_id = "test-no-await";
+        let content = "TO: Bob\n\nFire and forget message";
+        std::fs::write(temp_dir.join(msg_id), content).unwrap();
+
+        let mut parser = OutputParser::with_outbox("Alice".to_string(), r"^> $", temp_dir.clone());
+        let input = format!("->relay-file:{}\n", msg_id);
+        let result = parser.process(input.as_bytes());
+
+        assert_eq!(result.commands.len(), 1);
+        // No sync metadata for non-blocking messages
+        assert!(result.commands[0].sync.is_none());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
