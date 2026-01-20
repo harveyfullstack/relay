@@ -201,6 +201,30 @@ export async function createServer(): Promise<CloudServer> {
   const RATE_LIMIT_MAX = process.env.NODE_ENV === 'development' ? 1000 : 300;
   const rateLimits = new Map<string, { count: number; resetAt: number }>();
 
+  // Track channel WebSocket clients by workspaceId for broadcasting channel events
+  const channelClientsByWorkspace = new Map<string, Set<WebSocket>>();
+
+  /**
+   * Broadcast a channel event to all connected clients in a workspace.
+   * Used for notifying clients about channel creation, archiving, etc.
+   */
+  const broadcastToWorkspaceChannelClients = (workspaceId: string, message: object) => {
+    const clients = channelClientsByWorkspace.get(workspaceId);
+    if (!clients || clients.size === 0) {
+      console.log(`[ws/channels] No clients connected for workspace ${workspaceId}, skipping broadcast`);
+      return;
+    }
+    const payload = JSON.stringify(message);
+    let sentCount = 0;
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+        sentCount++;
+      }
+    }
+    console.log(`[ws/channels] Broadcast to ${sentCount}/${clients.size} clients in workspace ${workspaceId}`);
+  };
+
   app.use((req: Request, res: Response, next: NextFunction) => {
     // Skip rate limiting for localhost in development
     if (process.env.NODE_ENV === 'development') {
@@ -499,8 +523,10 @@ export async function createServer(): Promise<CloudServer> {
       const memberCounts = await db.channelMembers.countByChannelIds(channelUuids);
 
       // Transform to API response format
+      // IMPORTANT: Channel IDs must include # prefix to match daemon convention
+      // The daemon uses "#channelName" format for CHANNEL_MESSAGE routing
       const mapChannel = (c: typeof allChannels[0]) => ({
-        id: c.channelId,
+        id: c.channelId.startsWith('#') ? c.channelId : `#${c.channelId}`,
         name: c.name,
         description: c.description,
         visibility: c.visibility,
@@ -671,10 +697,32 @@ export async function createServer(): Promise<CloudServer> {
         }
       }
 
+      // Broadcast channel creation to all connected clients in this workspace
+      // Use # prefix for channel ID to match daemon convention
+      const normalizedChannelId = channel.channelId.startsWith('#') ? channel.channelId : `#${channel.channelId}`;
+      const channelData = {
+        id: normalizedChannelId,
+        name: channel.name,
+        description: channel.description,
+        visibility: channel.visibility,
+        status: channel.status,
+        createdAt: channel.createdAt.toISOString(),
+        createdBy: channel.createdBy,
+        memberCount: addedMembers.length,
+        unreadCount: 0,
+        hasMentions: false,
+        isDm: false,
+      };
+      broadcastToWorkspaceChannelClients(workspaceId, {
+        type: 'channel_created',
+        channel: channelData,
+      });
+      console.log(`[channels] Broadcast channel_created event for ${channelId} to workspace ${workspaceId}`);
+
       res.status(201).json({
         success: true,
         channel: {
-          id: channel.channelId,
+          id: normalizedChannelId,
           name: channel.name,
           description: channel.description,
           visibility: channel.visibility,
@@ -1242,6 +1290,13 @@ export async function createServer(): Promise<CloudServer> {
   wssChannels.on('connection', async (clientWs: WebSocket, workspaceId: string, username: string) => {
     console.log(`[ws/channels] Client connected for workspace=${workspaceId} user=${username}`);
 
+    // Track client for broadcasting channel events
+    if (!channelClientsByWorkspace.has(workspaceId)) {
+      channelClientsByWorkspace.set(workspaceId, new Set());
+    }
+    channelClientsByWorkspace.get(workspaceId)!.add(clientWs);
+    console.log(`[ws/channels] Now tracking ${channelClientsByWorkspace.get(workspaceId)!.size} clients for workspace ${workspaceId}`);
+
     let daemonWs: WebSocket | null = null;
 
     try {
@@ -1323,6 +1378,14 @@ export async function createServer(): Promise<CloudServer> {
 
       clientWs.on('close', () => {
         console.log(`[ws/channels] Client disconnected for ${username}`);
+        // Remove from tracking
+        const clients = channelClientsByWorkspace.get(workspaceId);
+        if (clients) {
+          clients.delete(clientWs);
+          if (clients.size === 0) {
+            channelClientsByWorkspace.delete(workspaceId);
+          }
+        }
         // Send leave message to daemon
         if (daemonWs && daemonWs.readyState === WebSocket.OPEN) {
           daemonWs.send(JSON.stringify({
@@ -1336,6 +1399,14 @@ export async function createServer(): Promise<CloudServer> {
 
       clientWs.on('error', (err) => {
         console.error(`[ws/channels] Client WebSocket error:`, err);
+        // Remove from tracking
+        const clients = channelClientsByWorkspace.get(workspaceId);
+        if (clients) {
+          clients.delete(clientWs);
+          if (clients.size === 0) {
+            channelClientsByWorkspace.delete(workspaceId);
+          }
+        }
         if (daemonWs && daemonWs.readyState === WebSocket.OPEN) {
           daemonWs.close();
         }
@@ -1459,48 +1530,66 @@ export async function createServer(): Promise<CloudServer> {
         return;
       }
 
-      // Use local dashboard URL where the daemon actually runs
-      const dashboardUrl = await getLocalDashboardUrl();
+      // Use workspace's public URL where the daemon actually runs
+      // IMPORTANT: Must use workspace.publicUrl (not getLocalDashboardUrl) because
+      // the daemon and userBridge are on the workspace server, not the cloud server
+      const dashboardUrl = workspace.publicUrl || await getLocalDashboardUrl();
       const daemonWsUrl = dashboardUrl.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws/presence';
       console.log(`[cloud] Connecting channel proxy to daemon: ${daemonWsUrl} for ${username}`);
 
-      // First, register the user for channel messages on the daemon side
-      // This creates a relay client for them so they receive channel messages
-      try {
-        const subscribeRes = await fetch(`${dashboardUrl}/api/channels/subscribe`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username,
-            channels: ['#general'], // Start with general, others can be joined later
-            workspaceId,
-          }),
-        });
-        if (subscribeRes.ok) {
-          const result = (await subscribeRes.json()) as { channels?: string[] };
-          console.log(`[cloud] Subscribed ${username} to channels: ${result.channels?.join(', ')}`);
-        } else {
-          console.warn(`[cloud] Failed to subscribe ${username} to channels: ${subscribeRes.status}`);
-        }
-      } catch (err) {
-        console.warn(`[cloud] Error subscribing ${username} to channels:`, err);
-        // Continue anyway - we can still set up the proxy
-      }
-
       const daemonWs = new WebSocket(daemonWsUrl, { perMessageDeflate: false });
 
-      daemonWs.on('open', () => {
+      daemonWs.on('open', async () => {
         console.log(`[cloud] Channel proxy connected for ${username} in workspace ${workspaceId}`);
+
+        // Send presence join to register with userBridge on dashboard-server
+        // This creates a relay client for the user so they can receive channel messages
+        daemonWs.send(JSON.stringify({
+          type: 'presence',
+          action: 'join',
+          user: { username },
+        }));
+        console.log(`[cloud] Sent presence join for ${username} to register with userBridge`);
+
+        // Wait briefly for userBridge registration to complete, then subscribe to channels
+        // This ensures the user is registered before we try to join channels via userBridge
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        try {
+          const subscribeRes = await fetch(`${dashboardUrl}/api/channels/subscribe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username,
+              channels: ['#general'], // Start with general, others can be joined later
+              workspaceId,
+            }),
+          });
+          if (subscribeRes.ok) {
+            const result = (await subscribeRes.json()) as { channels?: string[] };
+            console.log(`[cloud] Subscribed ${username} to channels: ${result.channels?.join(', ')}`);
+          } else {
+            console.warn(`[cloud] Failed to subscribe ${username} to channels: ${subscribeRes.status}`);
+          }
+        } catch (err) {
+          console.warn(`[cloud] Error subscribing ${username} to channels:`, err);
+        }
       });
 
       daemonWs.on('message', (data) => {
         try {
           const msg = JSON.parse(data.toString());
-          // Forward channel messages targeted at this user
-          if (msg.type === 'channel_message' && msg.targetUser === username) {
-            console.log(`[cloud] Forwarding channel message to ${username}: ${msg.from} -> ${msg.channel}`);
-            if (clientWs.readyState === WebSocket.OPEN) {
-              clientWs.send(data.toString());
+          // Forward channel messages to this user
+          // userBridge sends messages directly to registered users (no targetUser filter needed)
+          // getRelayClient fallback broadcasts with targetUser field
+          if (msg.type === 'channel_message') {
+            // Either the message is for this user specifically (targetUser match)
+            // or it's a direct send from userBridge (no targetUser, meaning it's for us)
+            if (!msg.targetUser || msg.targetUser === username) {
+              console.log(`[cloud] Forwarding channel message to ${username}: ${msg.from} -> ${msg.channel}`);
+              if (clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(data.toString());
+              }
             }
           }
         } catch {
