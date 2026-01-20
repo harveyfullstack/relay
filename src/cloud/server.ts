@@ -865,7 +865,11 @@ export async function createServer(): Promise<CloudServer> {
   });
 
   /**
-   * POST /api/channels/invite - Invite users to a channel
+   * POST /api/channels/invite - Invite users or agents to a channel
+   * Invites can be:
+   * - Array of strings (usernames, assumed to be users)
+   * - Comma-separated string of usernames
+   * - Array of objects with { id: string, type: 'user' | 'agent' }
    */
   app.post('/api/channels/invite', requireAuth, express.json(), async (req, res) => {
     try {
@@ -883,28 +887,70 @@ export async function createServer(): Promise<CloudServer> {
         return res.status(404).json({ error: 'Channel not found' });
       }
 
-      const inviteList = typeof invites === 'string'
-        ? invites.split(',').map((s: string) => s.trim()).filter(Boolean)
-        : invites;
+      // Get workspace for daemon sync
+      const workspace = await db.workspaces.findById(workspaceId);
+
+      // Normalize invite list to { id, type } format
+      type InviteItem = { id: string; type: 'user' | 'agent' };
+      let inviteList: InviteItem[];
+
+      if (typeof invites === 'string') {
+        // Comma-separated string - assume users
+        inviteList = invites.split(',').map((s: string) => s.trim()).filter(Boolean)
+          .map(id => ({ id, type: 'user' as const }));
+      } else if (Array.isArray(invites)) {
+        // Array - could be strings or objects
+        inviteList = invites.map(item => {
+          if (typeof item === 'string') {
+            return { id: item, type: 'user' as const };
+          }
+          return { id: item.id, type: item.type || 'user' };
+        });
+      } else {
+        return res.status(400).json({ error: 'invites must be a string or array' });
+      }
 
       const results = [];
+      const agentWarnings: Array<{ member: string; warning: string }> = [];
+
       for (const invitee of inviteList) {
-        const existing = await db.channelMembers.findMembership(channel.id, invitee);
+        const existing = await db.channelMembers.findMembership(channel.id, invitee.id);
         if (!existing) {
           await db.channelMembers.addMember({
             channelId: channel.id,
-            memberId: invitee,
-            memberType: 'user',
+            memberId: invitee.id,
+            memberType: invitee.type,
             role: 'member',
             invitedBy,
           });
-          results.push({ username: invitee, success: true });
+
+          // For agents, sync to workspace daemon's in-memory channel membership
+          if (invitee.type === 'agent' && workspace) {
+            try {
+              const channelName = `#${channelId}`;
+              const dashboardUrl = workspace.publicUrl || await getLocalDashboardUrl();
+              const joinResponse = await fetch(`${dashboardUrl}/api/channels/admin-join`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ channel: channelName, member: invitee.id, workspaceId }),
+              });
+              const joinResult = await joinResponse.json() as { success: boolean; warning?: string };
+              console.log(`[channels] Synced agent ${invitee.id} to channel ${channelName} via workspace daemon`);
+              if (joinResult.warning) {
+                agentWarnings.push({ member: invitee.id, warning: joinResult.warning });
+              }
+            } catch (err) {
+              console.warn(`[channels] Failed to sync agent ${invitee.id} to daemon:`, err);
+            }
+          }
+
+          results.push({ id: invitee.id, type: invitee.type, success: true });
         } else {
-          results.push({ username: invitee, success: true, reason: 'already_member' });
+          results.push({ id: invitee.id, type: invitee.type, success: true, reason: 'already_member' });
         }
       }
 
-      res.json({ channel: channelId, invited: results });
+      res.json({ channel: channelId, invited: results, warnings: agentWarnings.length > 0 ? agentWarnings : undefined });
     } catch (error) {
       console.error('[channels] Error inviting to channel:', error);
       res.status(500).json({ error: 'Failed to invite to channel' });
