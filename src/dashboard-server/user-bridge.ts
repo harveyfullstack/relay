@@ -132,7 +132,7 @@ export class UserBridge {
 
     // Set up channel message handler to forward channel messages to WebSocket
     relayClient.onChannelMessage = (from, channel, body, envelope) => {
-      console.log(`[user-bridge] onChannelMessage callback triggered: ${from} -> ${channel} for ${username}`);
+      console.log(`[user-bridge] Channel message for ${username}: ${from} -> ${channel}`);
       this.handleIncomingChannelMessage(username, from, channel, body, envelope);
     };
 
@@ -146,6 +146,7 @@ export class UserBridge {
     };
 
     this.users.set(username, session);
+    console.log(`[user-bridge] User registered: ${username} (total: ${this.users.size})`);
 
     // Auto-join user to #general channel
     // Note: The daemon auto-joins on connect, but we need to track locally too
@@ -351,6 +352,14 @@ export class UserBridge {
     body: string,
     payload: unknown
   ): void {
+    // Skip channel messages - they are handled by handleIncomingChannelMessage
+    // The relay client calls both onMessage and onChannelMessage for channel messages,
+    // with _isChannelMessage flag set in the data for onMessage calls
+    const payloadObj = payload as { body?: string; data?: { _isChannelMessage?: boolean } } | undefined;
+    if (payloadObj?.data?._isChannelMessage) {
+      return; // Skip - will be handled by onChannelMessage callback
+    }
+
     const session = this.users.get(username);
     if (!session) return;
 
@@ -358,7 +367,6 @@ export class UserBridge {
     if (ws.readyState !== 1) return; // Not OPEN
 
     // Direct message (DELIVER)
-    const payloadObj = payload as { body?: string } | undefined;
     ws.send(JSON.stringify({
       type: 'direct_message',
       from,

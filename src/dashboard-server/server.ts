@@ -1153,9 +1153,27 @@ export async function startDashboard(
     }
   };
 
+  // Helper to check if a user is a remote user (connected via cloud dashboard)
+  const isRemoteUser = (username: string): boolean => {
+    const remoteUsersPath = path.join(teamDir, 'remote-users.json');
+    if (!fs.existsSync(remoteUsersPath)) return false;
+
+    try {
+      const data = JSON.parse(fs.readFileSync(remoteUsersPath, 'utf-8'));
+      // Check if file is stale (more than 60 seconds old)
+      if (data.updatedAt && Date.now() - data.updatedAt > 60 * 1000) {
+        return false;
+      }
+      return data.users?.some((u: { name: string }) => u.name === username) ?? false;
+    } catch {
+      return false;
+    }
+  };
+
   const isUserOnline = (username: string): boolean => {
     if (username === '*') return true;
-    return onlineUsers.has(username) || userBridge.isUserRegistered(username);
+    // Check local presence, userBridge registration, and remote users from cloud
+    return onlineUsers.has(username) || userBridge.isUserRegistered(username) || isRemoteUser(username);
   };
 
   const isRecipientOnline = (name: string): boolean => (
@@ -1520,6 +1538,13 @@ export async function startDashboard(
   const mapStoredMessages = (rows: StoredMessage[]): Message[] => rows
     // Filter out messages from/to internal system agents (e.g., __spawner__)
     .filter((row) => !isInternalAgent(row.from) && !isInternalAgent(row.to))
+    // Filter out channel messages - these are shown in the channels view, not the agent messages view
+    .filter((row) => {
+      if (row.data && typeof row.data === 'object' && '_isChannelMessage' in row.data) {
+        return false;
+      }
+      return true;
+    })
     .map((row) => {
       // Extract attachments, channel, and senderName from the data field if present
       let attachments: Attachment[] | undefined;
@@ -1661,6 +1686,44 @@ export async function startDashboard(
           needsAttention: false,
           avatarUrl: state.info.avatarUrl,
         });
+      }
+    }
+
+    // Inject remote users (connected via cloud dashboard) into agentsMap
+    // These users are synced from the cloud server and stored in remote-users.json
+    const remoteUsersPath = path.join(teamDir, 'remote-users.json');
+    if (fs.existsSync(remoteUsersPath)) {
+      try {
+        const remoteData = JSON.parse(fs.readFileSync(remoteUsersPath, 'utf-8'));
+        // Only include if file is fresh (within 60 seconds)
+        if (remoteData.updatedAt && Date.now() - remoteData.updatedAt <= 60 * 1000) {
+          for (const user of remoteData.users || []) {
+            // Don't override local users
+            if (onlineUsers.has(user.name)) continue;
+
+            const existing = agentsMap.get(user.name);
+            if (existing) {
+              existing.cli = 'dashboard';
+              existing.status = 'online';
+              if (user.avatarUrl) existing.avatarUrl = user.avatarUrl;
+            } else {
+              const now = new Date().toISOString();
+              agentsMap.set(user.name, {
+                name: user.name,
+                role: 'User',
+                cli: 'dashboard',
+                messageCount: 0,
+                status: 'online',
+                lastSeen: now,
+                lastActive: now,
+                needsAttention: false,
+                avatarUrl: user.avatarUrl,
+              });
+            }
+          }
+        }
+      } catch {
+        // Ignore parse errors for remote users file
       }
     }
 
@@ -3092,7 +3155,10 @@ export async function startDashboard(
 
   /**
    * POST /api/channels/subscribe - Subscribe a cloud user to channel messages
-   * This creates a relay client for the user so they receive channel messages
+   * This joins the user to channels through their existing relay connection.
+   * IMPORTANT: Prefers userBridge (for cloud users connected via presence) over
+   * getRelayClient (fallback) to avoid creating duplicate connections that would
+   * conflict and break message routing.
    */
   app.post('/api/channels/subscribe', express.json(), async (req, res) => {
     const { username, channels, workspaceId } = req.body;
@@ -3103,7 +3169,44 @@ export async function startDashboard(
     }
 
     try {
-      // Get or create a relay client for this user
+      const joinedChannels: string[] = [];
+      const channelList = channels || ['#general'];
+
+      // Wait for userBridge registration to complete (cloud users send presence join
+      // which triggers async registration - we need to wait for it to finish)
+      // This prevents falling back to getRelayClient which creates a conflicting connection
+      let regAttempts = 0;
+      const maxRegAttempts = 20; // 2 seconds max wait
+      while (!userBridge.isUserRegistered(username) && regAttempts < maxRegAttempts) {
+        await new Promise(r => setTimeout(r, 100));
+        regAttempts++;
+      }
+
+      if (regAttempts > 0) {
+        console.log(`[channel-debug] SUBSCRIBE waited ${regAttempts * 100}ms for userBridge registration`);
+      }
+
+      // Check if user is registered with userBridge (cloud users via presence)
+      // This is the preferred path as it uses the existing relay connection
+      // and ensures channel messages flow through the proper callback chain
+      if (userBridge.isUserRegistered(username)) {
+        console.log(`[channel-debug] SUBSCRIBE via userBridge for ${username}`);
+        for (const channel of channelList) {
+          const channelId = channel.startsWith('dm:')
+            ? channel
+            : (channel.startsWith('#') ? channel : `#${channel}`);
+          const joined = await userBridge.joinChannel(username, channelId);
+          if (joined) {
+            joinedChannels.push(channelId);
+          }
+        }
+        console.log(`[channel-debug] SUBSCRIBE success via userBridge: ${username} joined ${joinedChannels.join(', ')}`);
+        return res.json({ success: true, channels: joinedChannels });
+      }
+
+      // Fallback: Use getRelayClient for users not registered with userBridge
+      // This path is used for direct API calls or when presence isn't established
+      console.log(`[channel-debug] SUBSCRIBE via getRelayClient fallback for ${username}`);
       const client = await getRelayClient(username);
       if (!client) {
         console.log(`[channel-debug] SUBSCRIBE failed: could not create relay client for ${username}`);
@@ -3123,8 +3226,6 @@ export async function startDashboard(
       }
 
       // Join the user to their channels
-      const joinedChannels: string[] = [];
-      const channelList = channels || ['#general'];
       for (const channel of channelList) {
         // Don't add '#' prefix to DM channels (they use 'dm:' prefix)
         const channelId = channel.startsWith('dm:')
@@ -3136,7 +3237,7 @@ export async function startDashboard(
         }
       }
 
-      console.log(`[channel-debug] SUBSCRIBE success: ${username} joined ${joinedChannels.join(', ')}`);
+      console.log(`[channel-debug] SUBSCRIBE success via fallback: ${username} joined ${joinedChannels.join(', ')}`);
       res.json({ success: true, channels: joinedChannels });
     } catch (err: any) {
       console.log(`[channel-debug] SUBSCRIBE error: ${err.message}`);
