@@ -1018,10 +1018,90 @@ export async function createServer(): Promise<CloudServer> {
 
   /**
    * GET /api/channels/:channel/members - Get members of a channel
+   * Cloud mode: Query database for channel members instead of proxying to local dashboard
    */
   app.get('/api/channels/:channel/members', requireAuth, async (req, res) => {
-    const channel = encodeURIComponent(req.params.channel);
-    await proxyToLocalDashboard(req, res, `/api/channels/${channel}/members`);
+    const channelParam = req.params.channel;
+    const workspaceId = req.query.workspaceId as string | undefined;
+    const userId = req.session.userId!;
+
+    try {
+      // Find the channel in the database
+      // Channel ID can be passed as "random" or "#random" - normalize to find in DB
+      const channelName = channelParam.replace(/^#/, '');
+
+      // Get workspace ID - either from query param or user's default workspace
+      let targetWorkspaceId = workspaceId;
+      if (!targetWorkspaceId) {
+        const memberships = await db.workspaceMembers.findByUserId(userId);
+        if (memberships.length > 0) {
+          targetWorkspaceId = memberships[0].workspaceId;
+        }
+      }
+
+      if (!targetWorkspaceId) {
+        return res.json({ members: [] });
+      }
+
+      // Verify user has access to this workspace
+      const canView = await db.workspaceMembers.canView(targetWorkspaceId, userId);
+      if (!canView) {
+        const workspace = await db.workspaces.findById(targetWorkspaceId);
+        if (!workspace || workspace.userId !== userId) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+      }
+
+      // Find the channel by name and workspace
+      const channels = await db.channels.findByWorkspaceId(targetWorkspaceId);
+      const channel = channels.find(c =>
+        c.channelId === channelName ||
+        c.channelId === `#${channelName}` ||
+        c.name === channelName
+      );
+
+      if (!channel) {
+        // Channel not found in database - return empty or fallback to dashboard proxy
+        console.log(`[channels] Channel ${channelParam} not found in database, proxying to dashboard`);
+        const encodedChannel = encodeURIComponent(channelParam);
+        return proxyToLocalDashboard(req, res, `/api/channels/${encodedChannel}/members`);
+      }
+
+      // Get all members of this channel from the database
+      const channelMembers = await db.channelMembers.findByChannelId(channel.id);
+
+      // Build response with entity type info and user details
+      const members = await Promise.all(
+        channelMembers.map(async (member) => {
+          let displayName = member.memberId;
+          let avatarUrl: string | undefined;
+
+          // If it's a user, look up their details (stored by GitHub username)
+          if (member.memberType === 'user') {
+            const user = await db.users.findByGithubUsername(member.memberId);
+            if (user) {
+              displayName = user.githubUsername || member.memberId;
+              avatarUrl = user.avatarUrl || undefined;
+            }
+          }
+
+          return {
+            id: member.memberId,
+            displayName,
+            avatarUrl,
+            entityType: member.memberType,
+            role: member.role || 'member',
+            status: 'offline', // TODO: Get actual online status from daemon
+            joinedAt: member.joinedAt.toISOString(),
+          };
+        })
+      );
+
+      return res.json({ members });
+    } catch (error) {
+      console.error('[channels] Error getting channel members:', error);
+      return res.status(500).json({ error: 'Failed to get channel members' });
+    }
   });
 
   /**
