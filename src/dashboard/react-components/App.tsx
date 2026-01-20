@@ -2743,6 +2743,7 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           onUpdateRole={() => {}}
           currentUserId={currentUser?.displayName}
           availableAgents={agents.map(a => ({ name: a.name }))}
+          workspaceId={effectiveActiveWorkspaceId ?? undefined}
         />
       )}
 
