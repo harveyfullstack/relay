@@ -233,6 +233,82 @@ export interface LogPayload {
 }
 
 // =============================================================================
+// Sync/Resume Types
+// =============================================================================
+
+export interface SyncStream {
+  topic: string;
+  peer: string;
+  last_seq: number;
+  server_last_seq?: number;
+}
+
+export interface SyncPayload {
+  session_id: string;
+  streams: SyncStream[];
+}
+
+// =============================================================================
+// Channel Types
+// =============================================================================
+
+/**
+ * Attachment metadata for messages.
+ */
+export interface MessageAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size?: number;
+  url?: string;
+  data?: string; // Base64 for inline
+}
+
+/**
+ * Payload for CHANNEL_JOIN message.
+ */
+export interface ChannelJoinPayload {
+  /** Channel to join (e.g., '#general') */
+  channel: string;
+  /** Display name for the channel member list */
+  displayName?: string;
+  /** Avatar URL */
+  avatarUrl?: string;
+  /** Member name to add (for admin operations) */
+  member?: string;
+}
+
+/**
+ * Payload for CHANNEL_LEAVE message.
+ */
+export interface ChannelLeavePayload {
+  /** Channel to leave */
+  channel: string;
+  /** Reason for leaving */
+  reason?: string;
+  /** Member name to remove (for admin operations) */
+  member?: string;
+}
+
+/**
+ * Payload for CHANNEL_MESSAGE.
+ */
+export interface ChannelMessagePayload {
+  /** Target channel */
+  channel: string;
+  /** Message content */
+  body: string;
+  /** Thread ID for threaded replies */
+  thread?: string;
+  /** Mentioned usernames/agent names */
+  mentions?: string[];
+  /** File attachments */
+  attachments?: MessageAttachment[];
+  /** Optional structured data */
+  data?: Record<string, unknown>;
+}
+
+// =============================================================================
 // Shadow Agent Types
 // =============================================================================
 
@@ -348,7 +424,11 @@ export type BusyEnvelope = Envelope<BusyPayload>;
 export type LogEnvelope = Envelope<LogPayload>;
 export type ShadowBindEnvelope = Envelope<ShadowBindPayload>;
 export type ShadowUnbindEnvelope = Envelope<ShadowUnbindPayload>;
+export type SyncEnvelope = Envelope<SyncPayload>;
 export type SpawnEnvelope = Envelope<SpawnPayload>;
 export type SpawnResultEnvelope = Envelope<SpawnResultPayload>;
 export type ReleaseEnvelope = Envelope<ReleasePayload>;
 export type ReleaseResultEnvelope = Envelope<ReleaseResultPayload>;
+export type ChannelJoinEnvelope = Envelope<ChannelJoinPayload>;
+export type ChannelLeaveEnvelope = Envelope<ChannelLeavePayload>;
+export type ChannelMessageEnvelope = Envelope<ChannelMessagePayload>;

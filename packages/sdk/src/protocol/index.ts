@@ -26,6 +26,9 @@ export {
   type ErrorCode,
   type ErrorPayload,
   type LogPayload,
+  // Sync/Resume
+  type SyncStream,
+  type SyncPayload,
   // Shadow agents
   type SpeakOnTrigger,
   type ShadowConfig,
@@ -37,6 +40,11 @@ export {
   type SpawnResultPayload,
   type ReleasePayload,
   type ReleaseResultPayload,
+  // Channel types
+  type MessageAttachment,
+  type ChannelJoinPayload,
+  type ChannelLeavePayload,
+  type ChannelMessagePayload,
   // Typed envelopes
   type HelloEnvelope,
   type WelcomeEnvelope,
@@ -49,12 +57,16 @@ export {
   type ErrorEnvelope,
   type BusyEnvelope,
   type LogEnvelope,
+  type SyncEnvelope,
   type ShadowBindEnvelope,
   type ShadowUnbindEnvelope,
   type SpawnEnvelope,
   type SpawnResultEnvelope,
   type ReleaseEnvelope,
   type ReleaseResultEnvelope,
+  type ChannelJoinEnvelope,
+  type ChannelLeaveEnvelope,
+  type ChannelMessageEnvelope,
 } from './types.js';
 
 export {

@@ -297,6 +297,25 @@ export class RelayClient {
   }
 
   /**
+   * Send an ACK for a delivered message.
+   */
+  sendAck(payload: AckPayload): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: Envelope<AckPayload> = {
+      v: PROTOCOL_VERSION,
+      type: 'ACK',
+      id: generateId(),
+      ts: Date.now(),
+      payload,
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
    * Send a message and wait for ACK response.
    */
   async sendAndWait(to: string, body: string, options: SyncOptions = {}): Promise<AckPayload> {
