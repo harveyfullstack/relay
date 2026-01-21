@@ -100,8 +100,7 @@ const AI_PROVIDERS: AIProvider[] = [
     description: 'Gemini - Google AI coding assistant',
     color: '#4285F4',
     cliCommand: 'gemini',
-    apiKeyUrl: 'https://aistudio.google.com/app/apikey',
-    apiKeyName: 'API key',
+    // No apiKeyUrl - Gemini uses interactive terminal where user can choose OAuth or API key
     supportsOAuth: true,
   },
   {
