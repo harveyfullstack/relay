@@ -430,9 +430,14 @@ impl OutputParser {
                 let cmd = match msg.kind.as_str() {
                     "spawn" => {
                         if let (Some(name), Some(cli)) = (&msg.name, &msg.cli) {
-                            info!("SPAWN PARSED: {} spawning {} with {} (task: {}...)",
-                                self.agent_name, name, cli,
-                                msg.body.as_ref().map(|b| &b[..b.len().min(50)]).unwrap_or(""));
+                            let task_preview = msg.body
+                                .as_ref()
+                                .map(|b| &b[..b.len().min(50)])
+                                .unwrap_or("");
+                            info!(
+                                "SPAWN PARSED: {} spawning {} with {} (task: {}...)",
+                                self.agent_name, name, cli, task_preview
+                            );
                             Some(ParsedRelayCommand::new_spawn(
                                 self.agent_name.clone(),
                                 name.clone(),
@@ -441,8 +446,10 @@ impl OutputParser {
                                 raw.to_string(),
                             ))
                         } else {
-                            warn!("SPAWN FAILED: File spawn missing name ({:?}) or cli ({:?})",
-                                msg.name, msg.cli);
+                            warn!(
+                                "SPAWN FAILED: File spawn missing name ({:?}) or cli ({:?})",
+                                msg.name, msg.cli
+                            );
                             None
                         }
                     }
