@@ -32,7 +32,8 @@ const PROVIDER_AUTH_CONFIG: Record<string, {
   anthropic: { authMethod: 'terminal' },
   codex: { authMethod: 'oauth', requiresUrlCopy: true, supportsDeviceFlow: true },
   openai: { authMethod: 'oauth', requiresUrlCopy: true, supportsDeviceFlow: true },
-  google: { authMethod: 'oauth' },
+  // Gemini uses terminal - CLI shows interactive menu for OAuth vs API key
+  google: { authMethod: 'terminal' },
   opencode: { authMethod: 'terminal' },
   droid: { authMethod: 'terminal' },
   cursor: { authMethod: 'terminal' },

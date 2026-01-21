@@ -152,10 +152,11 @@ export function WorkspaceSettingsPanel({
   const [showApiKeyFallback, setShowApiKeyFallback] = useState<Record<string, boolean>>({});
   // Device flow preference for providers that support it
   const [useDeviceFlow, setUseDeviceFlow] = useState<Record<string, boolean>>({});
-  // Use terminal-based setup (default for Claude and Cursor - Codex uses CLI helper flow)
+  // Use terminal-based setup (default for Claude, Cursor, and Gemini - Codex uses CLI helper flow)
   const [useTerminalSetup, setUseTerminalSetup] = useState<Record<string, boolean>>({
     anthropic: true, // Default to terminal for Claude
     cursor: true,    // Default to terminal for Cursor
+    google: true,    // Default to terminal for Gemini - allows choosing OAuth or API key
   });
 
   // Repo sync state
