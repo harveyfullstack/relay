@@ -3767,6 +3767,42 @@ export async function startDashboard(
     }
   });
 
+  /**
+   * POST /api/credentials/apikey - Write API key credential to user's home directory
+   * Used by cloud API to persist API keys to workspace filesystem
+   */
+  app.post('/api/credentials/apikey', express.json(), async (req, res) => {
+    const { userId, provider, apiKey } = req.body;
+
+    if (!userId || typeof userId !== 'string') {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    if (!provider || typeof provider !== 'string') {
+      return res.status(400).json({ error: 'provider is required' });
+    }
+    if (!apiKey || typeof apiKey !== 'string') {
+      return res.status(400).json({ error: 'apiKey is required' });
+    }
+
+    try {
+      // Dynamically import to avoid loading user-directory in all cases
+      const { getUserDirectoryService } = await import('../daemon/user-directory.js');
+      const userDirService = getUserDirectoryService();
+      const credPath = userDirService.writeApiKeyCredential(userId, provider, apiKey);
+
+      console.log(`[credentials] Wrote ${provider} API key for user ${userId} to ${credPath}`);
+
+      res.json({
+        success: true,
+        message: `${provider} API key saved`,
+        path: credPath,
+      });
+    } catch (err) {
+      console.error(`[credentials] Failed to write ${provider} API key for user ${userId}:`, err);
+      res.status(500).json({ error: 'Failed to write credential file' });
+    }
+  });
+
   // ===== Metrics API =====
 
   /**

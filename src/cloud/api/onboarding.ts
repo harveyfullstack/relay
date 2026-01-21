@@ -81,6 +81,7 @@ interface CLIAuthSession {
   createdAt: Date;
   output: string; // Accumulated output for debugging
   // Workspace delegation fields (set when auth runs in workspace daemon)
+  workspaceId?: string;
   workspaceUrl?: string;
   workspaceSessionId?: string;
 }
@@ -224,6 +225,7 @@ onboardingRouter.post('/cli/:provider/start', async (req: Request, res: Response
       createdAt: new Date(),
       output: '',
       // Store workspace info for status polling and auth code forwarding
+      workspaceId: workspace.id,
       workspaceUrl,
       workspaceSessionId: workspaceSession.sessionId,
     };
@@ -426,6 +428,7 @@ onboardingRouter.post('/cli/:provider/complete/:sessionId', async (req: Request,
     // authenticate directly on workspace instances)
     await db.credentials.upsert({
       userId,
+      workspaceId: session.workspaceId,
       provider,
       scopes: getProviderScopes(provider),
     });
@@ -564,9 +567,10 @@ onboardingRouter.post('/cli/:provider/cancel/:sessionId', async (req: Request, r
 onboardingRouter.post('/mark-connected/:provider', async (req: Request, res: Response) => {
   const provider = req.params.provider as string;
   const userId = req.session.userId!;
+  const { workspaceId } = req.body;
 
   // Validate provider
-  const validProviders = ['anthropic', 'openai', 'google', 'github', 'opencode', 'factory'];
+  const validProviders = ['anthropic', 'openai', 'google', 'github', 'opencode', 'factory', 'cursor'];
   if (!validProviders.includes(provider)) {
     return res.status(400).json({ error: 'Invalid provider' });
   }
@@ -575,11 +579,12 @@ onboardingRouter.post('/mark-connected/:provider', async (req: Request, res: Res
     // Mark provider as connected (tokens are stored by CLI on workspace)
     await db.credentials.upsert({
       userId,
+      workspaceId,
       provider,
       scopes: getProviderScopes(provider),
     });
 
-    console.log(`[onboarding] Marked ${provider} as connected for user ${userId}`);
+    console.log(`[onboarding] Marked ${provider} as connected for user ${userId} workspace ${workspaceId}`);
 
     res.json({
       success: true,
@@ -598,7 +603,7 @@ onboardingRouter.post('/mark-connected/:provider', async (req: Request, res: Res
 onboardingRouter.post('/token/:provider', async (req: Request, res: Response) => {
   const provider = req.params.provider as string;
   const userId = req.session.userId!;
-  const { token, email } = req.body;
+  const { token, email, workspaceId } = req.body;
 
   if (!token) {
     return res.status(400).json({ error: 'Token is required' });
@@ -618,9 +623,11 @@ onboardingRouter.post('/token/:provider', async (req: Request, res: Response) =>
       provider,
       scopes: getProviderScopes(provider),
       providerAccountEmail: email,
+      workspaceId,
     });
 
-    await setProviderApiKeyEnv(userId, provider, token);
+    // Set env var and write credential file to workspace
+    await setProviderApiKeyEnv(userId, provider, token, workspaceId);
 
     res.json({
       success: true,
@@ -649,7 +656,7 @@ onboardingRouter.get('/status', async (req: Request, res: Response) => {
 
     const connectedProviders = credentials.map(c => c.provider);
     const hasAIProvider = connectedProviders.some(p =>
-      ['anthropic', 'openai', 'google'].includes(p)
+      ['anthropic', 'openai', 'google', 'cursor'].includes(p)
     );
 
     res.json({
@@ -748,6 +755,7 @@ function getProviderScopes(provider: string): string[] {
     github: ['read:user', 'user:email', 'repo'],
     opencode: ['code:execute'],
     factory: ['droid:execute'],
+    cursor: ['cursor:execute', 'code:write'],
   };
   return scopes[provider] || [];
 }

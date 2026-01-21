@@ -31,6 +31,15 @@ import type {
 } from './types.js';
 
 /**
+ * CLI command mapping for providers
+ * Maps provider names to actual CLI command names
+ */
+const CLI_COMMAND_MAP: Record<string, string> = {
+  cursor: 'agent',  // Cursor CLI installs as 'agent'
+  // Other providers use their name as the command (claude, codex, gemini, etc.)
+};
+
+/**
  * Cloud persistence handler interface.
  * Implement this to persist agent session data to cloud storage.
  */
@@ -443,10 +452,15 @@ export class AgentSpawner {
     }
 
     try {
-      // Parse CLI command
+      // Parse CLI command and apply mapping (e.g., cursor -> agent)
       const cliParts = cli.split(' ');
-      const commandName = cliParts[0];
+      const rawCommandName = cliParts[0];
+      const commandName = CLI_COMMAND_MAP[rawCommandName] || rawCommandName;
       const args = cliParts.slice(1);
+
+      if (commandName !== rawCommandName) {
+        console.log(`[spawner] Mapped CLI '${rawCommandName}' -> '${commandName}'`);
+      }
 
       // Resolve full path to avoid posix_spawnp failures
       const command = resolveCommand(commandName);
@@ -460,6 +474,12 @@ export class AgentSpawner {
       const isClaudeCli = commandName.startsWith('claude');
       if (isClaudeCli && !args.includes('--dangerously-skip-permissions')) {
         args.push('--dangerously-skip-permissions');
+      }
+
+      // Add --force for Cursor agents (CLI is 'agent', may be passed as 'cursor')
+      const isCursorCli = commandName === 'agent' || rawCommandName === 'cursor';
+      if (isCursorCli && !args.includes('--force')) {
+        args.push('--force');
       }
 
       // Apply agent config (model, --agent flag) from .claude/agents/ if available

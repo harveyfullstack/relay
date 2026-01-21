@@ -121,6 +121,9 @@ export class AgentManager extends EventEmitter {
       if (provider === 'codex' && !args.includes('--dangerously-bypass-approvals-and-sandbox')) {
         args.push('--dangerously-bypass-approvals-and-sandbox');
       }
+      if (provider === 'cursor' && !args.includes('--force')) {
+        args.push('--force');
+      }
 
       // Create agent record
       const agent: ManagedAgent = {
@@ -413,6 +416,9 @@ export class AgentManager extends EventEmitter {
       }
       if (agent.provider === 'codex' && !args.includes('--dangerously-bypass-approvals-and-sandbox')) {
         args.push('--dangerously-bypass-approvals-and-sandbox');
+      }
+      if (agent.provider === 'cursor' && !args.includes('--force')) {
+        args.push('--force');
       }
 
       // Create new PTY

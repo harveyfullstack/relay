@@ -875,6 +875,26 @@ async function extractCredentials(
         return { token: creds.google.key };
       }
       return null;
+    } else if (provider === 'cursor') {
+      // Cursor stores credentials in various formats - try common patterns
+      // { accessToken: "...", refreshToken: "..." } or { token: "..." } or nested
+      if (creds.accessToken) {
+        return {
+          token: creds.accessToken,
+          refreshToken: creds.refreshToken,
+          expiresAt: creds.expiresAt ? new Date(creds.expiresAt) : undefined,
+        };
+      }
+      if (creds.auth?.accessToken) {
+        return {
+          token: creds.auth.accessToken,
+          refreshToken: creds.auth.refreshToken,
+          expiresAt: creds.auth.expiresAt ? new Date(creds.auth.expiresAt) : undefined,
+        };
+      }
+      // Fallback to generic token fields
+      const token = creds.token || creds.access_token || creds.api_key;
+      return token ? { token } : null;
     }
 
     const token = creds.token || creds.access_token || creds.api_key;

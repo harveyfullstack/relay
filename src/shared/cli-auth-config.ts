@@ -249,8 +249,8 @@ export const CLI_AUTH_CONFIG: Record<string, CLIAuthConfig> = {
     successPatterns: [/success/i, /authenticated/i, /logged\s*in/i],
   },
   cursor: {
-    command: 'cursor',
-    args: [],
+    command: 'agent', // Cursor CLI installs as 'agent'
+    args: ['login'], // agent login - triggers OAuth flow
     urlPattern: /(https:\/\/[^\s]+)/,
     credentialPath: '~/.cursor/auth.json',
     displayName: 'Cursor',

@@ -95,7 +95,7 @@ const PROVIDERS: Record<string, Provider> = {
     displayName: 'Cursor',
     description: 'Cursor - AI-first code editor agent',
     authStrategy: 'cli',
-    cliCommand: 'cursor',
+    cliCommand: 'agent',
     credentialPath: '~/.cursor/auth.json',
     color: '#7C3AED',
   },

@@ -1873,12 +1873,27 @@ workspacesRouter.post('/:id/agents', async (req: Request, res: Response) => {
     const targetUrl = `${workspace.publicUrl.replace(/\/$/, '')}/api/spawn`;
     console.log(`[workspaces] Proxying agent spawn to: ${targetUrl}`);
 
+    // Map provider ID to CLI command
+    // Some providers have different CLI names than their provider ID
+    const PROVIDER_CLI_MAP: Record<string, string> = {
+      anthropic: 'claude',
+      claude: 'claude',
+      codex: 'codex',
+      openai: 'codex',
+      cursor: 'agent', // Cursor CLI installs as 'agent'
+      droid: 'droid',
+      opencode: 'opencode',
+      gemini: 'gemini',
+      google: 'gemini',
+    };
+    const cli = PROVIDER_CLI_MAP[provider || ''] || provider || 'claude';
+
     const response = await fetch(targetUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name,
-        cli: provider || 'claude', // Map provider to cli
+        cli, // Use mapped CLI command
         task: task || '', // Empty task = interactive mode, user responds to prompts
         interactive: interactive ?? true, // Default to interactive for setup flows
         userId,
