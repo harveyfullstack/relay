@@ -2370,18 +2370,22 @@ export function App({ wsUrl, orchestratorUrl }: AppProps) {
           activeThreads={activeThreads}
           currentThread={currentThread}
           totalUnreadThreadCount={totalUnreadThreadCount}
-          channels={channelsList.map(c => ({
-            id: c.id,
-            name: c.name,
-            unreadCount: c.unreadCount,
-            hasMentions: c.hasMentions,
-          }))}
-          archivedChannels={archivedChannelsList.map((c) => ({
-            id: c.id,
-            name: c.name,
-            unreadCount: c.unreadCount ?? 0,
-            hasMentions: c.hasMentions,
-          }))}
+          channels={channelsList
+            .filter(c => !c.isDm && !c.id.startsWith('dm:'))
+            .map(c => ({
+              id: c.id,
+              name: c.name,
+              unreadCount: c.unreadCount,
+              hasMentions: c.hasMentions,
+            }))}
+          archivedChannels={archivedChannelsList
+            .filter(c => !c.isDm && !c.id.startsWith('dm:'))
+            .map((c) => ({
+              id: c.id,
+              name: c.name,
+              unreadCount: c.unreadCount ?? 0,
+              hasMentions: c.hasMentions,
+            }))}
           selectedChannelId={selectedChannelId}
           isActivitySelected={selectedChannelId === ACTIVITY_FEED_ID}
           activityUnreadCount={0}
