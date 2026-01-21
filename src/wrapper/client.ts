@@ -2,6 +2,15 @@
  * Relay Client
  * Connects to the daemon and handles message sending/receiving.
  *
+ * @deprecated For external use, import from '@agent-relay/sdk' instead.
+ * This module is for internal daemon integration.
+ *
+ * @example
+ * // External consumers should use:
+ * import { RelayClient } from '@agent-relay/sdk';
+ *
+ * // Internal daemon code uses this module directly.
+ *
  * Optimizations:
  * - Monotonic ID generation (faster than UUID)
  * - Write coalescing (batch socket writes)
@@ -11,6 +20,7 @@
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { generateId } from '../utils/id-generator.js';
+// Import types from SDK (re-exported via protocol for compatibility)
 import {
   type Envelope,
   type HelloPayload,
