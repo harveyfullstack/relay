@@ -13,6 +13,7 @@ import {
   canAutoScale,
   canScaleToTier,
   getResourceTierForPlan,
+  getPlanLimits,
   type ResourceTierName,
 } from '../services/planLimits.js';
 import { deriveSshPassword } from '../services/ssh-security.js';
@@ -369,10 +370,11 @@ export interface ResourceTier {
 
 // Resource tiers sized for Claude Code agents (~1-2GB RAM per agent)
 // cpuKind: 'shared' = cheaper but can be throttled, 'performance' = dedicated
+// Note: Team tier (large) uses shared CPUs for better margins (~50% vs ~7% with perf)
 export const RESOURCE_TIERS: Record<string, ResourceTier> = {
   small: { name: 'small', cpuCores: 2, memoryMb: 2048, maxAgents: 2, cpuKind: 'shared' },
   medium: { name: 'medium', cpuCores: 2, memoryMb: 4096, maxAgents: 5, cpuKind: 'shared' },
-  large: { name: 'large', cpuCores: 4, memoryMb: 8192, maxAgents: 10, cpuKind: 'performance' },
+  large: { name: 'large', cpuCores: 4, memoryMb: 8192, maxAgents: 10, cpuKind: 'shared' },
   xlarge: { name: 'xlarge', cpuCores: 8, memoryMb: 16384, maxAgents: 20, cpuKind: 'performance' },
 };
 
@@ -709,31 +711,42 @@ class FlyProvisioner implements ComputeProvisioner {
     // Fly.io takes daily snapshots automatically; we configure retention
     const volume = await this.createVolume(appName);
 
-    // Determine instance size based on user's plan
-    // Free tier: 1 CPU, 2GB (~$10/mo) - Claude needs 2GB minimum
-    // Paid tiers: 2 CPU, 2GB (~$15/mo)
-    // Introductory bonus: Free users get Pro-level resources for first 14 days
+    // Determine instance size based on user's plan using RESOURCE_TIERS
     const user = await db.users.findById(workspace.userId);
     const userPlan = (user?.plan as PlanType) || 'free';
+    const planLimits = getPlanLimits(userPlan);
     const isFreeTier = userPlan === 'free';
 
     // Check if user is in introductory period (first 14 days)
+    // Free users get Pro-level resources during intro period
     const INTRO_PERIOD_DAYS = 14;
     const userCreatedAt = user?.createdAt ? new Date(user.createdAt) : new Date();
     const daysSinceSignup = (Date.now() - userCreatedAt.getTime()) / (1000 * 60 * 60 * 24);
     const isIntroPeriod = isFreeTier && daysSinceSignup < INTRO_PERIOD_DAYS;
 
+    // Get the appropriate resource tier for this plan
+    // Intro period free users get 'pro' tier resources
+    const effectivePlan = isIntroPeriod ? 'pro' : userPlan;
+    const tierName = getResourceTierForPlan(effectivePlan as PlanType);
+    const tier = RESOURCE_TIERS[tierName];
+
     const guestConfig = {
-      cpu_kind: 'shared' as const,
-      cpus: isIntroPeriod ? 2 : (isFreeTier ? 1 : 2), // Intro gets 2 CPUs like Pro
-      memory_mb: isIntroPeriod ? 4096 : 2048, // Intro gets 4GB like Pro
+      cpu_kind: tier.cpuKind as 'shared' | 'performance',
+      cpus: tier.cpuCores,
+      memory_mb: tier.memoryMb,
     };
+
+    // Get max agents for the effective plan (intro users get pro limits)
+    const effectiveLimits = isIntroPeriod ? getPlanLimits('pro') : planLimits;
+    const maxAgents = effectiveLimits.maxConcurrentAgents === Infinity
+      ? 100 // Cap at 100 for practical purposes
+      : effectiveLimits.maxConcurrentAgents;
 
     if (isIntroPeriod) {
       const daysRemaining = Math.ceil(INTRO_PERIOD_DAYS - daysSinceSignup);
-      console.log(`[fly] Introductory bonus active (${daysRemaining} days remaining) - 2 CPU / 4GB`);
+      console.log(`[fly] Introductory bonus active (${daysRemaining} days remaining) - using ${tierName} tier`);
     }
-    console.log(`[fly] Using ${guestConfig.cpus} CPU / ${guestConfig.memory_mb}MB for ${userPlan} plan`);
+    console.log(`[fly] Using ${tierName} tier: ${guestConfig.cpus} CPU / ${guestConfig.memory_mb}MB / max ${maxAgents} agents for ${userPlan} plan`);
 
     // Create machine with auto-stop/start for cost optimization
     const machineResponse = await fetchWithRetry(
@@ -760,7 +773,7 @@ class FlyProvisioner implements ComputeProvisioner {
               WORKSPACE_ID: workspace.id,
               WORKSPACE_OWNER_USER_ID: workspace.userId,
               SUPERVISOR_ENABLED: String(workspace.config.supervisorEnabled ?? false),
-              MAX_AGENTS: String(workspace.config.maxAgents ?? 10),
+              MAX_AGENTS: String(maxAgents),
               REPOSITORIES: (workspace.config.repositories ?? []).join(','),
               PROVIDERS: (workspace.config.providers ?? []).join(','),
               PORT: String(WORKSPACE_PORT),

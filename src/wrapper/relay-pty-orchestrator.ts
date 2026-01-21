@@ -189,6 +189,10 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   // Track whether any output has been received from the CLI
   private hasReceivedOutput = false;
 
+  // Queue monitor for stuck message detection
+  private queueMonitorTimer?: NodeJS.Timeout;
+  private readonly QUEUE_MONITOR_INTERVAL_MS = 30000; // Check every 30 seconds
+
   // Note: sessionEndProcessed and lastSummaryRawContent are inherited from BaseWrapper
 
   constructor(config: RelayPtyOrchestratorConfig) {
@@ -391,6 +395,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     this.running = true;
     this.readyForMessages = true;
     this.startStuckDetection();
+    this.startQueueMonitor();
 
     this.log(` Ready for messages`);
     this.log(` Socket connected: ${this.socketConnected}`);
@@ -407,6 +412,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     if (!this.running) return;
     this.running = false;
     this.stopStuckDetection();
+    this.stopQueueMonitor();
 
     this.log(` Stopping...`);
 
@@ -672,10 +678,20 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         try {
           const parsed = JSON.parse(line);
           if (parsed.type === 'relay_command' && parsed.kind) {
-            this.log(`Rust parsed [${parsed.kind}]: ${parsed.from} -> ${parsed.to}`);
+            // Always log spawn/release commands for visibility (they're important for debugging)
+            if (parsed.kind === 'spawn' || parsed.kind === 'release') {
+              console.log(`[relay-pty:${this.config.name}] Rust parsed [${parsed.kind}]: ${JSON.stringify({
+                spawn_name: parsed.spawn_name,
+                spawn_cli: parsed.spawn_cli,
+                spawn_task: parsed.spawn_task?.substring(0, 50),
+                release_name: parsed.release_name,
+              })}`);
+            } else {
+              this.log(`Rust parsed [${parsed.kind}]: ${parsed.from} -> ${parsed.to}`);
+            }
             this.handleRustParsedCommand(parsed);
           }
-        } catch {
+        } catch (e) {
           // Not JSON, just log (only in debug mode)
           if (this.config.debug) {
             console.error(`[relay-pty:${this.config.name}] ${line}`);
@@ -747,36 +763,37 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   private handleSpawnCommand(name: string, cli: string, task: string): void {
     const key = `spawn:${name}:${cli}`;
     if (this.processedSpawnCommands.has(key)) {
-      this.log(` Spawn already processed: ${key}`);
+      console.log(`[relay-pty:${this.config.name}] Spawn already processed: ${key}`);
       return;
     }
     this.processedSpawnCommands.add(key);
 
-    this.log(` Spawn: ${name} (${cli})`);
-    this.log(` dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn}`);
+    // Always log spawn attempts for visibility
+    console.log(`[relay-pty:${this.config.name}] SPAWN REQUEST: ${name} (${cli})`);
+    console.log(`[relay-pty:${this.config.name}]   dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn}`);
 
     // Try dashboard API first, fall back to callback
     // The spawner will send the task after waitUntilCliReady()
     if (this.config.dashboardPort) {
-      this.log(` Calling dashboard API at port ${this.config.dashboardPort}`);
+      console.log(`[relay-pty:${this.config.name}]   Calling dashboard API at port ${this.config.dashboardPort}`);
       this.spawnViaDashboardApi(name, cli, task)
         .then(() => {
-          this.log(` Dashboard spawn succeeded for ${name}`);
+          console.log(`[relay-pty:${this.config.name}] SPAWN SUCCESS: ${name} via dashboard API`);
         })
         .catch(err => {
-          this.logError(` Dashboard spawn failed: ${err.message}`);
+          console.error(`[relay-pty:${this.config.name}] SPAWN FAILED: ${name} - ${err.message}`);
           if (this.config.onSpawn) {
-            this.log(` Falling back to onSpawn callback`);
+            console.log(`[relay-pty:${this.config.name}]   Falling back to onSpawn callback`);
             Promise.resolve(this.config.onSpawn(name, cli, task))
-              .catch(e => this.logError(` onSpawn callback failed: ${e.message}`));
+              .catch(e => console.error(`[relay-pty:${this.config.name}] SPAWN CALLBACK FAILED: ${e.message}`));
           }
         });
     } else if (this.config.onSpawn) {
-      this.log(` Using onSpawn callback directly`);
+      console.log(`[relay-pty:${this.config.name}]   Using onSpawn callback directly`);
       Promise.resolve(this.config.onSpawn(name, cli, task))
-        .catch(e => this.logError(` onSpawn callback failed: ${e.message}`));
+        .catch(e => console.error(`[relay-pty:${this.config.name}] SPAWN CALLBACK FAILED: ${e.message}`));
     } else {
-      this.logError(` No spawn mechanism available!`);
+      console.error(`[relay-pty:${this.config.name}] SPAWN FAILED: No spawn mechanism available! (dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn})`);
     }
   }
 
@@ -807,18 +824,36 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * Spawn agent via dashboard API
    */
   private async spawnViaDashboardApi(name: string, cli: string, task: string): Promise<void> {
-    const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/spawn`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        cli,
-        task,
-        spawnerName: this.config.name, // Include spawner name so task appears from correct agent
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    const url = `http://localhost:${this.config.dashboardPort}/api/spawn`;
+    const body = {
+      name,
+      cli,
+      task,
+      spawnerName: this.config.name, // Include spawner name so task appears from correct agent
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => 'unknown');
+        throw new Error(`HTTP ${response.status}: ${errorBody}`);
+      }
+
+      const result = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (result.success === false) {
+        throw new Error(result.error || 'Spawn failed without specific error');
+      }
+    } catch (err: any) {
+      // Enhance error with context
+      if (err.code === 'ECONNREFUSED') {
+        throw new Error(`Dashboard not reachable at ${url} (connection refused)`);
+      }
+      throw err;
     }
   }
 
@@ -1265,6 +1300,86 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     this.log(` Body preview: ${payload.body?.substring(0, 100) ?? '(no body)'}...`);
     super.handleIncomingMessage(from, payload, messageId, meta, originalTo);
     this.log(` Queue length after add: ${this.messageQueue.length}`);
+    this.processMessageQueue();
+  }
+
+  // =========================================================================
+  // Queue monitor - Detect and process stuck messages
+  // =========================================================================
+
+  /**
+   * Start the queue monitor to periodically check for stuck messages.
+   * This ensures messages don't get orphaned in the queue when the agent is idle.
+   */
+  private startQueueMonitor(): void {
+    if (this.queueMonitorTimer) {
+      return; // Already started
+    }
+
+    this.log(` Starting queue monitor (interval: ${this.QUEUE_MONITOR_INTERVAL_MS}ms)`);
+
+    this.queueMonitorTimer = setInterval(() => {
+      this.checkForStuckQueue();
+    }, this.QUEUE_MONITOR_INTERVAL_MS);
+
+    // Don't keep process alive just for queue monitoring
+    this.queueMonitorTimer.unref?.();
+  }
+
+  /**
+   * Stop the queue monitor.
+   */
+  private stopQueueMonitor(): void {
+    if (this.queueMonitorTimer) {
+      clearInterval(this.queueMonitorTimer);
+      this.queueMonitorTimer = undefined;
+      this.log(` Queue monitor stopped`);
+    }
+  }
+
+  /**
+   * Check for messages stuck in the queue and process them if the agent is idle.
+   *
+   * This handles cases where:
+   * 1. Messages arrived while the agent was busy and the retry mechanism failed
+   * 2. Socket disconnection/reconnection left messages orphaned
+   * 3. Injection timeouts occurred without proper queue resumption
+   */
+  private checkForStuckQueue(): void {
+    // Skip if not ready for messages
+    if (!this.readyForMessages || !this.running) {
+      return;
+    }
+
+    // Skip if queue is empty
+    if (this.messageQueue.length === 0) {
+      return;
+    }
+
+    // Skip if currently injecting (processing is in progress)
+    if (this.isInjecting) {
+      return;
+    }
+
+    // Skip if backpressure is active
+    if (this.backpressureActive) {
+      return;
+    }
+
+    // Check if the agent is idle (high confidence)
+    const idleResult = this.idleDetector.checkIdle({ minSilenceMs: 2000 });
+    if (!idleResult.isIdle) {
+      // Agent is still working, let it finish
+      return;
+    }
+
+    // We have messages in the queue, agent is idle, not currently injecting
+    // This is a stuck queue situation - trigger processing
+    const senders = [...new Set(this.messageQueue.map(m => m.from))];
+    this.log(` ⚠️ Queue monitor: Found ${this.messageQueue.length} stuck message(s) from [${senders.join(', ')}]`);
+    this.log(` ⚠️ Agent is idle (confidence: ${(idleResult.confidence * 100).toFixed(0)}%), triggering queue processing`);
+
+    // Process the queue
     this.processMessageQueue();
   }
 
