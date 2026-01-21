@@ -928,6 +928,7 @@ export async function startDashboard(
   const socketPath = path.join(dataDir, 'relay.sock');
   const relayClients = new Map<string, RelayClient>();
   // Forward declaration - initialized later, used by getRelayClient to avoid duplicate connections
+  // eslint-disable-next-line prefer-const
   let userBridge: UserBridge | undefined;
   const notifyDaemonOfMembershipUpdate = async (
     channel: string,
@@ -3222,7 +3223,7 @@ export async function startDashboard(
    * conflict and break message routing.
    */
   app.post('/api/channels/subscribe', express.json(), async (req, res) => {
-    const { username, channels, workspaceId } = req.body;
+    const { username, channels, workspaceId: _workspaceId } = req.body;
     console.log(`[channel-debug] SUBSCRIBE request: username=${username}, channels=${JSON.stringify(channels)}`);
 
     if (!username) {

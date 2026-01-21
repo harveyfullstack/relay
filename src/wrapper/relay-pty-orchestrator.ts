@@ -458,7 +458,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   /**
    * Inject content into the agent via socket
    */
-  protected async performInjection(content: string): Promise<void> {
+  protected async performInjection(_content: string): Promise<void> {
     // This is called by BaseWrapper but we handle injection differently
     // via the socket protocol in processMessageQueue
     throw new Error('Use injectMessage() instead of performInjection()');
@@ -918,7 +918,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     }
 
     // Reject all pending injections
-    for (const [id, pending] of this.pendingInjections) {
+    for (const [_id, pending] of this.pendingInjections) {
       clearTimeout(pending.timeout);
       pending.reject(new Error('Socket disconnected'));
     }

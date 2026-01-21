@@ -63,7 +63,7 @@ vi.mock('../continuity/index.js', () => ({
 // Now import after mocks
 import { spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
-import { RelayPtyOrchestrator, type RelayPtyOrchestratorConfig } from './relay-pty-orchestrator.js';
+import { RelayPtyOrchestrator } from './relay-pty-orchestrator.js';
 
 /**
  * Create a mock ChildProcess
