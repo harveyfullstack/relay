@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-21T12:14:40.502Z",
+  "lastUpdated": "2026-01-21T10:48:06.754Z",
   "trajectories": {
     "traj_ozd98si6a7ns": {
       "title": "Fix thinking indicator showing on all messages",
@@ -545,8 +545,29 @@
       "title": "Investigate agent-relay codex-auth tunnel failure",
       "status": "abandoned",
       "startedAt": "2026-01-10T04:02:25.981Z",
-      "completedAt": "2026-01-21T12:10:02.542Z",
+      "completedAt": "2026-01-11T01:13:59.383Z",
       "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_3yx9dy148mge.json"
+    },
+    "traj_fnmapojrllau": {
+      "title": "Remove redundant cloud channels - unify on daemon-based channels",
+      "status": "completed",
+      "startedAt": "2026-01-11T01:14:07.306Z",
+      "completedAt": "2026-01-11T01:21:24.079Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_fnmapojrllau.json"
+    },
+    "traj_io1v6tehuxwv": {
+      "title": "Investigate prod cloud cursor error",
+      "status": "completed",
+      "startedAt": "2026-01-11T02:11:07.036Z",
+      "completedAt": "2026-01-11T02:13:14.287Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_io1v6tehuxwv.json"
+    },
+    "traj_dbledg2lxxtf": {
+      "title": "Investigate prod agent_messages writes not happening",
+      "status": "completed",
+      "startedAt": "2026-01-11T10:13:26.122Z",
+      "completedAt": "2026-01-13T09:58:59.116Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_dbledg2lxxtf.json"
     },
     "traj_a0tqx8biw9c4": {
       "title": "Tighten trajectory viewer loading state",
@@ -604,12 +625,243 @@
       "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_cpn70dw066nt.json",
       "completedAt": "2026-01-11T11:49:01.558Z"
     },
-    "traj_w8j3cd1dpddg": {
-      "title": "Add SDK contract tests for safe extraction",
+    "traj_jq7uaqojoj31": {
+      "title": "Investigate channel membership persistence via channel_members DB",
       "status": "completed",
-      "startedAt": "2026-01-21T12:10:02.839Z",
-      "completedAt": "2026-01-21T12:14:40.491Z",
-      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_w8j3cd1dpddg.json"
+      "startedAt": "2026-01-13T10:04:08.386Z",
+      "completedAt": "2026-01-13T11:45:51.802Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_jq7uaqojoj31.json"
+    },
+    "traj_z7m9mahtdri8": {
+      "title": "Relay messaging reliability architecture decisions",
+      "status": "completed",
+      "startedAt": "2026-01-16T09:14:53.389Z",
+      "completedAt": "2026-01-16T09:17:27.393Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_z7m9mahtdri8.json"
+    },
+    "traj_5awukmeedbd1": {
+      "title": "Document relay-pty improvements implementation",
+      "status": "completed",
+      "startedAt": "2026-01-16T09:22:00.599Z",
+      "completedAt": "2026-01-16T09:22:10.563Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_5awukmeedbd1.json"
+    },
+    "traj_9c0r3tnzzjsc": {
+      "title": "Add agent-controlled blocking syntax",
+      "status": "completed",
+      "startedAt": "2026-01-16T09:36:54.645Z",
+      "completedAt": "2026-01-16T09:37:03.584Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_9c0r3tnzzjsc.json"
+    },
+    "traj_z8yyes5zq69m": {
+      "title": "Relay-PTY architecture decisions and continuity redesign",
+      "status": "completed",
+      "startedAt": "2026-01-16T10:19:23.664Z",
+      "completedAt": "2026-01-16T10:20:11.898Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_z8yyes5zq69m.json"
+    },
+    "traj_28yacuxuke7u": {
+      "title": "Decide Rust relay-pty cloud build strategy",
+      "status": "completed",
+      "startedAt": "2026-01-16T10:22:49.324Z",
+      "completedAt": "2026-01-16T10:23:30.414Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_28yacuxuke7u.json"
+    },
+    "traj_9a9l921apycv": {
+      "title": "Review and confirm relay-pty cloud build decision",
+      "status": "completed",
+      "startedAt": "2026-01-16T10:25:02.275Z",
+      "completedAt": "2026-01-16T10:25:21.870Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_9a9l921apycv.json"
+    },
+    "traj_e68cbt5rmmbp": {
+      "title": "Revise relay-pty build location decision",
+      "status": "completed",
+      "startedAt": "2026-01-16T10:27:59.063Z",
+      "completedAt": "2026-01-16T10:28:28.633Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_e68cbt5rmmbp.json"
+    },
+    "traj_2zk4ndzdr5te": {
+      "title": "Fix publish workflow macos runner",
+      "status": "completed",
+      "startedAt": "2026-01-16T13:31:46.311Z",
+      "completedAt": "2026-01-16T13:31:52.700Z",
+      "path": "/Users/will/Projects/relay/.trajectories/completed/2026-01/traj_2zk4ndzdr5te.json"
+    },
+    "traj_qw5jmpvvfenb": {
+      "title": "Filter _DashboardUI from Direct Messages section",
+      "status": "completed",
+      "startedAt": "2026-01-16T14:29:57.235Z",
+      "completedAt": "2026-01-16T14:30:38.147Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_qw5jmpvvfenb.json"
+    },
+    "traj_6q0b9kzmdb1f": {
+      "title": "Deploy Rust relay-pty to cloud Docker image (agent-relay-504)",
+      "status": "completed",
+      "startedAt": "2026-01-16T21:56:12.907Z",
+      "completedAt": "2026-01-16T21:59:33.734Z",
+      "path": ".trajectories/completed/2026-01/traj_6q0b9kzmdb1f.json"
+    },
+    "traj_v6hbi0c9ctqj": {
+      "title": "Tasks from TASKS_2026_01_16.md - Cloud deployment, workspace namespacing, and quick wins",
+      "status": "completed",
+      "startedAt": "2026-01-17T06:30:47.033Z",
+      "completedAt": "2026-01-17T06:39:49.141Z",
+      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_v6hbi0c9ctqj.json"
+    },
+    "traj_f7h08tknz4oy": {
+      "title": "Model selection hookup - wire up model field from agent profiles to spawner",
+      "status": "abandoned",
+      "startedAt": "2026-01-17T08:27:07.035Z",
+      "completedAt": "2026-01-17T08:27:46.876Z",
+      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_f7h08tknz4oy.json"
+    },
+    "traj_ts01xzyj8uwm": {
+      "title": "agent-relay-511: Documentation sprint",
+      "status": "completed",
+      "startedAt": "2026-01-17T08:27:52.340Z",
+      "completedAt": "2026-01-17T08:29:35.666Z",
+      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_ts01xzyj8uwm.json"
+    },
+    "traj_kaw0wmkhti5d": {
+      "title": "Add Rust tests to CI workflow",
+      "status": "abandoned",
+      "startedAt": "2026-01-17T08:30:10.206Z",
+      "completedAt": "2026-01-18T16:44:23.163Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_kaw0wmkhti5d.json"
+    },
+    "traj_s7r8z79gusy3": {
+      "title": "Fix relay-pty injection timeout - broadcast socket protocol redesign",
+      "status": "completed",
+      "startedAt": "2026-01-18T16:44:27.199Z",
+      "completedAt": "2026-01-18T16:45:09.409Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_s7r8z79gusy3.json"
+    },
+    "traj_pgb7sj7dvgb1": {
+      "title": "Investigate spawn timing issue where messages sent with spawn don't arrive",
+      "status": "completed",
+      "startedAt": "2026-01-18T21:46:03.754Z",
+      "completedAt": "2026-01-18T21:47:11.127Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_pgb7sj7dvgb1.json"
+    },
+    "traj_xt2nmidh3zvg": {
+      "title": "Fix workspace upgrade scaling bugs",
+      "status": "completed",
+      "startedAt": "2026-01-19T05:37:41.642Z",
+      "completedAt": "2026-01-19T05:38:25.432Z",
+      "path": "/home/user/relay/.trajectories/completed/2026-01/traj_xt2nmidh3zvg.json"
+    },
+    "traj_dgp7y3p13rdn": {
+      "title": "Fix cloud channel/message routing to use workspace.publicUrl",
+      "status": "completed",
+      "startedAt": "2026-01-19T07:49:42.730Z",
+      "completedAt": "2026-01-19T07:50:07.232Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_dgp7y3p13rdn.json"
+    },
+    "traj_2x4lzg8vcsqh": {
+      "title": "Fix cloud message routing broken by commit 5569296",
+      "status": "completed",
+      "startedAt": "2026-01-19T07:51:56.573Z",
+      "completedAt": "2026-01-19T07:52:50.889Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_2x4lzg8vcsqh.json"
+    },
+    "traj_g6exx9z1bbx6": {
+      "title": "Fix cloud channel routing for agent messages",
+      "status": "completed",
+      "startedAt": "2026-01-19T07:58:21.481Z",
+      "completedAt": "2026-01-19T07:58:43.069Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_g6exx9z1bbx6.json"
+    },
+    "traj_ymhw3r9gxc4t": {
+      "title": "Fix cloud message routing - outbox path mismatch",
+      "status": "completed",
+      "startedAt": "2026-01-19T08:23:04.969Z",
+      "completedAt": "2026-01-19T08:30:13.089Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_ymhw3r9gxc4t.json"
+    },
+    "traj_6rcdr2rwcjkc": {
+      "title": "Implement pin-to-top feature for agents panel",
+      "status": "completed",
+      "startedAt": "2026-01-20T01:05:48.915Z",
+      "completedAt": "2026-01-20T01:07:53.723Z",
+      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_6rcdr2rwcjkc.json"
+    },
+    "traj_iaj0h4tbsdc2": {
+      "title": "Fix remote users not visible in cloud mode",
+      "status": "completed",
+      "startedAt": "2026-01-20T12:32:24.953Z",
+      "completedAt": "2026-01-20T12:32:47.748Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_iaj0h4tbsdc2.json"
+    },
+    "traj_u1h7knzgvcpf": {
+      "title": "Fix AI provider name casing in WorkspaceSettingsPanel",
+      "status": "completed",
+      "startedAt": "2026-01-20T12:35:09.581Z",
+      "completedAt": "2026-01-20T12:35:27.556Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_u1h7knzgvcpf.json"
+    },
+    "traj_m6zeqsf01ram": {
+      "title": "Fix channel communication for cloud users",
+      "status": "completed",
+      "startedAt": "2026-01-20T12:52:21.728Z",
+      "completedAt": "2026-01-20T12:52:37.278Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_m6zeqsf01ram.json"
+    },
+    "traj_pwcprdcrjdko": {
+      "title": "Fix cloud channel communication for human users",
+      "status": "completed",
+      "startedAt": "2026-01-20T14:51:47.474Z",
+      "completedAt": "2026-01-20T14:52:20.137Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_pwcprdcrjdko.json"
+    },
+    "traj_y3np8c306yks": {
+      "title": "Fix cloud channel message delivery to all human users",
+      "status": "completed",
+      "startedAt": "2026-01-20T14:58:27.712Z",
+      "completedAt": "2026-01-20T14:58:53.112Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_y3np8c306yks.json"
+    },
+    "traj_k0om34q1skol": {
+      "title": "Fix header to show correct channel name",
+      "status": "completed",
+      "startedAt": "2026-01-20T19:55:46.807Z",
+      "completedAt": "2026-01-20T19:56:01.584Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_k0om34q1skol.json"
+    },
+    "traj_xt3iuim9goh4": {
+      "title": "Implement Activity Feed v1 - unified timeline of workspace events",
+      "status": "abandoned",
+      "startedAt": "2026-01-20T20:15:04.250Z",
+      "completedAt": "2026-01-20T20:21:08.641Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_xt3iuim9goh4.json"
+    },
+    "traj_a6yc7dh6oiz0": {
+      "title": "Fix cloud channel communication issues",
+      "status": "completed",
+      "startedAt": "2026-01-20T20:34:18.721Z",
+      "completedAt": "2026-01-20T20:34:54.864Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_a6yc7dh6oiz0.json"
+    },
+    "traj_yjc8efm2muyi": {
+      "title": "Fix workspace container SSH configuration",
+      "status": "completed",
+      "startedAt": "2026-01-21T09:34:34.280Z",
+      "completedAt": "2026-01-21T09:35:01.588Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_yjc8efm2muyi.json"
+    },
+    "traj_93ydp31xlbzm": {
+      "title": "Fix channel messages routing in cloud mode",
+      "status": "completed",
+      "startedAt": "2026-01-21T10:05:26.839Z",
+      "completedAt": "2026-01-21T10:06:49.641Z",
+      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_93ydp31xlbzm.json"
+    },
+    "traj_gk8s9uwdiu7r": {
+      "title": "Fix channel membership restoration on daemon startup",
+      "status": "completed",
+      "startedAt": "2026-01-21T10:47:05.236Z",
+      "completedAt": "2026-01-21T10:48:05.878Z",
+      "path": "/data/repos/relay/.trajectories/completed/2026-01/traj_gk8s9uwdiu7r.json"
     }
   }
 }

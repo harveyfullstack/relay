@@ -1,7 +1,7 @@
 ---
 name: cli
 description: Use for CLI tool development, command-line interfaces, terminal utilities, and shell scripting.
-allowed-tools: Read, Grep, Glob, Bash, Edit, Write
+tools: Read, Grep, Glob, Bash, Edit, Write
 skills: using-agent-relay
 ---
 
@@ -122,24 +122,32 @@ echo '{"status": "success", "count": 42}'
 ## Communication Patterns
 
 Implementation status:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 STATUS: CLI tool progress
 - Commands: init, run complete
 - Pending: config subcommand
 - Testing: 23 test cases passing
-- Docs: --help implemented>>>
+- Docs: --help implemented
+EOF
 ```
+Then: `->relay-file:status`
 
 Completion:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 DONE: CLI tool complete
 - Commands: init, run, config
 - Tests: 31 passing, 0 failing
 - Docs: README, --help, man page
-- Package: npm/brew ready>>>
+- Package: npm/brew ready
+EOF
 ```
+Then: `->relay-file:done`
 
 ## Testing CLI Tools
 

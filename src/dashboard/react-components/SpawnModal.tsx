@@ -25,7 +25,7 @@ export interface SpawnConfig {
 
 function deriveShadowMode(command: string): 'subagent' | 'process' {
   const base = command.trim().split(' ')[0].toLowerCase();
-  if (base.startsWith('claude') || base === 'codex' || base === 'opencode' || base === 'gemini' || base === 'droid') return 'subagent';
+  if (base.startsWith('claude') || base === 'codex' || base === 'opencode' || base === 'gemini' || base === 'droid' || base === 'cursor') return 'subagent';
   return 'process';
 }
 
@@ -42,6 +42,15 @@ export interface SpawnModalProps {
   workspaceId?: string;
 }
 
+/** Model options for Claude agents */
+const CLAUDE_MODEL_OPTIONS = [
+  { value: 'sonnet', label: 'Sonnet', description: 'Fast and capable (default)' },
+  { value: 'opus', label: 'Opus', description: 'Most capable, slower' },
+  { value: 'haiku', label: 'Haiku', description: 'Fastest, lightweight' },
+] as const;
+
+type ClaudeModel = typeof CLAUDE_MODEL_OPTIONS[number]['value'];
+
 const AGENT_TEMPLATES = [
   {
     id: 'claude',
@@ -50,6 +59,7 @@ const AGENT_TEMPLATES = [
     description: 'Claude Code CLI agent',
     icon: '🤖',
     providerId: 'anthropic', // Maps to provider credential ID
+    supportsModelSelection: true,
   },
   {
     id: 'codex',
@@ -84,6 +94,14 @@ const AGENT_TEMPLATES = [
     providerId: 'droid',
   },
   {
+    id: 'cursor',
+    name: 'Cursor',
+    command: 'cursor',
+    description: 'Cursor AI agent',
+    icon: '📝',
+    providerId: 'cursor',
+  },
+  {
     id: 'custom',
     name: 'Custom',
     command: '',
@@ -106,6 +124,7 @@ export function SpawnModal({
   const [selectedTemplate, setSelectedTemplate] = useState(AGENT_TEMPLATES[0]);
   const [name, setName] = useState('');
   const [customCommand, setCustomCommand] = useState('');
+  const [selectedModel, setSelectedModel] = useState<ClaudeModel>('sonnet');
   const [cwd, setCwd] = useState('');
   const [team, setTeam] = useState('');
   const [isShadow, setIsShadow] = useState(false);
@@ -114,7 +133,19 @@ export function SpawnModal({
   const [shadowSpeakOn, setShadowSpeakOn] = useState<SpeakOnTrigger[]>(['EXPLICIT_ASK']);
   const [localError, setLocalError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const effectiveCommand = selectedTemplate.id === 'custom' ? customCommand : selectedTemplate.command;
+
+  // Build effective command, including model flag for Claude
+  const effectiveCommand = useMemo(() => {
+    if (selectedTemplate.id === 'custom') {
+      return customCommand;
+    }
+    // For Claude, append model flag if not default (sonnet)
+    if (selectedTemplate.id === 'claude' && selectedModel !== 'sonnet') {
+      return `${selectedTemplate.command} --model ${selectedModel}`;
+    }
+    return selectedTemplate.command;
+  }, [selectedTemplate, customCommand, selectedModel]);
+
   const shadowMode = useMemo(() => deriveShadowMode(effectiveCommand), [effectiveCommand]);
 
   // Provider credentials state (for cloud mode)
@@ -153,16 +184,21 @@ export function SpawnModal({
 
   // Fetch connected providers when modal opens in cloud mode
   useEffect(() => {
-    if (!isOpen || !isCloudMode) {
+    if (!isOpen || !isCloudMode || !workspaceId) {
       return;
     }
 
     const fetchProviders = async () => {
       setIsLoadingCredentials(true);
       try {
-        const result = await cloudApi.getMe();
-        if (result.success && result.data.connectedProviders) {
-          const providers = new Set(result.data.connectedProviders.map(p => p.provider));
+        // Get workspace-specific provider connection status
+        const result = await cloudApi.getProviders(workspaceId);
+        if (result.success && result.data.providers) {
+          const providers = new Set(
+            result.data.providers
+              .filter(p => p.isConnected)
+              .map(p => p.id)
+          );
           setConnectedProviders(providers);
         }
       } catch (err) {
@@ -173,7 +209,7 @@ export function SpawnModal({
     };
 
     fetchProviders();
-  }, [isOpen, isCloudMode]);
+  }, [isOpen, isCloudMode, workspaceId]);
 
   const SPEAK_ON_OPTIONS: { value: SpeakOnTrigger; label: string; description: string }[] = [
     { value: 'EXPLICIT_ASK', label: 'Explicit Ask', description: 'When directly asked' },
@@ -197,6 +233,7 @@ export function SpawnModal({
       setSelectedTemplate(AGENT_TEMPLATES[0]);
       setName('');
       setCustomCommand('');
+      setSelectedModel('sonnet');
       setCwd('');
       setTeam('');
       setIsShadow(false);
@@ -321,6 +358,33 @@ export function SpawnModal({
               ))}
             </div>
           </div>
+
+          {/* Model Selection (Claude only) */}
+          {selectedTemplate.id === 'claude' && (
+            <div className="mb-5">
+              <label className="block text-sm font-semibold text-text-primary mb-2">Model</label>
+              <div className="grid grid-cols-3 gap-2">
+                {CLAUDE_MODEL_OPTIONS.map((model) => (
+                  <button
+                    key={model.value}
+                    type="button"
+                    className={`
+                      flex flex-col items-center gap-0.5 py-2.5 px-2 border-2 rounded-lg cursor-pointer font-sans transition-all duration-150
+                      ${selectedModel === model.value
+                        ? 'bg-accent/10 border-accent'
+                        : 'bg-bg-hover border-transparent hover:bg-bg-active'
+                      }
+                    `}
+                    onClick={() => setSelectedModel(model.value)}
+                    disabled={isSpawning}
+                  >
+                    <span className="text-sm font-semibold text-text-primary">{model.label}</span>
+                    <span className="text-xs text-text-muted text-center">{model.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Agent Name */}
           <div className="mb-5">

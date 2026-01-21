@@ -35,6 +35,14 @@ class MockWebSocket {
     }
   }
 
+  removeAllListeners(event?: string): void {
+    if (event) {
+      this.eventHandlers.delete(event);
+    } else {
+      this.eventHandlers.clear();
+    }
+  }
+
   close(): void {
     this.readyState = 3; // CLOSED
     this.emit('close');
@@ -51,8 +59,13 @@ class MockRelayClient {
   public agentName: string;
   public entityType?: string;
   public sentMessages: Array<{ to: string; body: string; kind: string; thread?: string }> = [];
+  public channelJoins: Array<{ channel: string; displayName?: string }> = [];
+  public channelLeaves: Array<{ channel: string; reason?: string }> = [];
+  public channelMessages: Array<{ channel: string; body: string; options?: { thread?: string; data?: Record<string, unknown> } }> = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public onMessage?: (from: string, payload: any, messageId: string, meta?: any, originalTo?: string) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  public onChannelMessage?: (from: string, channel: string, body: string, envelope: any) => void;
 
   constructor(options: { socketPath: string; agentName: string; entityType?: string }) {
     this.agentName = options.agentName;
@@ -82,13 +95,52 @@ class MockRelayClient {
     return true;
   }
 
-  // Test helper to simulate receiving a message
-  simulateIncomingMessage(from: string, body: string, envelope: unknown): void {
-    this.onMessage?.(from, envelope, 'test-msg-id', undefined, undefined);
+  // Channel operations
+  joinChannel(channel: string, displayName?: string): boolean {
+    this.channelJoins.push({ channel, displayName });
+    return true;
+  }
+
+  leaveChannel(channel: string, reason?: string): boolean {
+    this.channelLeaves.push({ channel, reason });
+    return true;
+  }
+
+  sendChannelMessage(
+    channel: string,
+    body: string,
+    options?: { thread?: string; mentions?: string[]; attachments?: unknown[]; data?: Record<string, unknown> }
+  ): boolean {
+    this.channelMessages.push({
+      channel,
+      body,
+      options: {
+        thread: options?.thread,
+        data: options?.data,
+      },
+    });
+    return true;
+  }
+
+  // Test helper to simulate receiving a direct message
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  simulateIncomingMessage(from: string, body: string, envelope: any): void {
+    // Pass the payload from the envelope, not the entire envelope
+    const payload = envelope?.payload || { body };
+    this.onMessage?.(from, payload, 'test-msg-id', undefined, undefined);
+  }
+
+  // Test helper to simulate receiving a channel message
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  simulateIncomingChannelMessage(from: string, channel: string, body: string, envelope: any): void {
+    this.onChannelMessage?.(from, channel, body, envelope);
   }
 
   clearSent(): void {
     this.sentMessages = [];
+    this.channelJoins = [];
+    this.channelLeaves = [];
+    this.channelMessages = [];
   }
 }
 
@@ -197,10 +249,10 @@ describe('UserBridge', () => {
     it('should send channel join to relay daemon', async () => {
       await bridge.joinChannel('alice', '#general');
 
-      expect(mockRelayClient.sentMessages).toContainEqual(
+      expect(mockRelayClient.channelJoins).toContainEqual(
         expect.objectContaining({
-          to: '#general',
-          kind: 'channel_join',
+          channel: '#general',
+          displayName: 'alice',
         })
       );
     });
@@ -208,10 +260,9 @@ describe('UserBridge', () => {
     it('should send channel leave to relay daemon', async () => {
       await bridge.leaveChannel('alice', '#general');
 
-      expect(mockRelayClient.sentMessages).toContainEqual(
+      expect(mockRelayClient.channelLeaves).toContainEqual(
         expect.objectContaining({
-          to: '#general',
-          kind: 'channel_leave',
+          channel: '#general',
         })
       );
     });
@@ -245,11 +296,10 @@ describe('UserBridge', () => {
     it('should send channel message via relay client', async () => {
       await bridge.sendChannelMessage('alice', '#general', 'Hello everyone!');
 
-      expect(mockRelayClient.sentMessages).toContainEqual(
+      expect(mockRelayClient.channelMessages).toContainEqual(
         expect.objectContaining({
-          to: '#general',
+          channel: '#general',
           body: 'Hello everyone!',
-          kind: 'message',
         })
       );
     });
@@ -283,11 +333,11 @@ describe('UserBridge', () => {
         thread: 'parent-msg-123',
       });
 
-      expect(mockRelayClient.sentMessages).toContainEqual(
+      expect(mockRelayClient.channelMessages).toContainEqual(
         expect.objectContaining({
-          to: '#general',
+          channel: '#general',
           body: 'Reply to thread',
-          thread: 'parent-msg-123',
+          options: { thread: 'parent-msg-123' },
         })
       );
     });
@@ -300,7 +350,7 @@ describe('UserBridge', () => {
     });
 
     it('should forward incoming channel messages to WebSocket', () => {
-      mockRelayClient.simulateIncomingMessage('bob', 'Hello Alice!', {
+      mockRelayClient.simulateIncomingChannelMessage('bob', '#general', 'Hello Alice!', {
         type: 'CHANNEL_MESSAGE',
         payload: {
           channel: '#general',
@@ -414,6 +464,88 @@ describe('UserBridge', () => {
       expect(client1.connected).toBe(false);
       expect(client2.connected).toBe(false);
       expect(bridge.getRegisteredUsers()).toHaveLength(0);
+    });
+  });
+
+  describe('WebSocket Update (Multi-tab/Reconnection)', () => {
+    it('should update WebSocket for existing user', async () => {
+      const ws1 = new MockWebSocket();
+      const ws2 = new MockWebSocket();
+
+      await bridge.registerUser('alice', ws1 as unknown as WebSocket);
+      expect(bridge.isUserRegistered('alice')).toBe(true);
+
+      // Update to new WebSocket
+      const updated = bridge.updateWebSocket('alice', ws2 as unknown as WebSocket);
+      expect(updated).toBe(true);
+    });
+
+    it('should return false when updating WebSocket for unregistered user', () => {
+      const ws = new MockWebSocket();
+      const updated = bridge.updateWebSocket('nonexistent', ws as unknown as WebSocket);
+      expect(updated).toBe(false);
+    });
+
+    it('should forward direct messages to updated WebSocket', async () => {
+      const ws1 = new MockWebSocket();
+      const ws2 = new MockWebSocket();
+
+      await bridge.registerUser('alice', ws1 as unknown as WebSocket);
+
+      // Update to new WebSocket
+      bridge.updateWebSocket('alice', ws2 as unknown as WebSocket);
+
+      // Simulate incoming direct message
+      mockRelayClient.onMessage?.('Agent1', { body: 'Hello Alice!' }, 'msg-123', {}, 'alice');
+
+      // Message should be sent to ws2, not ws1
+      expect(ws2.sentMessages).toHaveLength(1);
+      expect(ws2.sentMessages[0]).toMatchObject({
+        type: 'direct_message',
+        from: 'Agent1',
+        body: 'Hello Alice!',
+      });
+
+      // ws1 should not receive the message
+      expect(ws1.sentMessages).toHaveLength(0);
+    });
+
+    it('should handle multiple WebSocket updates (reconnection chain)', async () => {
+      const ws1 = new MockWebSocket();
+      const ws2 = new MockWebSocket();
+      const ws3 = new MockWebSocket();
+
+      await bridge.registerUser('alice', ws1 as unknown as WebSocket);
+
+      // First reconnection
+      bridge.updateWebSocket('alice', ws2 as unknown as WebSocket);
+
+      // Second reconnection
+      bridge.updateWebSocket('alice', ws3 as unknown as WebSocket);
+
+      // Simulate incoming message
+      mockRelayClient.onMessage?.('Agent1', { body: 'Latest message' }, 'msg-456', {}, 'alice');
+
+      // Only ws3 should receive the message
+      expect(ws3.sentMessages).toHaveLength(1);
+      expect(ws2.sentMessages).toHaveLength(0);
+      expect(ws1.sentMessages).toHaveLength(0);
+    });
+
+    it('should remove close handlers from old WebSocket', async () => {
+      const ws1 = new MockWebSocket();
+      const ws2 = new MockWebSocket();
+
+      await bridge.registerUser('alice', ws1 as unknown as WebSocket);
+      expect(bridge.isUserRegistered('alice')).toBe(true);
+
+      // Update to new WebSocket
+      bridge.updateWebSocket('alice', ws2 as unknown as WebSocket);
+
+      // Closing old WebSocket should NOT unregister the user
+      // (because the close handler was removed)
+      ws1.close();
+      expect(bridge.isUserRegistered('alice')).toBe(true);
     });
   });
 });

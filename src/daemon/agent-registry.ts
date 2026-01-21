@@ -165,6 +165,14 @@ export class AgentRegistry {
   }
 
   /**
+   * Check if an agent exists in the registry (has connected before).
+   * Used by the router to determine if messages should be queued for offline agents.
+   */
+  has(agentName: string): boolean {
+    return this.agents.has(agentName);
+  }
+
+  /**
    * Remove an agent from the registry.
    */
   remove(agentName: string): boolean {

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { OutputParser, formatIncomingMessage, parseSummaryFromOutput, parseSessionEndFromOutput, parseRelayMetadataFromOutput } from './parser.js';
+import { OutputParser, parseSummaryFromOutput, parseSessionEndFromOutput, parseRelayMetadataFromOutput } from './parser.js';
 
 describe('OutputParser', () => {
   let parser: OutputParser;
@@ -299,6 +299,16 @@ Let me know if that works.
       expect(result.commands).toHaveLength(1);
       expect(result.commands[0].thread).toBe('review-123');
       expect(result.commands[0].body).toBe('Multi-line\nreview comments');
+    });
+
+    it('handles await syntax in fenced messages', () => {
+      const input = '->relay:agent2 [await:5m] <<<\nPlease confirm\n>>>\n';
+      const result = parser.parse(input);
+
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].sync?.blocking).toBe(true);
+      expect(result.commands[0].sync?.timeoutMs).toBe(300000);
+      expect(result.commands[0].body).toBe('Please confirm');
     });
 
     it('handles cross-project thread syntax in fenced messages', () => {
@@ -1038,6 +1048,25 @@ Out3
       });
     });
 
+    it('parses inline await tag with default timeout', () => {
+      const result = parser.parse('->relay:agent [await] Please confirm\n');
+
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0]).toMatchObject({
+        to: 'agent',
+        body: 'Please confirm',
+        sync: { blocking: true, timeoutMs: undefined },
+      });
+    });
+
+    it('parses inline await tag with timeout', () => {
+      const result = parser.parse('->relay:agent [await:30s] Please confirm\n');
+
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0]?.sync?.timeoutMs).toBe(30000);
+      expect(result.commands[0]?.sync?.blocking).toBe(true);
+    });
+
     it('handles cross-project thread with cross-project target', () => {
       // Both target and thread are cross-project
       const result = parser.parse('->relay:backend-api:AuthService [thread:shared:auth-session] Verify token\n');
@@ -1146,56 +1175,6 @@ Out3
       expect(result.commands[0].to).toBe('*');
       expect(result.commands[0].body).toBe('Broadcast to all');
     });
-  });
-});
-
-describe('formatIncomingMessage', () => {
-  it('formats message correctly', () => {
-    const result = formatIncomingMessage('agent1', 'Hello there');
-
-    expect(result).toBe('\n[MSG] from agent1: Hello there\n');
-  });
-
-  it('formats message with explicit message kind', () => {
-    const result = formatIncomingMessage('agent1', 'Hello there', 'message');
-
-    expect(result).toBe('\n[MSG] from agent1: Hello there\n');
-  });
-
-  it('formats thinking correctly', () => {
-    const result = formatIncomingMessage('agent1', 'Considering options', 'thinking');
-
-    expect(result).toBe('\n[THINKING] from agent1: Considering options\n');
-  });
-
-  it('formats action correctly', () => {
-    const result = formatIncomingMessage('agent1', 'Execute command', 'action');
-
-    expect(result).toBe('\n[MSG] from agent1: Execute command\n');
-  });
-
-  it('formats state correctly', () => {
-    const result = formatIncomingMessage('agent1', 'State updated', 'state');
-
-    expect(result).toBe('\n[MSG] from agent1: State updated\n');
-  });
-
-  it('handles empty body', () => {
-    const result = formatIncomingMessage('agent1', '');
-
-    expect(result).toBe('\n[MSG] from agent1: \n');
-  });
-
-  it('handles agent name with special characters', () => {
-    const result = formatIncomingMessage('agent-2_test.v1', 'Message');
-
-    expect(result).toBe('\n[MSG] from agent-2_test.v1: Message\n');
-  });
-
-  it('handles multiline body', () => {
-    const result = formatIncomingMessage('agent1', 'Line 1\nLine 2\nLine 3');
-
-    expect(result).toBe('\n[MSG] from agent1: Line 1\nLine 2\nLine 3\n');
   });
 });
 

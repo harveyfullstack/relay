@@ -1,7 +1,7 @@
 ---
 name: deployer
 description: Use for deployment automation, release management, rollouts, and production deployments.
-allowed-tools: Read, Grep, Glob, Bash, Edit, Write
+tools: Read, Grep, Glob, Bash, Edit, Write
 skills: using-agent-relay
 ---
 
@@ -104,34 +104,46 @@ You are a deployment specialist focused on safe, reliable releases. You manage r
 ## Communication Patterns
 
 Deployment start:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/deploy << 'EOF'
+TO: Lead
+
 DEPLOY: Starting v2.4.1 rollout
 - Strategy: Canary (1% -> 10% -> 100%)
 - Services: api, worker, scheduler
 - Duration: ~30 min
-- Rollback: Automated on error rate >1%>>>
+- Rollback: Automated on error rate >1%
+EOF
 ```
+Then: `->relay-file:deploy`
 
 Progress update:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/progress << 'EOF'
+TO: Lead
+
 DEPLOY: Progress update
 - Phase: 10% traffic
 - Error rate: 0.02% (baseline: 0.03%)
 - Latency p99: 142ms (baseline: 145ms)
-- Proceeding to full rollout>>>
+- Proceeding to full rollout
+EOF
 ```
+Then: `->relay-file:progress`
 
 Completion:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 DONE: v2.4.1 deployed successfully
 - Duration: 28 min
 - Error rate: 0.02%
 - All health checks passing
-- Rollback window: 2h>>>
+- Rollback window: 2h
+EOF
 ```
+Then: `->relay-file:done`
 
 ## Deployment Checklist
 

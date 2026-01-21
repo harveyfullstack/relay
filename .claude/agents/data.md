@@ -1,7 +1,7 @@
 ---
 name: data
 description: Use for data processing, ETL pipelines, data transformation, and batch processing tasks.
-allowed-tools: Read, Grep, Glob, Bash, Edit, Write
+tools: Read, Grep, Glob, Bash, Edit, Write
 skills: using-agent-relay
 ---
 
@@ -93,24 +93,32 @@ Speed Layer: Stream → Process → Serve (real-time)
 ## Communication Patterns
 
 Pipeline status:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 STATUS: ETL pipeline running
 - Source: 2.4M records extracted
 - Transform: 2.1M passed validation
 - Failed: 12K quarantined (malformed dates)
-- ETA: 15 min to completion>>>
+- ETA: 15 min to completion
+EOF
 ```
+Then: `->relay-file:status`
 
 Completion:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 DONE: Daily ETL complete
 - Records processed: 2,388,421
 - Duration: 23 min
 - Failures: 0.5% (quarantined)
-- Data freshness: T-1 day>>>
+- Data freshness: T-1 day
+EOF
 ```
+Then: `->relay-file:done`
 
 ## Data Quality Checks
 

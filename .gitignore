@@ -11,6 +11,9 @@ bin/relay-pty
 # Rust build artifacts (relay-pty)
 relay-pty/target/
 
+# Platform-specific relay-pty binary (created by postinstall)
+bin/relay-pty
+
 # TypeScript build info (if enabled later)
 *.tsbuildinfo
 

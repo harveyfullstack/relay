@@ -26,6 +26,8 @@ export interface ParsedCommand {
   project?: string;
   /** Optional thread project for cross-project threads (e.g., [thread:project:id]) */
   threadProject?: string;
+  /** Optional sync metadata parsed from [await] */
+  sync?: { blocking: boolean; timeoutMs?: number };
   raw: string;
   meta?: ParsedMessageMetadata;
 }
@@ -83,6 +85,23 @@ const MAX_INLINE_CONTINUATION_LINES = 30;
 // They are handled separately by the wrappers (pty-wrapper.ts, tmux-wrapper.ts)
 const SPAWN_COMMAND_PATTERN = /->relay:spawn\s+\S+/i;
 const RELEASE_COMMAND_PATTERN = /->relay:release\s+\S+/i;
+
+// JSON relay format: ->relay.json:{...}
+// Simple single-line format that's resilient and won't interfere with normal conversation
+const JSON_RELAY_PATTERN = /->relay\.json:(\{[^\n]+\})/;
+
+/**
+ * Parsed JSON relay message structure
+ */
+interface JsonRelayMessage {
+  kind: 'message' | 'spawn' | 'release';
+  to?: string;
+  body?: string;
+  name?: string;
+  cli?: string;
+  task?: string;
+  thread?: string;
+}
 
 /**
  * Check if a line is a spawn or release command that should be handled
@@ -152,6 +171,54 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function parseAwaitTimeout(value: string, unit: string): number | undefined {
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed)) return undefined;
+  const multiplier = unit === 'h' ? 3600000 : unit === 'm' ? 60000 : 1000;
+  return parsed * multiplier;
+}
+
+function parseInlineTags(text: string): {
+  body: string;
+  thread?: string;
+  threadProject?: string;
+  sync?: ParsedCommand['sync'];
+} {
+  let remaining = text;
+  let thread: string | undefined;
+  let threadProject: string | undefined;
+  let sync: ParsedCommand['sync'] | undefined;
+
+  while (true) {
+    const awaitMatch = remaining.match(/^\s*\[await(?::(\d+)([smh]))?\]\s*/);
+    if (awaitMatch) {
+      const timeoutMs = awaitMatch[1] && awaitMatch[2]
+        ? parseAwaitTimeout(awaitMatch[1], awaitMatch[2])
+        : undefined;
+      sync = { blocking: true, timeoutMs };
+      remaining = remaining.slice(awaitMatch[0].length);
+      continue;
+    }
+
+    const threadMatch = remaining.match(/^\s*\[thread:(?:([\w-]+):)?([\w-]+)\]\s*/);
+    if (threadMatch) {
+      threadProject = threadMatch[1] || undefined;
+      thread = threadMatch[2];
+      remaining = remaining.slice(threadMatch[0].length);
+      continue;
+    }
+
+    break;
+  }
+
+  return {
+    body: remaining.trimStart(),
+    thread,
+    threadProject,
+    sync,
+  };
+}
+
 /**
  * Build inline pattern for a given prefix
  * Allow common input prefixes: >, $, %, #, →, ➜, bullets (●•◦‣⁃-*⏺◆◇○□■), box chars (│┃┆┇┊┋╎╏), and their variations
@@ -163,9 +230,9 @@ function escapeRegex(str: string): string {
  */
 function buildInlinePattern(prefix: string): RegExp {
   const escaped = escapeRegex(prefix);
-  // Group 1: target, Group 2: optional thread project, Group 3: thread ID, Group 4: message body
+  // Group 1: target, Group 2: message body (may include tags like [thread] or [await])
   // Includes box drawing characters (│┃┆┇┊┋╎╏) and sparkle (✦) for Gemini CLI output
-  return new RegExp(`^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■│┃┆┇┊┋╎╏✦]\\s*)*)?${escaped}(\\S+)(?:\\s+\\[thread:(?:([\\w-]+):)?([\\w-]+)\\])?\\s+(.+)$`);
+  return new RegExp(`^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■│┃┆┇┊┋╎╏✦]\\s*)*)?${escaped}(\\S+)\\s+(.+)$`);
 }
 
 /**
@@ -176,7 +243,7 @@ function buildInlinePattern(prefix: string): RegExp {
  */
 function buildFencedInlinePattern(prefix: string): RegExp {
   const escaped = escapeRegex(prefix);
-  return new RegExp(`^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■│┃┆┇┊┋╎╏✦]\\s*)*)?${escaped}(\\S+)(?:\\s+\\[thread:(?:([\\w-]+):)?([\\w-]+)\\])?\\s+<<<\\s*$`);
+  return new RegExp(`^(?:\\s*(?:[>$%#→➜›»●•◦‣⁃\\-*⏺◆◇○□■│┃┆┇┊┋╎╏✦]\\s*)*)?${escaped}(\\S+)(?:\\s+(.+?))?\\s+<<<\\s*$`);
 }
 
 /**
@@ -278,6 +345,7 @@ export class OutputParser {
   private fencedInlineProject: string | undefined = undefined;
   private fencedInlineRaw: string[] = [];
   private fencedInlineKind: 'message' | 'thinking' = 'message';
+  private fencedInlineSync: ParsedCommand['sync'] | undefined = undefined;
 
   // Dynamic patterns based on prefix configuration
   private inlineRelayPattern: RegExp;
@@ -468,19 +536,23 @@ export class OutputParser {
       return this.inlineRelayPattern.test(line) || this.inlineThinkingPattern.test(line);
     };
 
-    const isFencedInlineStart = (line: string): { target: string; thread?: string; threadProject?: string; project?: string; kind: 'message' | 'thinking' } | null => {
+    const isFencedInlineStart = (line: string): { target: string; thread?: string; threadProject?: string; project?: string; kind: 'message' | 'thinking'; sync?: ParsedCommand['sync'] } | null => {
       const stripped = stripAnsi(line);
       const relayMatch = stripped.match(this.fencedRelayPattern);
       if (relayMatch) {
-        const [, target, threadProject, threadId] = relayMatch;
+        const [, target, tagSection] = relayMatch;
+        const { body, thread, threadProject, sync } = parseInlineTags(tagSection ?? '');
+        if (body.trim().length > 0) return null;
         const { to, project } = parseTarget(target);
-        return { target: to, thread: threadId || undefined, threadProject: threadProject || undefined, project, kind: 'message' };
+        return { target: to, thread, threadProject, project, kind: 'message', sync };
       }
       const thinkingMatch = stripped.match(this.fencedThinkingPattern);
       if (thinkingMatch) {
-        const [, target, threadProject, threadId] = thinkingMatch;
+        const [, target, tagSection] = thinkingMatch;
+        const { body, thread, threadProject, sync } = parseInlineTags(tagSection ?? '');
+        if (body.trim().length > 0) return null;
         const { to, project } = parseTarget(target);
-        return { target: to, thread: threadId || undefined, threadProject: threadProject || undefined, project, kind: 'thinking' };
+        return { target: to, thread, threadProject, project, kind: 'thinking', sync };
       }
       return null;
     };
@@ -602,6 +674,7 @@ export class OutputParser {
         this.fencedInlineThreadProject = fencedStart.threadProject;
         this.fencedInlineProject = fencedStart.project;
         this.fencedInlineKind = fencedStart.kind;
+        this.fencedInlineSync = fencedStart.sync;
         this.fencedInlineBuffer = '';
         this.fencedInlineRaw = [line];
 
@@ -764,9 +837,42 @@ export class OutputParser {
     const thinkingBase = this.options.thinkingPrefix.replace(/:$/, '');
     const hasRelayPattern = line.includes(relayBase) || line.includes(thinkingBase);
     const hasBlockPattern = line.includes('[[') || line.includes('```');
+    const hasJsonRelay = line.includes('->relay.json:');
 
-    if (!hasRelayPattern && !hasBlockPattern) {
+    if (!hasRelayPattern && !hasBlockPattern && !hasJsonRelay) {
       return { command: null, output: line };
+    }
+
+    // Check for JSON relay format first (preferred): ->relay.json:{...}
+    if (hasJsonRelay) {
+      const stripped = stripAnsi(line);
+      const jsonMatch = stripped.match(JSON_RELAY_PATTERN);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1]) as JsonRelayMessage;
+          const kind = parsed.kind || 'message';
+
+          // Handle different command kinds
+          if (kind === 'message' && parsed.to) {
+            return {
+              command: {
+                to: parsed.to,
+                kind: 'message',
+                body: parsed.body || '',
+                thread: parsed.thread,
+                raw: jsonMatch[0],
+              },
+              output: null,
+            };
+          }
+          // spawn/release are handled by the wrapper, not here
+          // But we still strip the line from output
+          return { command: null, output: null };
+        } catch {
+          // Invalid JSON, pass through
+          console.error('[parser] Invalid JSON in ->relay.json:', jsonMatch[1]);
+        }
+      }
     }
 
     // Strip ANSI codes for pattern matching (only when potentially needed)
@@ -801,7 +907,8 @@ export class OutputParser {
     if (this.options.enableInline) {
       const relayMatch = stripped.match(this.inlineRelayPattern);
       if (relayMatch) {
-        const [raw, target, threadProject, threadId, body] = relayMatch;
+        const [raw, target, bodyWithTags] = relayMatch;
+        const { body, thread, threadProject, sync } = parseInlineTags(bodyWithTags);
 
         // Skip instructional/example text (common in system prompts)
         if (isInstructionalText(body)) {
@@ -822,9 +929,10 @@ export class OutputParser {
             to,
             kind: 'message',
             body,
-            thread: threadId || undefined, // undefined if no thread specified
+            thread: thread || undefined, // undefined if no thread specified
             threadProject: threadProject || undefined, // undefined if local thread
             project, // undefined if local, set if cross-project
+            sync,
             raw,
           },
           output: null, // Don't output relay commands
@@ -833,7 +941,8 @@ export class OutputParser {
 
       const thinkingMatch = stripped.match(this.inlineThinkingPattern);
       if (thinkingMatch) {
-        const [raw, target, threadProject, threadId, body] = thinkingMatch;
+        const [raw, target, bodyWithTags] = thinkingMatch;
+        const { body, thread, threadProject, sync } = parseInlineTags(bodyWithTags);
 
         // Skip instructional/example text (common in system prompts)
         if (isInstructionalText(body)) {
@@ -852,9 +961,10 @@ export class OutputParser {
             to,
             kind: 'thinking',
             body,
-            thread: threadId || undefined,
+            thread: thread || undefined,
             threadProject: threadProject || undefined,
             project,
+            sync,
             raw,
           },
           output: null,
@@ -946,12 +1056,12 @@ export class OutputParser {
   private shouldFilterFencedInline(target: string, body: string): boolean {
     // Check for placeholder target names
     if (isPlaceholderTarget(target)) {
-      console.error(`[parser] Filtered message - placeholder target: ${target}`);
+      // Silently filter placeholder targets (common in documentation)
       return true;
     }
     // Check for instructional body content
     if (isInstructionalText(body)) {
-      console.error(`[parser] Filtered message to ${target} - instructional text detected. Body preview: ${body.substring(0, 100)}`);
+      // Silently filter instructional text (common in system prompts)
       return true;
     }
     return false;
@@ -993,6 +1103,7 @@ export class OutputParser {
             thread: this.fencedInlineThread,
             threadProject: this.fencedInlineThreadProject,
             project: this.fencedInlineProject,
+            sync: this.fencedInlineSync,
             raw: this.fencedInlineRaw.join('\n'),
           };
           commands.push(command);
@@ -1007,6 +1118,7 @@ export class OutputParser {
         this.fencedInlineProject = undefined;
         this.fencedInlineRaw = [];
         this.fencedInlineKind = 'message';
+        this.fencedInlineSync = undefined;
 
         // Process remaining lines in normal mode
         const remainingLines = lines.slice(i);
@@ -1033,6 +1145,7 @@ export class OutputParser {
               thread: this.fencedInlineThread,
               threadProject: this.fencedInlineThreadProject,
               project: this.fencedInlineProject,
+              sync: this.fencedInlineSync,
               raw: this.fencedInlineRaw.join('\n'),
             };
             commands.push(command);
@@ -1048,6 +1161,7 @@ export class OutputParser {
         this.fencedInlineProject = undefined;
         this.fencedInlineRaw = [];
         this.fencedInlineKind = 'message';
+        this.fencedInlineSync = undefined;
 
         // Process remaining lines (including this one) in normal mode
         const remainingLines = lines.slice(i);
@@ -1086,6 +1200,7 @@ export class OutputParser {
             thread: this.fencedInlineThread,
             threadProject: this.fencedInlineThreadProject,
             project: this.fencedInlineProject,
+            sync: this.fencedInlineSync,
             raw: this.fencedInlineRaw.join('\n'),
           };
           commands.push(command);
@@ -1100,6 +1215,7 @@ export class OutputParser {
         this.fencedInlineProject = undefined;
         this.fencedInlineRaw = [];
         this.fencedInlineKind = 'message';
+        this.fencedInlineSync = undefined;
 
         // Process remaining lines after the fence close
         // Only process if there's actual content after the closing fence
@@ -1141,6 +1257,7 @@ export class OutputParser {
         this.fencedInlineProject = undefined;
         this.fencedInlineRaw = [];
         this.fencedInlineKind = 'message';
+        this.fencedInlineSync = undefined;
         return { commands, output: '' };
       }
 
@@ -1155,6 +1272,7 @@ export class OutputParser {
         this.fencedInlineProject = undefined;
         this.fencedInlineRaw = [];
         this.fencedInlineKind = 'message';
+        this.fencedInlineSync = undefined;
         return { commands, output: '' };
       }
     }
@@ -1182,6 +1300,7 @@ export class OutputParser {
     this.fencedInlineProject = undefined;
     this.fencedInlineRaw = [];
     this.fencedInlineKind = 'message';
+    this.fencedInlineSync = undefined;
     return result;
   }
 
@@ -1203,15 +1322,8 @@ export class OutputParser {
     this.fencedInlineProject = undefined;
     this.fencedInlineRaw = [];
     this.fencedInlineKind = 'message';
+    this.fencedInlineSync = undefined;
   }
-}
-
-/**
- * Format a relay command for injection into agent input.
- */
-export function formatIncomingMessage(from: string, body: string, kind: PayloadKind = 'message'): string {
-  const prefix = kind === 'thinking' ? '[THINKING]' : '[MSG]';
-  return `\n${prefix} from ${from}: ${body}\n`;
 }
 
 /**

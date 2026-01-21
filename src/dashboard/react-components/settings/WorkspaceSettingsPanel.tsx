@@ -72,7 +72,7 @@ interface AIProvider {
 const AI_PROVIDERS: AIProvider[] = [
   {
     id: 'anthropic',
-    name: 'Anthropic',
+    name: 'anthropic', // Must be lowercase to match backend validation
     displayName: 'Claude',
     description: 'Claude Code - recommended for code tasks',
     color: '#D97757',
@@ -83,7 +83,7 @@ const AI_PROVIDERS: AIProvider[] = [
   },
   {
     id: 'codex',
-    name: 'OpenAI',
+    name: 'openai', // Must be lowercase to match backend validation
     displayName: 'Codex',
     description: 'Codex - OpenAI coding assistant',
     color: '#10A37F',
@@ -95,18 +95,17 @@ const AI_PROVIDERS: AIProvider[] = [
   },
   {
     id: 'google',
-    name: 'Google',
+    name: 'google', // Must be lowercase to match backend validation
     displayName: 'Gemini',
     description: 'Gemini - Google AI coding assistant',
     color: '#4285F4',
     cliCommand: 'gemini',
-    apiKeyUrl: 'https://aistudio.google.com/app/apikey',
-    apiKeyName: 'API key',
+    // No apiKeyUrl - Gemini uses interactive terminal where user can choose OAuth or API key
     supportsOAuth: true,
   },
   {
     id: 'opencode',
-    name: 'OpenCode',
+    name: 'opencode', // Must be lowercase to match backend validation
     displayName: 'OpenCode',
     description: 'OpenCode - AI coding assistant',
     color: '#00D4AA',
@@ -115,11 +114,20 @@ const AI_PROVIDERS: AIProvider[] = [
   },
   {
     id: 'droid',
-    name: 'Factory',
+    name: 'factory', // Must be lowercase to match backend validation
     displayName: 'Droid',
     description: 'Droid - Factory AI coding agent',
     color: '#6366F1',
     cliCommand: 'droid',
+    supportsOAuth: true,
+  },
+  {
+    id: 'cursor',
+    name: 'cursor', // Must be lowercase to match backend validation
+    displayName: 'Cursor',
+    description: 'Cursor - AI-first code editor agent',
+    color: '#7C3AED',
+    cliCommand: 'agent',
     supportsOAuth: true,
   },
 ];
@@ -143,9 +151,11 @@ export function WorkspaceSettingsPanel({
   const [showApiKeyFallback, setShowApiKeyFallback] = useState<Record<string, boolean>>({});
   // Device flow preference for providers that support it
   const [useDeviceFlow, setUseDeviceFlow] = useState<Record<string, boolean>>({});
-  // Use terminal-based setup (default for Claude only - Codex uses CLI helper flow)
+  // Use terminal-based setup (default for Claude, Cursor, and Gemini - Codex uses CLI helper flow)
   const [useTerminalSetup, setUseTerminalSetup] = useState<Record<string, boolean>>({
     anthropic: true, // Default to terminal for Claude
+    cursor: true,    // Default to terminal for Cursor
+    google: true,    // Default to terminal for Gemini - allows choosing OAuth or API key
   });
 
   // Repo sync state
@@ -168,10 +178,10 @@ export function WorkspaceSettingsPanel({
       setIsLoading(true);
       setError(null);
 
-      const [wsResult, reposResult, userResult] = await Promise.all([
+      const [wsResult, reposResult, providersResult] = await Promise.all([
         cloudApi.getWorkspaceDetails(workspaceId),
         cloudApi.getRepos(),
-        cloudApi.getMe(),
+        cloudApi.getProviders(workspaceId),
       ]);
 
       if (wsResult.success) {
@@ -187,19 +197,21 @@ export function WorkspaceSettingsPanel({
         setAvailableRepos(reposResult.data.repositories);
       }
 
-      // Mark connected providers from user credentials (not workspace config)
-      if (userResult.success) {
+      // Mark connected providers for this workspace
+      if (providersResult.success) {
         // Map backend IDs to frontend IDs for consistency
         const BACKEND_TO_FRONTEND_MAP: Record<string, string> = {
           openai: 'codex', // Backend stores 'openai', frontend uses 'codex'
         };
         const connected: Record<string, boolean> = {};
-        userResult.data.connectedProviders.forEach((p) => {
-          connected[p.provider] = true;
-          // Also mark the frontend ID as connected if there's a mapping
-          const frontendId = BACKEND_TO_FRONTEND_MAP[p.provider];
-          if (frontendId) {
-            connected[frontendId] = true;
+        providersResult.data.providers.forEach((p) => {
+          if (p.isConnected) {
+            connected[p.id] = true;
+            // Also mark the frontend ID as connected if there's a mapping
+            const frontendId = BACKEND_TO_FRONTEND_MAP[p.id];
+            if (frontendId) {
+              connected[frontendId] = true;
+            }
           }
         });
         setProviderStatus(connected);
@@ -236,7 +248,7 @@ export function WorkspaceSettingsPanel({
         method: 'POST',
         credentials: 'include',
         headers,
-        body: JSON.stringify({ token: apiKeyInput.trim() }),
+        body: JSON.stringify({ token: apiKeyInput.trim(), workspaceId }),
       });
 
       if (!res.ok) {

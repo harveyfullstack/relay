@@ -9,6 +9,7 @@
  */
 
 import net from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { generateId } from '../utils/id-generator.js';
 import {
   type Envelope,
@@ -18,24 +19,32 @@ import {
   type SendMeta,
   type SendEnvelope,
   type DeliverEnvelope,
+  type AckPayload,
   type ErrorPayload,
   type PayloadKind,
   type SpeakOnTrigger,
   type LogPayload,
   type EntityType,
-  type SpawnPayload,
-  type SpawnResultPayload,
-  type ReleasePayload,
-  type ReleaseResultPayload,
-  type SpawnPolicyDecision,
   PROTOCOL_VERSION,
 } from '../protocol/types.js';
+import type {
+  ChannelMessagePayload,
+  ChannelJoinEnvelope,
+  ChannelLeaveEnvelope,
+  ChannelMessageEnvelope,
+  MessageAttachment,
+} from '../protocol/channels.js';
 import { encodeFrameLegacy, FrameParser } from '../protocol/framing.js';
-
-// Define locally to avoid circular dependency with daemon/server.js
-const DEFAULT_CLIENT_SOCKET_PATH = '/tmp/agent-relay.sock';
+import { DEFAULT_SOCKET_PATH } from '../daemon/server.js';
 
 export type ClientState = 'DISCONNECTED' | 'CONNECTING' | 'HANDSHAKING' | 'READY' | 'BACKOFF';
+
+export interface SyncOptions {
+  timeoutMs?: number;
+  kind?: PayloadKind;
+  data?: Record<string, unknown>;
+  thread?: string;
+}
 
 export interface ClientConfig {
   socketPath: string;
@@ -65,7 +74,7 @@ export interface ClientConfig {
 }
 
 const DEFAULT_CLIENT_CONFIG: ClientConfig = {
-  socketPath: DEFAULT_CLIENT_SOCKET_PATH,
+  socketPath: DEFAULT_SOCKET_PATH,
   agentName: 'agent',
   cli: undefined,
   quiet: false,
@@ -74,29 +83,6 @@ const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   reconnectDelayMs: 100,
   reconnectMaxDelayMs: 30000,
 };
-
-/** Request to spawn a new agent via daemon */
-export interface SpawnRequest {
-  name: string;
-  cli: string;
-  task: string;
-  team?: string;
-  cwd?: string;
-  socketPath?: string;
-  interactive?: boolean;
-  shadowOf?: string;
-  shadowSpeakOn?: SpeakOnTrigger[];
-  userId?: string;
-}
-
-/** Result from a spawn request */
-export interface SpawnResult {
-  success: boolean;
-  name: string;
-  pid?: number;
-  error?: string;
-  policyDecision?: SpawnPolicyDecision;
-}
 
 /**
  * Circular buffer for O(1) deduplication with bounded memory.
@@ -157,9 +143,7 @@ export class RelayClient {
   private writeQueue: Buffer[] = [];
   private writeScheduled = false;
 
-  // Pending spawn/release requests (correlation ID -> resolve/reject)
-  private pendingSpawns = new Map<string, { resolve: (result: SpawnResult) => void; reject: (err: Error) => void }>();
-  private pendingReleases = new Map<string, { resolve: (success: boolean) => void; reject: (err: Error) => void }>();
+  private pendingSyncAcks: Map<string, { resolve: (ack: AckPayload) => void; reject: (err: Error) => void; timeoutHandle: NodeJS.Timeout }> = new Map();
 
   // Event handlers
   /**
@@ -171,6 +155,14 @@ export class RelayClient {
    * @param originalTo - Original 'to' field from sender (e.g., '*' for broadcasts)
    */
   onMessage?: (from: string, payload: SendPayload, messageId: string, meta?: SendMeta, originalTo?: string) => void;
+  /**
+   * Callback for channel messages.
+   * @param from - Sender name
+   * @param channel - Channel name
+   * @param body - Message content
+   * @param envelope - Full envelope for additional data
+   */
+  onChannelMessage?: (from: string, channel: string, body: string, envelope: Envelope<ChannelMessagePayload>) => void;
   onStateChange?: (state: ClientState) => void;
   onError?: (error: Error) => void;
 
@@ -276,17 +268,6 @@ export class RelayClient {
       this.socket = undefined;
     }
 
-    // Reject any pending spawn/release requests
-    for (const pending of this.pendingSpawns.values()) {
-      pending.reject(new Error('Client disconnected'));
-    }
-    this.pendingSpawns.clear();
-
-    for (const pending of this.pendingReleases.values()) {
-      pending.reject(new Error('Client disconnected'));
-    }
-    this.pendingReleases.clear();
-
     this.setState('DISCONNECTED');
   }
 
@@ -331,10 +312,217 @@ export class RelayClient {
   }
 
   /**
+   * Send an ACK for a delivered message.
+   */
+  sendAck(payload: AckPayload): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: Envelope<AckPayload> = {
+      v: PROTOCOL_VERSION,
+      type: 'ACK',
+      id: generateId(),
+      ts: Date.now(),
+      payload,
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Send a message and wait for a correlated ACK response.
+   */
+  async sendAndWait(to: string, body: string, options: SyncOptions = {}): Promise<AckPayload> {
+    if (this._state !== 'READY') {
+      throw new Error('Client not ready');
+    }
+
+    const correlationId = randomUUID();
+    const timeoutMs = options.timeoutMs ?? 30000;
+    const kind = options.kind ?? 'message';
+
+    return new Promise<AckPayload>((resolve, reject) => {
+      const timeoutHandle = setTimeout(() => {
+        this.pendingSyncAcks.delete(correlationId);
+        reject(new Error(`ACK timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      this.pendingSyncAcks.set(correlationId, { resolve, reject, timeoutHandle });
+
+      const envelope: SendEnvelope = {
+        v: PROTOCOL_VERSION,
+        type: 'SEND',
+        id: generateId(),
+        ts: Date.now(),
+        to,
+        payload: {
+          kind,
+          body,
+          data: options.data,
+          thread: options.thread,
+        },
+        payload_meta: {
+          sync: {
+            correlationId,
+            timeoutMs,
+            blocking: true,
+          },
+        },
+      };
+
+      const sent = this.send(envelope);
+      if (!sent) {
+        clearTimeout(timeoutHandle);
+        this.pendingSyncAcks.delete(correlationId);
+        reject(new Error('Failed to send message'));
+      }
+    });
+  }
+
+  /**
    * Broadcast a message to all agents.
    */
   broadcast(body: string, kind: PayloadKind = 'message', data?: Record<string, unknown>): boolean {
     return this.sendMessage('*', body, kind, data);
+  }
+
+  // =============================================================================
+  // Channel Operations
+  // =============================================================================
+
+  /**
+   * Join a channel.
+   * @param channel - Channel name (e.g., '#general', 'dm:alice:bob')
+   * @param displayName - Optional display name for this member
+   */
+  joinChannel(channel: string, displayName?: string): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: ChannelJoinEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_JOIN',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        displayName,
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Admin join: Add any member to a channel (does not require member to be connected).
+   * Used by dashboard to sync channel memberships for agents.
+   * @param channel - Channel name (e.g., '#general')
+   * @param member - Name of the member to add
+   */
+  adminJoinChannel(channel: string, member: string): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: ChannelJoinEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_JOIN',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        member, // Admin mode: specify member to add
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Leave a channel.
+   * @param channel - Channel name to leave
+   * @param reason - Optional reason for leaving
+   */
+  leaveChannel(channel: string, reason?: string): boolean {
+    if (this._state !== 'READY') return false;
+
+    const envelope: ChannelLeaveEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_LEAVE',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        reason,
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Admin remove: Remove any member from a channel (does not require member to be connected).
+   * Used by dashboard to remove channel members.
+   * @param channel - Channel name (e.g., '#general')
+   * @param member - Name of the member to remove
+   */
+  adminRemoveMember(channel: string, member: string): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: ChannelLeaveEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_LEAVE',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        member, // Admin mode: specify member to remove
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Send a message to a channel.
+   * @param channel - Channel name
+   * @param body - Message content
+   * @param options - Optional thread, mentions, attachments
+   */
+  sendChannelMessage(
+    channel: string,
+    body: string,
+    options?: {
+      thread?: string;
+      mentions?: string[];
+      attachments?: MessageAttachment[];
+      data?: Record<string, unknown>;
+    }
+  ): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: ChannelMessageEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_MESSAGE',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        body,
+        thread: options?.thread,
+        mentions: options?.mentions,
+        attachments: options?.attachments,
+        data: options?.data,
+      },
+    };
+
+    return this.send(envelope);
   }
 
   /**
@@ -420,125 +608,6 @@ export class RelayClient {
     });
   }
 
-  /**
-   * Spawn a new agent via the daemon.
-   * @param request - Spawn request parameters
-   * @param timeoutMs - Timeout in milliseconds (default: 30000)
-   * @returns Promise that resolves with spawn result
-   */
-  spawn(request: SpawnRequest, timeoutMs = 30000): Promise<SpawnResult> {
-    return new Promise((resolve, reject) => {
-      if (this._state !== 'READY') {
-        reject(new Error('Client not ready'));
-        return;
-      }
-
-      const envelopeId = generateId();
-
-      // Set up timeout
-      const timeout = setTimeout(() => {
-        this.pendingSpawns.delete(envelopeId);
-        reject(new Error(`Spawn request timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      // Store pending request
-      this.pendingSpawns.set(envelopeId, {
-        resolve: (result) => {
-          clearTimeout(timeout);
-          this.pendingSpawns.delete(envelopeId);
-          resolve(result);
-        },
-        reject: (err) => {
-          clearTimeout(timeout);
-          this.pendingSpawns.delete(envelopeId);
-          reject(err);
-        },
-      });
-
-      // Send SPAWN envelope
-      const payload: SpawnPayload = {
-        name: request.name,
-        cli: request.cli,
-        task: request.task,
-        team: request.team,
-        cwd: request.cwd,
-        socketPath: request.socketPath,
-        spawnerName: this.config.agentName,
-        interactive: request.interactive,
-        shadowOf: request.shadowOf,
-        shadowSpeakOn: request.shadowSpeakOn,
-        userId: request.userId,
-      };
-
-      const sent = this.send({
-        v: PROTOCOL_VERSION,
-        type: 'SPAWN',
-        id: envelopeId,
-        ts: Date.now(),
-        payload,
-      });
-
-      if (!sent) {
-        clearTimeout(timeout);
-        this.pendingSpawns.delete(envelopeId);
-        reject(new Error('Failed to send SPAWN envelope'));
-      }
-    });
-  }
-
-  /**
-   * Release (stop) an agent via the daemon.
-   * @param name - Name of the agent to release
-   * @param timeoutMs - Timeout in milliseconds (default: 10000)
-   * @returns Promise that resolves with success boolean
-   */
-  release(name: string, timeoutMs = 10000): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-      if (this._state !== 'READY') {
-        reject(new Error('Client not ready'));
-        return;
-      }
-
-      const envelopeId = generateId();
-
-      // Set up timeout
-      const timeout = setTimeout(() => {
-        this.pendingReleases.delete(envelopeId);
-        reject(new Error(`Release request timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      // Store pending request
-      this.pendingReleases.set(envelopeId, {
-        resolve: (success) => {
-          clearTimeout(timeout);
-          this.pendingReleases.delete(envelopeId);
-          resolve(success);
-        },
-        reject: (err) => {
-          clearTimeout(timeout);
-          this.pendingReleases.delete(envelopeId);
-          reject(err);
-        },
-      });
-
-      // Send RELEASE envelope
-      const payload: ReleasePayload = { name };
-
-      const sent = this.send({
-        v: PROTOCOL_VERSION,
-        type: 'RELEASE',
-        id: envelopeId,
-        ts: Date.now(),
-        payload,
-      });
-
-      if (!sent) {
-        clearTimeout(timeout);
-        this.pendingReleases.delete(envelopeId);
-        reject(new Error('Failed to send RELEASE envelope'));
-      }
-    });
-  }
 
   /**
    * Send log/output data to the daemon for dashboard streaming.
@@ -657,8 +726,16 @@ export class RelayClient {
         this.handleDeliver(envelope as DeliverEnvelope);
         break;
 
+      case 'CHANNEL_MESSAGE':
+        this.handleChannelMessage(envelope as Envelope<ChannelMessagePayload> & { from?: string });
+        break;
+
       case 'PING':
         this.handlePing(envelope);
+        break;
+
+      case 'ACK':
+        this.handleAck(envelope as Envelope<AckPayload>);
         break;
 
       case 'ERROR':
@@ -668,30 +745,6 @@ export class RelayClient {
       case 'BUSY':
         console.warn('[client] Server busy, backing off');
         break;
-
-      case 'SPAWN_RESULT': {
-        const payload = envelope.payload as SpawnResultPayload;
-        const pending = this.pendingSpawns.get(payload.replyTo);
-        if (pending) {
-          pending.resolve({
-            success: payload.success,
-            name: payload.name,
-            pid: payload.pid,
-            error: payload.error,
-            policyDecision: payload.policyDecision,
-          });
-        }
-        break;
-      }
-
-      case 'RELEASE_RESULT': {
-        const payload = envelope.payload as ReleaseResultPayload;
-        const pending = this.pendingReleases.get(payload.replyTo);
-        if (pending) {
-          pending.resolve(payload.success);
-        }
-        break;
-      }
     }
   }
 
@@ -707,6 +760,8 @@ export class RelayClient {
   }
 
   private handleDeliver(envelope: DeliverEnvelope): void {
+    console.log(`[relay-client:${this.config.agentName}] Received DELIVER from ${envelope.from}: "${envelope.payload.body?.substring(0, 40)}..."`);
+
     // Send ACK
     this.send({
       v: PROTOCOL_VERSION,
@@ -721,6 +776,7 @@ export class RelayClient {
 
     const duplicate = this.markDelivered(envelope.id);
     if (duplicate) {
+      console.log(`[relay-client:${this.config.agentName}] Duplicate delivery, skipping`);
       return;
     }
 
@@ -728,6 +784,65 @@ export class RelayClient {
     // Pass originalTo from delivery info so handlers know if this was a broadcast
     if (this.onMessage && envelope.from) {
       this.onMessage(envelope.from, envelope.payload, envelope.id, envelope.payload_meta, envelope.delivery.originalTo);
+    } else {
+      console.log(`[relay-client:${this.config.agentName}] No onMessage handler or no from field`);
+    }
+  }
+
+  private handleAck(envelope: Envelope<AckPayload>): void {
+    const correlationId = envelope.payload.correlationId;
+    if (!correlationId) return;
+
+    const pending = this.pendingSyncAcks.get(correlationId);
+    if (!pending) return;
+
+    clearTimeout(pending.timeoutHandle);
+    this.pendingSyncAcks.delete(correlationId);
+    pending.resolve(envelope.payload);
+  }
+
+  private handleChannelMessage(envelope: Envelope<ChannelMessagePayload> & { from?: string }): void {
+    if (!this.config.quiet) {
+      console.log(`[client] handleChannelMessage: from=${envelope.from}, channel=${envelope.payload.channel}`);
+    }
+
+    const duplicate = this.markDelivered(envelope.id);
+    if (duplicate) {
+      if (!this.config.quiet) {
+        console.log(`[client] handleChannelMessage: duplicate message ${envelope.id}, skipping`);
+      }
+      return;
+    }
+
+    // Notify channel message handler
+    if (this.onChannelMessage && envelope.from) {
+      if (!this.config.quiet) {
+        console.log(`[client] Calling onChannelMessage callback`);
+      }
+      this.onChannelMessage(
+        envelope.from,
+        envelope.payload.channel,
+        envelope.payload.body,
+        envelope as Envelope<ChannelMessagePayload>
+      );
+    } else if (!this.config.quiet) {
+      console.log(`[client] No onChannelMessage handler set (handler=${!!this.onChannelMessage}, from=${envelope.from})`);
+    }
+
+    // Also call onMessage for backwards compatibility
+    // Convert to SendPayload format (channel is passed as 5th argument, not in payload)
+    if (this.onMessage && envelope.from) {
+      const sendPayload: SendPayload = {
+        kind: 'message',
+        body: envelope.payload.body,
+        data: {
+          _isChannelMessage: true,
+          _channel: envelope.payload.channel,
+          _mentions: envelope.payload.mentions,
+        },
+        thread: envelope.payload.thread,
+      };
+      this.onMessage(envelope.from, sendPayload, envelope.id, undefined, envelope.payload.channel);
     }
   }
 
@@ -757,6 +872,7 @@ export class RelayClient {
   private handleDisconnect(): void {
     this.parser.reset();
     this.socket = undefined;
+    this.rejectPendingSyncAcks(new Error('Disconnected while awaiting ACK'));
 
     // Don't reconnect if permanently destroyed
     if (this._destroyed) {
@@ -780,6 +896,14 @@ export class RelayClient {
     console.error('[client] Error:', error.message);
     if (this.onError) {
       this.onError(error);
+    }
+  }
+
+  private rejectPendingSyncAcks(error: Error): void {
+    for (const [correlationId, pending] of this.pendingSyncAcks.entries()) {
+      clearTimeout(pending.timeoutHandle);
+      pending.reject(error);
+      this.pendingSyncAcks.delete(correlationId);
     }
   }
 

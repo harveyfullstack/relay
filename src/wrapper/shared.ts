@@ -5,6 +5,8 @@
  * wrapper implementations and reduce duplication.
  */
 
+import type { SyncMeta } from '../protocol/types.js';
+
 /**
  * Message queued for injection into an agent's terminal
  */
@@ -15,6 +17,7 @@ export interface QueuedMessage {
   thread?: string;
   importance?: number;
   data?: Record<string, unknown>;
+  sync?: SyncMeta;
   /** Original 'to' field - '*' indicates broadcast */
   originalTo?: string;
 }
@@ -41,7 +44,7 @@ export interface InjectionMetrics {
 /**
  * CLI types for special handling
  */
-export type CliType = 'claude' | 'codex' | 'gemini' | 'droid' | 'opencode' | 'spawned' | 'other';
+export type CliType = 'claude' | 'codex' | 'gemini' | 'droid' | 'opencode' | 'cursor' | 'spawned' | 'other';
 
 /**
  * Injection timing constants
@@ -58,7 +61,7 @@ export const INJECTION_CONSTANTS = {
   /** Timeout for injection verification (ms) */
   VERIFICATION_TIMEOUT_MS: 2000,
   /** Delay between message and Enter key (ms) */
-  ENTER_DELAY_MS: 50,
+  ENTER_DELAY_MS: 100,
   /** Backoff multiplier for retries (ms per attempt) */
   RETRY_BACKOFF_MS: 300,
   /** Delay between processing queued messages (ms) */
@@ -102,12 +105,29 @@ export function sleep(ms: number): Promise<void> {
 /**
  * Build the injection string for a relay message.
  * Format: Relay message from {from} [{shortId}]{hints}: {body}
+ *
+ * If the body is already formatted (starts with "Relay message from"),
+ * returns it as-is to prevent double-wrapping.
  */
 export function buildInjectionString(msg: QueuedMessage): string {
+  // Check if body is already formatted (prevents double-wrapping)
+  // This can happen when:
+  // - Delivering queued/pending messages that were already formatted
+  // - Agent output includes quoted relay messages that get re-processed
+  // Strip ANSI first so escape codes don't interfere with detection
+  const sanitizedBody = stripAnsi(msg.body || '').replace(/[\r\n]+/g, ' ').trim();
+  if (sanitizedBody.startsWith('Relay message from ')) {
+    // Already formatted - return as-is
+    return sanitizedBody;
+  }
+
   const shortId = msg.messageId.substring(0, 8);
 
-  // Strip ANSI and normalize whitespace
-  const sanitizedBody = stripAnsi(msg.body).replace(/[\r\n]+/g, ' ').trim();
+  // Use senderName from data if available (for dashboard messages sent via _DashboardUI)
+  // This allows showing the actual GitHub username instead of the system client name
+  const displayFrom = (msg.from === '_DashboardUI' && typeof msg.data?.senderName === 'string')
+    ? msg.data.senderName
+    : msg.from;
 
   // Thread hint
   const threadHint = msg.thread ? ` [thread:${msg.thread}]` : '';
@@ -120,8 +140,14 @@ export function buildInjectionString(msg: QueuedMessage): string {
         ? ' [!]'
         : '';
 
-  // Channel indicator for broadcasts
-  const channelHint = msg.originalTo === '*' ? ' [#general]' : '';
+  // Channel indicator for channel messages and broadcasts
+  // originalTo will be '*' for broadcasts or the channel name (e.g., '#general') for channel messages
+  // Make it clear that replies should go to the channel, not the sender
+  const channelHint = msg.originalTo === '*'
+    ? ' [#general] (reply to #general, not sender)'
+    : msg.originalTo?.startsWith('#')
+      ? ` [${msg.originalTo}] (reply to ${msg.originalTo}, not sender)`
+      : '';
 
   // Extract attachment file paths if present
   let attachmentHint = '';
@@ -134,7 +160,7 @@ export function buildInjectionString(msg: QueuedMessage): string {
     }
   }
 
-  return `Relay message from ${msg.from} [${shortId}]${threadHint}${importanceHint}${channelHint}${attachmentHint}: ${sanitizedBody}`;
+  return `Relay message from ${displayFrom} [${shortId}]${threadHint}${importanceHint}${channelHint}${attachmentHint}: ${sanitizedBody}`;
 }
 
 /**
@@ -168,6 +194,7 @@ export function detectCliType(command: string): CliType {
   if (cmdLower.includes('claude')) return 'claude';
   if (cmdLower.includes('droid')) return 'droid';
   if (cmdLower.includes('opencode')) return 'opencode';
+  if (cmdLower.includes('cursor')) return 'cursor';
   return 'other';
 }
 
@@ -187,7 +214,7 @@ export const CLI_QUIRKS = {
    * Others may interpret the escape sequences literally.
    */
   supportsBracketedPaste: (cli: CliType): boolean => {
-    return cli === 'claude' || cli === 'codex' || cli === 'gemini' || cli === 'opencode';
+    return cli === 'claude' || cli === 'codex' || cli === 'gemini' || cli === 'opencode' || cli === 'cursor';
   },
 
   /**
@@ -209,6 +236,7 @@ export const CLI_QUIRKS = {
       codex: /^[>›»]\s*$/,
       droid: /^[>›»]\s*$/,
       opencode: /^[>›»]\s*$/,
+      cursor: /^[>›»]\s*$/,
       spawned: /^[>›»]\s*$/,
       other: /^[>$%#➜›»]\s*$/,
     };

@@ -2,18 +2,19 @@
  * Cloud Persistence Service
  *
  * Handles durable persistence of agent session data for cloud deployments.
- * Subscribes to PtyWrapper events ('summary', 'session-end') and persists
+ * Subscribes to wrapper events ('summary', 'session-end') and persists
  * to PostgreSQL via Drizzle ORM.
  *
- * This decouples PtyWrapper from storage concerns - the wrapper emits events,
+ * This decouples wrappers from storage concerns - the wrapper emits events,
  * this service handles persistence. Different storage backends can be swapped
  * by implementing alternative persistence services.
  *
- * @see PtyWrapperEvents in src/wrapper/pty-wrapper.ts for event definitions
+ * @see RelayPtyOrchestratorEvents in src/wrapper/relay-pty-orchestrator.ts for event definitions
  */
 
 import { eq, and, desc } from 'drizzle-orm';
-import type { PtyWrapper, SummaryEvent, SessionEndEvent } from '../../wrapper/pty-wrapper.js';
+import type { RelayPtyOrchestrator } from '../../wrapper/relay-pty-orchestrator.js';
+import type { SummaryEvent, SessionEndEvent } from '../../wrapper/wrapper-types.js';
 import { getDb } from '../db/drizzle.js';
 import { agentSessions, agentSummaries } from '../db/schema.js';
 
@@ -38,17 +39,17 @@ export interface CloudPersistenceConfig {
  *   workspaceId: 'workspace-123',
  * });
  *
- * // Bind to a PtyWrapper instance
- * const pty = new PtyWrapper(config);
- * const sessionId = await persistence.bindToPtyWrapper(pty);
+ * // Bind to a RelayPtyOrchestrator instance
+ * const pty = new RelayPtyOrchestrator(config);
+ * const sessionId = await persistence.bindToWrapper(pty);
  *
  * // When done, unbind to clean up listeners
- * persistence.unbindFromPtyWrapper(pty);
+ * persistence.unbindFromWrapper(pty);
  * ```
  */
 export class CloudPersistenceService {
   private config: CloudPersistenceConfig;
-  private boundWrappers = new Map<PtyWrapper, {
+  private boundWrappers = new Map<RelayPtyOrchestrator, {
     sessionId: string;
     summaryHandler: (event: SummaryEvent) => void;
     sessionEndHandler: (event: SessionEndEvent) => void;
@@ -59,13 +60,13 @@ export class CloudPersistenceService {
   }
 
   /**
-   * Bind to a PtyWrapper instance and start persisting its events.
+   * Bind to a RelayPtyOrchestrator instance and start persisting its events.
    * Creates a new agent session record and returns the session ID.
    *
-   * @param wrapper The PtyWrapper to bind to
+   * @param wrapper The RelayPtyOrchestrator to bind to
    * @returns The session ID for this agent session
    */
-  async bindToPtyWrapper(wrapper: PtyWrapper): Promise<string> {
+  async bindToRelayPtyOrchestrator(wrapper: RelayPtyOrchestrator): Promise<string> {
     const db = getDb();
     const agentName = wrapper.name;
 
@@ -108,11 +109,11 @@ export class CloudPersistenceService {
   }
 
   /**
-   * Unbind from a PtyWrapper and clean up event listeners.
+   * Unbind from a RelayPtyOrchestrator and clean up event listeners.
    *
-   * @param wrapper The PtyWrapper to unbind from
+   * @param wrapper The RelayPtyOrchestrator to unbind from
    */
-  unbindFromPtyWrapper(wrapper: PtyWrapper): void {
+  unbindFromRelayPtyOrchestrator(wrapper: RelayPtyOrchestrator): void {
     const binding = this.boundWrappers.get(wrapper);
     if (!binding) return;
 
@@ -177,7 +178,7 @@ export class CloudPersistenceService {
   /**
    * Get the session ID for a bound wrapper.
    */
-  getSessionId(wrapper: PtyWrapper): string | undefined {
+  getSessionId(wrapper: RelayPtyOrchestrator): string | undefined {
     return this.boundWrappers.get(wrapper)?.sessionId;
   }
 
@@ -235,7 +236,7 @@ export class CloudPersistenceService {
    */
   destroy(): void {
     for (const wrapper of this.boundWrappers.keys()) {
-      this.unbindFromPtyWrapper(wrapper);
+      this.unbindFromRelayPtyOrchestrator(wrapper);
     }
   }
 }

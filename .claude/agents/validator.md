@@ -1,7 +1,7 @@
 ---
 name: validator
 description: Input validation, data integrity, and schema enforcement. Ensures data quality at system boundaries.
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash
+tools: Read, Write, Edit, Grep, Glob, Bash
 skills: using-agent-relay
 ---
 
@@ -175,31 +175,43 @@ if (!result.success) {
 ## Communication Patterns
 
 **Acknowledge validation task:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/ack << 'EOF'
+TO: Sender
+
+ACK: Reviewing validation for [component]
+EOF
 ```
-->relay:Sender <<<
-ACK: Reviewing validation for [component]>>>
-```
+Then: `->relay-file:ack`
 
 **Report findings:**
-```
-->relay:Sender <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/report << 'EOF'
+TO: Sender
+
 VALIDATION REVIEW COMPLETE:
 - Fields checked: X
 - Issues found: Y
 - Critical gaps: [list]
-Schema proposal ready>>>
+Schema proposal ready
+EOF
 ```
+Then: `->relay-file:report`
 
 **Recommend implementation:**
-```
-->relay:Developer <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/task << 'EOF'
+TO: Developer
+
 TASK: Implement validation schema
 See proposed schema in [file]
 Key requirements:
 - All user input validated
 - Clear error messages
-- Type-safe with inference>>>
+- Type-safe with inference
+EOF
 ```
+Then: `->relay-file:task`
 
 ## Common Validation Patterns
 

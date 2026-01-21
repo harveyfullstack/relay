@@ -1,10 +1,37 @@
 # Agent Relay Workspace Base Image
 # Contains all CLI tools and system dependencies that rarely change
-# Rebuild only when updating CLI versions
+# Rebuild only when updating CLI versions or relay-pty binary
 
+# ============================================================================
+# Stage 1: Build Rust relay-pty binary
+# Cargo.lock v4 requires Cargo >=1.78; keep Rust >=1.83.
+# ============================================================================
+ARG RUST_VERSION=1.83
+FROM rust:${RUST_VERSION}-slim AS rust-builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy relay-pty source
+COPY relay-pty/ ./
+
+# Build release binary
+RUN cargo build --release
+
+# ============================================================================
+# Stage 2: Final base image with CLIs + relay-pty binary
+# ============================================================================
 FROM node:20-slim
 
 WORKDIR /app
+
+# Copy relay-pty binary from builder stage
+COPY --from=rust-builder /build/target/release/relay-pty /usr/local/bin/relay-pty
+RUN chmod +x /usr/local/bin/relay-pty
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -49,6 +76,9 @@ USER workspace
 # Install user-space CLIs (ones that require user-space installation)
 # Droid
 RUN curl -fsSL https://app.factory.ai/cli | sh
+
+# Cursor
+RUN curl -fsSL https://cursor.com/install | bash
 
 # Set PATH for user CLIs
 ENV PATH="/home/workspace/.local/bin:$PATH"

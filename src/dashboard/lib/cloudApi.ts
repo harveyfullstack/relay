@@ -398,6 +398,32 @@ export const cloudApi = {
   },
 
   /**
+   * Get all accessible workspaces (owned + member + contributor via GitHub repos)
+   * This is the preferred method for the workspace selector dropdown
+   */
+  async getAccessibleWorkspaces() {
+    return cloudFetch<{
+      workspaces: Array<{
+        id: string;
+        name: string;
+        status: string;
+        publicUrl?: string;
+        providers?: string[];
+        repositories?: string[];
+        accessType: 'owner' | 'member' | 'contributor';
+        permission: 'admin' | 'write' | 'read';
+        createdAt: string;
+      }>;
+      summary: {
+        owned: number;
+        member: number;
+        contributor: number;
+        total: number;
+      };
+    }>('/api/workspaces/accessible');
+  },
+
+  /**
    * Get workspace status (live polling from compute provider)
    */
   async getWorkspaceStatus(id: string) {
@@ -432,22 +458,31 @@ export const cloudApi = {
   // ===== Provider API =====
 
   /**
-   * Get connected providers
+   * Get connected providers for a workspace
+   * @param workspaceId - Workspace to get providers for
    */
-  async getProviders() {
+  async getProviders(workspaceId: string) {
     return cloudFetch<{ providers: Array<{
-      provider: string;
-      connected: boolean;
-      email?: string;
-      scopes?: string[];
-    }> }>('/api/providers');
+      id: string;
+      name: string;
+      displayName: string;
+      description: string;
+      color: string;
+      authStrategy: string;
+      cliCommand?: string;
+      isConnected: boolean;
+      connectedAs?: string;
+      connectedAt?: string;
+    }> }>(`/api/providers?workspaceId=${encodeURIComponent(workspaceId)}`);
   },
 
   /**
-   * Disconnect a provider
+   * Disconnect a provider from a workspace
+   * @param provider - Provider ID to disconnect
+   * @param workspaceId - Workspace to disconnect from
    */
-  async disconnectProvider(provider: string) {
-    return cloudFetch<{ success: boolean }>(`/api/providers/${encodeURIComponent(provider)}`, {
+  async disconnectProvider(provider: string, workspaceId: string) {
+    return cloudFetch<{ success: boolean }>(`/api/providers/${encodeURIComponent(provider)}?workspaceId=${encodeURIComponent(workspaceId)}`, {
       method: 'DELETE',
     });
   },

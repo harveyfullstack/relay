@@ -29,6 +29,7 @@ if [[ "$(id -u)" == "0" ]]; then
     # - Allow password auth (for CLI simplicity)
     # - Listen on port 3022 (non-privileged)
     # - Allow TCP forwarding (for port tunneling)
+    mkdir -p /etc/ssh/sshd_config.d
     cat > /etc/ssh/sshd_config.d/workspace.conf <<SSHEOF
 Port ${SSH_PORT}
 PasswordAuthentication yes
@@ -91,6 +92,15 @@ export OPENAI_CLI_NO_UPDATE=1
 export NO_UPDATE_NOTIFIER=1
 export NPM_CONFIG_UPDATE_NOTIFIER=false
 log "Auto-updates disabled for AI CLIs (container environment)"
+
+# ============================================================================
+# Git credential helper configuration
+# Clean up conflicting credential helpers that gh CLI or other tools may set
+# git-credential-relay requires no host-specific overrides to work properly
+# ============================================================================
+git config --global --unset-all 'credential.https://github.com.helper' 2>/dev/null || true
+git config --global --unset-all 'credential.https://gist.github.com.helper' 2>/dev/null || true
+log "Git credential helper configured (removed conflicting gh auth overrides)"
 
 # ============================================================================
 # Per-user credential storage setup

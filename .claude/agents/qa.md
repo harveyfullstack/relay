@@ -1,7 +1,7 @@
 ---
 name: qa
 description: Quality assurance, testing protocols, and defect management. Creates test plans and validates feature completeness.
-allowed-tools: Read, Grep, Glob, Bash, WebFetch
+tools: Read, Grep, Glob, Bash, WebFetch
 skills: using-agent-relay
 ---
 
@@ -138,29 +138,41 @@ You are a quality assurance specialist focused on ensuring software meets requir
 ## Communication Patterns
 
 **Acknowledge test request:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/ack << 'EOF'
+TO: Sender
+
+ACK: Creating test plan for [feature]
+EOF
 ```
-->relay:Sender <<<
-ACK: Creating test plan for [feature]>>>
-```
+Then: `->relay-file:ack`
 
 **Report test results:**
-```
-->relay:Sender <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/results << 'EOF'
+TO: Sender
+
 TEST RESULTS: [Feature]
 - Total: X tests
 - Passed: Y
 - Failed: Z
 - Blocked: N
-Critical defects: [list or none]>>>
+Critical defects: [list or none]
+EOF
 ```
+Then: `->relay-file:results`
 
 **Escalate blockers:**
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/blocked << 'EOF'
+TO: Lead
+
 BLOCKED: Cannot proceed with [test]
 Reason: [blocker description]
-Need: [what's required to unblock]>>>
+Need: [what's required to unblock]
+EOF
 ```
+Then: `->relay-file:blocked`
 
 ## Test Execution Tracking
 

@@ -1,13 +1,15 @@
 /**
  * Sidebar Component - Mission Control Theme
  *
- * Main navigation sidebar with project/agent list, view mode toggle,
- * and quick actions. Redesigned to match landing page aesthetic.
+ * Main navigation sidebar with channels, agents, and projects in unified view.
+ * Channels are collapsed by default.
  */
 
 import React, { useState, useEffect } from 'react';
 import type { Agent, Project } from '../../types';
 import type { ThreadInfo } from '../hooks/useMessages';
+import { usePinnedAgents } from '../hooks/usePinnedAgents';
+import { useWorkspaceStatus } from '../hooks/useWorkspaceStatus';
 import { AgentList } from '../AgentList';
 import { ProjectList } from '../ProjectList';
 import { ThreadList } from '../ThreadList';
@@ -15,6 +17,15 @@ import { LogoIcon } from '../Logo';
 
 const THREADS_COLLAPSED_KEY = 'agent-relay-threads-collapsed';
 const SIDEBAR_TAB_KEY = 'agent-relay-sidebar-tab';
+const CHANNELS_COLLAPSED_KEY = 'agent-relay-channels-collapsed';
+
+/** Channel type for sidebar display */
+export interface SidebarChannel {
+  id: string;
+  name: string;
+  unreadCount: number;
+  hasMentions?: boolean;
+}
 
 export type SidebarTab = 'agents' | 'team';
 
@@ -29,7 +40,7 @@ export interface SidebarProps {
   humanUnreadCounts?: Record<string, number>;
   currentProject?: string;
   selectedAgent?: string;
-  viewMode: 'local' | 'fleet';
+  viewMode: 'local' | 'fleet' | 'channels';
   isFleetAvailable: boolean;
   isConnected: boolean;
   /** Mobile: whether sidebar is open */
@@ -40,11 +51,33 @@ export interface SidebarProps {
   currentThread?: string | null;
   /** Total unread thread count for notification badge */
   totalUnreadThreadCount?: number;
+  /** Whether Activity feed is selected */
+  isActivitySelected?: boolean;
+  /** Unread count for Activity (broadcasts) */
+  activityUnreadCount?: number;
+  /** Handler when Activity is selected */
+  onActivitySelect?: () => void;
+  /** Channels for the collapsible channels section */
+  channels?: SidebarChannel[];
+  /** Archived channels for the collapsible archived section */
+  archivedChannels?: SidebarChannel[];
+  /** Currently selected channel ID */
+  selectedChannelId?: string;
+  /** Handler when a channel is selected */
+  onChannelSelect?: (channel: SidebarChannel) => void;
+  /** Handler to archive a channel */
+  onArchiveChannel?: (channel: SidebarChannel) => void;
+  /** Handler to unarchive a channel */
+  onUnarchiveChannel?: (channel: SidebarChannel) => void;
+  /** Handler to create a new channel */
+  onCreateChannel?: () => void;
+  /** Handler to invite members to a channel */
+  onInviteToChannel?: (channel: SidebarChannel) => void;
   onAgentSelect?: (agent: Agent, project?: Project) => void;
   /** Handler when a human user is selected (opens DM) */
   onHumanSelect?: (human: Agent) => void;
   onProjectSelect?: (project: Project) => void;
-  onViewModeChange?: (mode: 'local' | 'fleet') => void;
+  onViewModeChange?: (mode: 'local' | 'fleet' | 'channels') => void;
   onSpawnClick?: () => void;
   onReleaseClick?: (agent: Agent) => void;
   onLogsClick?: (agent: Agent) => void;
@@ -84,6 +117,17 @@ export function Sidebar({
   activeThreads = [],
   currentThread,
   totalUnreadThreadCount = 0,
+  isActivitySelected = false,
+  activityUnreadCount = 0,
+  onActivitySelect,
+  channels = [],
+  archivedChannels = [],
+  selectedChannelId,
+  onChannelSelect,
+  onArchiveChannel,
+  onUnarchiveChannel,
+  onCreateChannel,
+  onInviteToChannel,
   onAgentSelect,
   onHumanSelect,
   onProjectSelect,
@@ -121,6 +165,15 @@ export function Sidebar({
       return false;
     }
   });
+  const [isChannelsCollapsed, setIsChannelsCollapsed] = useState(() => {
+    // Initialize from localStorage - default to collapsed
+    try {
+      const stored = localStorage.getItem(CHANNELS_COLLAPSED_KEY);
+      return stored === null ? true : stored === 'true';
+    } catch {
+      return true;
+    }
+  });
 
   // Persist tab state to localStorage
   useEffect(() => {
@@ -140,14 +193,47 @@ export function Sidebar({
     }
   }, [isThreadsCollapsed]);
 
+  // Persist channels collapsed state
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHANNELS_COLLAPSED_KEY, String(isChannelsCollapsed));
+    } catch {
+      // localStorage not available
+    }
+  }, [isChannelsCollapsed]);
+
+  // Total unread count for channels
+  const totalChannelUnread = channels.reduce((sum, c) => sum + c.unreadCount, 0);
+  const hasChannels = channels.length > 0;
+  // Keep channels section open when empty so the create button is visible
+  const isChannelsSectionCollapsed = hasChannels ? isChannelsCollapsed : false;
+  const hasArchivedChannels = archivedChannels.length > 0;
+  const [isArchivedCollapsed, setIsArchivedCollapsed] = useState(true);
+  const [openChannelMenuId, setOpenChannelMenuId] = useState<string | null>(null);
+
+  // Close menus when channel selection changes
+  useEffect(() => {
+    setOpenChannelMenuId(null);
+  }, [selectedChannelId]);
+
   // Separate AI agents from human team members
-  const aiAgents = agents.filter(a => !a.isHuman);
+  // Also filter out system agents like _DashboardUI
+  const aiAgents = agents.filter(a => !a.isHuman && a.name !== '_DashboardUI');
   const humanMembers = agents.filter(
-    a => a.isHuman && (!currentUserName || a.name.toLowerCase() !== currentUserName.toLowerCase())
+    a => a.isHuman &&
+      a.name !== '_DashboardUI' &&
+      (!currentUserName || a.name.toLowerCase() !== currentUserName.toLowerCase())
   );
   const filteredHumanMembers = humanMembers.filter(
     (m) => !searchQuery || m.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Pinned agents for quick access
+  const { pinnedAgents, togglePin, isMaxPinned } = usePinnedAgents();
+
+  // Check if workspace is stopped - hide channels when stopped
+  const { workspace } = useWorkspaceStatus();
+  const isWorkspaceStopped = workspace?.isStopped ?? false;
 
   // Determine if we should show unified project view
   const hasProjects = projects.length > 0;
@@ -158,7 +244,7 @@ export function Sidebar({
     >
       {/* Header */}
       <div className="p-3 sm:p-4 border-b border-border-subtle">
-        <div className="flex items-center gap-2 sm:gap-3 mb-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <LogoIcon size={24} withGlow={true} />
           <h1 className="text-base sm:text-lg font-display font-semibold m-0 text-text-primary">Agent Relay</h1>
           <ConnectionIndicator isConnected={isConnected} />
@@ -171,34 +257,6 @@ export function Sidebar({
             <CloseIcon />
           </button>
         </div>
-
-        {/* View Mode Toggle */}
-        {isFleetAvailable && (
-          <div className="flex bg-bg-tertiary rounded-lg p-1">
-            <button
-              className={`
-                flex-1 py-2 px-4 bg-transparent border-none text-xs font-medium cursor-pointer rounded-md transition-all duration-150
-                ${viewMode === 'local'
-                  ? 'bg-bg-elevated text-accent-cyan shadow-sm'
-                  : 'text-text-muted hover:text-text-secondary'}
-              `}
-              onClick={() => onViewModeChange?.('local')}
-            >
-              Local
-            </button>
-            <button
-              className={`
-                flex-1 py-2 px-4 bg-transparent border-none text-xs font-medium cursor-pointer rounded-md transition-all duration-150
-                ${viewMode === 'fleet'
-                  ? 'bg-bg-elevated text-accent-cyan shadow-sm'
-                  : 'text-text-muted hover:text-text-secondary'}
-              `}
-              onClick={() => onViewModeChange?.('fleet')}
-            >
-              Fleet
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Agents/Team Tabs */}
@@ -271,6 +329,179 @@ export function Sidebar({
         </div>
       )}
 
+      {/* Activity Section - Broadcasts */}
+      <div className="border-b border-border-subtle px-2 py-2">
+        <button
+          onClick={onActivitySelect}
+          className={`
+            w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-sm transition-colors
+            ${isActivitySelected
+              ? 'bg-accent-cyan/10 text-text-primary border border-accent-cyan/30'
+              : 'hover:bg-bg-hover text-text-secondary hover:text-text-primary border border-transparent'}
+          `}
+        >
+          <ActivityIcon />
+          <span className={`flex-1 ${activityUnreadCount > 0 ? 'font-semibold text-text-primary' : ''}`}>
+            Activity
+          </span>
+          {activityUnreadCount > 0 && (
+            <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-accent-cyan/20 text-accent-cyan">
+              {activityUnreadCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Channels Section - Collapsible (hidden when workspace stopped) */}
+      {!isWorkspaceStopped && (
+      <div className="border-b border-border-subtle">
+        <button
+          className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-text-muted uppercase tracking-wide hover:bg-bg-hover transition-colors"
+          onClick={() => setIsChannelsCollapsed(!isChannelsCollapsed)}
+        >
+          <span className="flex items-center gap-2">
+            <HashIcon />
+            Channels
+            {totalChannelUnread > 0 && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-accent-cyan/20 text-accent-cyan">
+                {totalChannelUnread}
+              </span>
+            )}
+          </span>
+          <ChevronIcon className={`transition-transform ${isChannelsSectionCollapsed ? '' : 'rotate-180'}`} />
+        </button>
+        {!isChannelsSectionCollapsed && (
+          <div className="px-2 pb-2 space-y-0.5">
+            {channels.map(channel => (
+              <div key={channel.id} className="group relative">
+                <button
+                  onClick={() => onChannelSelect?.(channel)}
+                  className={`
+                    w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors
+                    ${selectedChannelId === channel.id
+                      ? 'bg-accent-cyan/10 text-text-primary'
+                      : 'hover:bg-bg-hover text-text-secondary hover:text-text-primary'}
+                  `}
+                >
+                  <span className="text-text-muted">#</span>
+                  <span className={`flex-1 truncate ${channel.unreadCount > 0 ? 'font-semibold text-text-primary' : ''}`}>
+                    {channel.name}
+                  </span>
+                  {channel.unreadCount > 0 && (
+                    <span className={`
+                      text-[11px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center
+                      ${channel.hasMentions ? 'bg-red-500/20 text-red-400' : 'bg-accent-cyan/20 text-accent-cyan'}
+                    `}>
+                      {channel.unreadCount}
+                    </span>
+                  )}
+                </button>
+                {(onInviteToChannel || onArchiveChannel) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenChannelMenuId(openChannelMenuId === channel.id ? null : channel.id);
+                    }}
+                    title="Channel actions"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-bg-tertiary text-text-muted hover:text-text-primary transition-all"
+                  >
+                    <MoreIcon />
+                  </button>
+                )}
+                {openChannelMenuId === channel.id && (
+                  <div className="absolute right-0 top-full mt-1 z-30 bg-bg-elevated border border-border-subtle rounded-lg shadow-lg py-1 min-w-[160px]">
+                    {onInviteToChannel && (
+                      <MenuButton
+                        onClick={() => {
+                          onInviteToChannel(channel);
+                          setOpenChannelMenuId(null);
+                        }}
+                      >
+                        <UserPlusIcon />
+                        <span>Invite members</span>
+                      </MenuButton>
+                    )}
+                    {onArchiveChannel && (
+                      <MenuButton
+                        onClick={() => {
+                          onArchiveChannel(channel);
+                          setOpenChannelMenuId(null);
+                        }}
+                      >
+                        <ArchiveIcon />
+                        <span>Archive</span>
+                      </MenuButton>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+            {onCreateChannel && (
+              <button
+                onClick={onCreateChannel}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors"
+              >
+                <PlusIcon />
+                <span>{hasChannels ? 'Add channel' : 'Create your first channel'}</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {hasArchivedChannels && (
+          <div className="mt-1 border-t border-border-subtle">
+            <button
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-text-muted uppercase tracking-wide hover:bg-bg-hover transition-colors"
+              onClick={() => setIsArchivedCollapsed(!isArchivedCollapsed)}
+            >
+              <span className="flex items-center gap-2">
+                <ArchiveIcon />
+                Archived
+                <span className="text-[10px] opacity-80">({archivedChannels.length})</span>
+              </span>
+              <ChevronIcon className={`transition-transform ${isArchivedCollapsed ? '' : 'rotate-180'}`} />
+            </button>
+            {!isArchivedCollapsed && (
+              <div className="px-2 pb-2 space-y-0.5">
+                {archivedChannels.map((channel) => (
+                  <div key={channel.id} className="group relative">
+                    <button
+                      onClick={() => onChannelSelect?.(channel)}
+                      className={`
+                        w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors
+                        ${selectedChannelId === channel.id
+                          ? 'bg-bg-tertiary text-text-primary'
+                          : 'hover:bg-bg-hover text-text-secondary hover:text-text-primary'}
+                      `}
+                    >
+                      <span className="text-text-muted">#</span>
+                      <span className="flex-1 truncate">{channel.name}</span>
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-border-subtle text-text-muted">
+                        Archived
+                      </span>
+                    </button>
+                    {onUnarchiveChannel && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUnarchiveChannel(channel);
+                        }}
+                        title="Unarchive channel"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 px-2 py-1 rounded-md bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors text-xs flex items-center gap-1"
+                      >
+                        <UnarchiveIcon />
+                        <span>Unarchive</span>
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      )}
+
       {/* Agent/Project List */}
       <div className="flex-1 overflow-y-auto px-2">
         {activeTab === 'team' && humanMembers.length > 0 ? (
@@ -337,10 +568,13 @@ export function Sidebar({
             agents={aiAgents}
             selectedAgent={selectedAgent}
             searchQuery={searchQuery}
+            pinnedAgents={pinnedAgents}
+            isMaxPinned={isMaxPinned}
             onAgentSelect={(agent) => onAgentSelect?.(agent)}
             onReleaseClick={onReleaseClick}
             onLogsClick={onLogsClick}
             onProfileClick={onProfileClick}
+            onPinToggle={(agent) => togglePin(agent.name)}
             compact={true}
             showGroupStats={true}
           />
@@ -518,11 +752,85 @@ function ClearIcon() {
   );
 }
 
+function MenuButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
+    >
+      {children}
+    </button>
+  );
+}
+
 function PlusIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
       <line x1="12" y1="5" x2="12" y2="19" />
       <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function UserPlusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="8.5" cy="7" r="4" />
+      <line x1="20" y1="8" x2="20" y2="14" />
+      <line x1="23" y1="11" x2="17" y2="11" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7h18" />
+      <path d="M5 7v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7" />
+      <rect x="3" y="3" width="18" height="4" rx="1" />
+      <line x1="10" y1="12" x2="14" y2="12" />
+    </svg>
+  );
+}
+
+function UnarchiveIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7h18" />
+      <path d="M5 7v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7" />
+      <rect x="3" y="3" width="18" height="4" rx="1" />
+      <path d="M12 11v6" />
+      <path d="M9 14l3-3 3 3" />
+    </svg>
+  );
+}
+
+function HashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="4" y1="9" x2="20" y2="9" />
+      <line x1="4" y1="15" x2="20" y2="15" />
+      <line x1="10" y1="3" x2="8" y2="21" />
+      <line x1="16" y1="3" x2="14" y2="21" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ className }: { className?: string }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="5" cy="12" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
     </svg>
   );
 }
@@ -609,6 +917,14 @@ function MetricsIcon() {
       <path d="M18 17V9" />
       <path d="M13 17V5" />
       <path d="M8 17v-3" />
+    </svg>
+  );
+}
+
+function ActivityIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
     </svg>
   );
 }

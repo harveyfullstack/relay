@@ -1,7 +1,7 @@
 ---
 name: security
 description: Security auditing, vulnerability assessment, and secure coding review. Identifies OWASP risks and recommends mitigations.
-allowed-tools: Read, Grep, Glob, Bash, WebSearch
+tools: Read, Grep, Glob, Bash, WebSearch
 skills: using-agent-relay
 ---
 
@@ -133,27 +133,39 @@ You are a security specialist focused on identifying vulnerabilities, assessing 
 ## Communication Patterns
 
 **Acknowledge audit request:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/ack << 'EOF'
+TO: Sender
+
+ACK: Beginning security audit of [scope]
+EOF
 ```
-->relay:Sender <<<
-ACK: Beginning security audit of [scope]>>>
-```
+Then: `->relay-file:ack`
 
 **Report findings:**
-```
-->relay:Sender <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/report << 'EOF'
+TO: Sender
+
 SECURITY AUDIT COMPLETE:
 - Critical: X findings
 - High: Y findings
 - Medium: Z findings
-Full report in [location]>>>
+Full report in [location]
+EOF
 ```
+Then: `->relay-file:report`
 
 **Escalate critical issues:**
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/escalate << 'EOF'
+TO: Lead
+
 CRITICAL SECURITY ISSUE: [brief description]
-Requires immediate attention>>>
+Requires immediate attention
+EOF
 ```
+Then: `->relay-file:escalate`
 
 ## Dependency Analysis
 

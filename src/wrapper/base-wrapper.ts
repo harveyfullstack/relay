@@ -19,7 +19,8 @@ import { EventEmitter } from 'node:events';
 import { RelayClient } from './client.js';
 import type { ParsedCommand, ParsedSummary } from './parser.js';
 import { isPlaceholderTarget } from './parser.js';
-import type { SendPayload, SendMeta, SpeakOnTrigger } from '../protocol/types.js';
+import type { SendPayload, SendMeta, SpeakOnTrigger, Envelope } from '../protocol/types.js';
+import type { ChannelMessagePayload } from '../protocol/channels.js';
 import {
   type QueuedMessage,
   type InjectionMetrics,
@@ -39,6 +40,7 @@ import {
   type ContinuityManager,
 } from '../continuity/index.js';
 import { UniversalIdleDetector } from './idle-detector.js';
+import { StuckDetector, type StuckEvent, type StuckReason } from './stuck-detector.js';
 
 /**
  * Base configuration shared by all wrapper types
@@ -79,6 +81,10 @@ export interface BaseWrapperConfig {
   idleBeforeInjectMs?: number;
   /** Confidence threshold for idle detection (0-1, default: 0.7) */
   idleConfidenceThreshold?: number;
+  /** Skip initial instruction injection (when using --append-system-prompt) */
+  skipInstructions?: boolean;
+  /** Skip continuity loading (for spawned agents that don't need session recovery) */
+  skipContinuity?: boolean;
 }
 
 /**
@@ -114,6 +120,9 @@ export abstract class BaseWrapper extends EventEmitter {
   // Universal idle detection (shared across all wrapper types)
   protected idleDetector: UniversalIdleDetector;
 
+  // Stuck detection (extended idle, error loops, output loops)
+  protected stuckDetector: StuckDetector;
+
   constructor(config: BaseWrapperConfig) {
     super();
     this.config = config;
@@ -130,8 +139,10 @@ export abstract class BaseWrapper extends EventEmitter {
       quiet: true,
     });
 
-    // Initialize continuity manager
-    this.continuity = getContinuityManager({ defaultCli: this.cliType });
+    // Initialize continuity manager (skip for spawned agents that don't need session recovery)
+    if (!config.skipContinuity) {
+      this.continuity = getContinuityManager({ defaultCli: this.cliType });
+    }
 
     // Initialize universal idle detector for robust injection timing
     this.idleDetector = new UniversalIdleDetector({
@@ -139,9 +150,25 @@ export abstract class BaseWrapper extends EventEmitter {
       confidenceThreshold: config.idleConfidenceThreshold ?? DEFAULT_IDLE_CONFIDENCE_THRESHOLD,
     });
 
-    // Set up message handler
+    // Initialize stuck detector for extended idle and loop detection
+    this.stuckDetector = new StuckDetector();
+    this.stuckDetector.on('stuck', (event: StuckEvent) => {
+      console.warn(`[${config.name}] Agent stuck: ${event.reason} - ${event.details}`);
+      this.emit('stuck', event);
+    });
+    this.stuckDetector.on('unstuck', () => {
+      console.log(`[${config.name}] Agent unstuck`);
+      this.emit('unstuck');
+    });
+
+    // Set up message handler for direct messages
     this.client.onMessage = (from, payload, messageId, meta, originalTo) => {
       this.handleIncomingMessage(from, payload, messageId, meta, originalTo);
+    };
+
+    // Set up channel message handler
+    this.client.onChannelMessage = (from, channel, body, envelope) => {
+      this.handleIncomingChannelMessage(from, channel, body, envelope);
     };
   }
 
@@ -206,11 +233,40 @@ export abstract class BaseWrapper extends EventEmitter {
   }
 
   /**
-   * Feed output to the idle detector.
+   * Start stuck detection. Call after the agent process starts.
+   */
+  protected startStuckDetection(): void {
+    this.stuckDetector.start();
+  }
+
+  /**
+   * Stop stuck detection. Call when the agent process stops.
+   */
+  protected stopStuckDetection(): void {
+    this.stuckDetector.stop();
+  }
+
+  /**
+   * Check if the agent is currently stuck.
+   */
+  isStuck(): boolean {
+    return this.stuckDetector.getIsStuck();
+  }
+
+  /**
+   * Get the reason for being stuck (if stuck).
+   */
+  getStuckReason(): StuckReason | null {
+    return this.stuckDetector.getStuckReason();
+  }
+
+  /**
+   * Feed output to the idle and stuck detectors.
    * Call this whenever new output is received from the agent.
    */
   protected feedIdleDetectorOutput(output: string): void {
     this.idleDetector.onOutput(output);
+    this.stuckDetector.onOutput(output);
   }
 
   /**
@@ -263,9 +319,66 @@ export abstract class BaseWrapper extends EventEmitter {
       thread: payload.thread,
       importance: meta?.importance,
       data: payload.data,
+      sync: meta?.sync,
       originalTo,
     };
 
+    this.messageQueue.push(queuedMsg);
+  }
+
+  /**
+   * Send an ACK for a sync message after processing completes.
+   */
+  protected sendSyncAck(messageId: string, sync: SendMeta['sync'] | undefined, response: boolean, responseData?: unknown): void {
+    if (!sync?.correlationId) return;
+    this.client.sendAck({
+      ack_id: messageId,
+      seq: 0,
+      correlationId: sync.correlationId,
+      response,
+      responseData,
+    });
+  }
+
+  /**
+   * Handle incoming channel message from relay.
+   * Channel messages include a channel indicator so the agent knows to reply to the channel.
+   */
+  protected handleIncomingChannelMessage(
+    from: string,
+    channel: string,
+    body: string,
+    envelope: Envelope<ChannelMessagePayload>
+  ): void {
+    const messageId = envelope.id;
+
+    // Deduplicate by message ID
+    if (this.receivedMessageIds.has(messageId)) return;
+    this.receivedMessageIds.add(messageId);
+
+    // Limit dedup set size
+    if (this.receivedMessageIds.size > 1000) {
+      const oldest = this.receivedMessageIds.values().next().value;
+      if (oldest) this.receivedMessageIds.delete(oldest);
+    }
+
+    // Queue the message with channel indicator in the body
+    // Format: "Relay message from Alice [abc123] [#general]: message body"
+    // This lets the agent know to reply to the channel, not the sender
+    const queuedMsg: QueuedMessage = {
+      from,
+      body,
+      messageId,
+      thread: envelope.payload.thread,
+      data: {
+        _isChannelMessage: true,
+        _channel: channel,
+        _mentions: envelope.payload.mentions,
+      },
+      originalTo: channel, // Set channel as the reply target
+    };
+
+    console.error(`[base-wrapper] Received channel message: from=${from} channel=${channel} id=${messageId.substring(0, 8)}`);
     this.messageQueue.push(queuedMsg);
   }
 
@@ -294,9 +407,45 @@ export abstract class BaseWrapper extends EventEmitter {
     }
 
     // Only send if client ready
-    if (this.client.state !== 'READY') return;
+    if (this.client.state !== 'READY') {
+      console.error(`[base-wrapper] Client not ready (state=${this.client.state}), dropping message to ${cmd.to}`);
+      return;
+    }
 
-    this.client.sendMessage(cmd.to, cmd.body, cmd.kind, cmd.data, cmd.thread);
+    console.error(`[base-wrapper] sendRelayCommand: to=${cmd.to}, body=${cmd.body.substring(0, 50)}...`);
+
+    let sendMeta: SendMeta | undefined;
+    if (cmd.meta) {
+      sendMeta = {
+        importance: cmd.meta.importance,
+        replyTo: cmd.meta.replyTo,
+        requires_ack: cmd.meta.ackRequired,
+      };
+    }
+
+    // Check if target is a channel (starts with #)
+    if (cmd.to.startsWith('#')) {
+      // Use CHANNEL_MESSAGE protocol for channel targets
+      console.error(`[base-wrapper] Sending CHANNEL_MESSAGE to ${cmd.to}`);
+      this.client.sendChannelMessage(cmd.to, cmd.body, {
+        thread: cmd.thread,
+        data: cmd.data,
+      });
+    } else {
+      // Use SEND protocol for direct messages and broadcasts
+      if (cmd.sync?.blocking) {
+        this.client.sendAndWait(cmd.to, cmd.body, {
+          timeoutMs: cmd.sync.timeoutMs,
+          kind: cmd.kind,
+          data: cmd.data,
+          thread: cmd.thread,
+        }).catch((err) => {
+          console.error(`[base-wrapper] sendAndWait failed for ${cmd.to}: ${err.message}`);
+        });
+      } else {
+        this.client.sendMessage(cmd.to, cmd.body, cmd.kind, cmd.data, cmd.thread, sendMeta);
+      }
+    }
   }
 
   // =========================================================================
@@ -307,6 +456,11 @@ export abstract class BaseWrapper extends EventEmitter {
    * Parse spawn and release commands from output
    */
   protected parseSpawnReleaseCommands(content: string): void {
+    // Debug: check for spawn keyword
+    if (content.includes('->relay:spawn')) {
+      console.log(`[base-wrapper:${this.config.name}] Found spawn keyword in content`);
+    }
+
     // Single-line spawn: ->relay:spawn Name cli "task"
     const spawnPattern = new RegExp(
       `${this.relayPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}spawn\\s+(\\w+)\\s+(\\w+)\\s+"([^"]+)"`
@@ -314,6 +468,7 @@ export abstract class BaseWrapper extends EventEmitter {
     const spawnMatch = content.match(spawnPattern);
     if (spawnMatch) {
       const [, name, cli, task] = spawnMatch;
+      console.log(`[base-wrapper:${this.config.name}] Single-line spawn match: ${name} ${cli}`);
       const cmdHash = `spawn:${name}:${cli}:${task}`;
       if (!this.processedSpawnCommands.has(cmdHash)) {
         this.processedSpawnCommands.add(cmdHash);
@@ -323,11 +478,12 @@ export abstract class BaseWrapper extends EventEmitter {
 
     // Fenced spawn: ->relay:spawn Name cli <<<\ntask\n>>>
     const fencedSpawnPattern = new RegExp(
-      `${this.relayPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}spawn\\s+(\\w+)\\s+(\\w+)\\s+<<<\\n?([\\s\\S]*?)>>>`
+      `${this.relayPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}spawn\\s+(\\w+)\\s+(\\w+)\\s*<<<[\\s]*([\\s\\S]*?)>>>`
     );
     const fencedSpawnMatch = content.match(fencedSpawnPattern);
     if (fencedSpawnMatch) {
       const [, name, cli, task] = fencedSpawnMatch;
+      console.log(`[base-wrapper:${this.config.name}] Fenced spawn match: ${name} ${cli}`);
       const cmdHash = `spawn:${name}:${cli}:${task.trim()}`;
       if (!this.processedSpawnCommands.has(cmdHash)) {
         this.processedSpawnCommands.add(cmdHash);
@@ -354,34 +510,15 @@ export abstract class BaseWrapper extends EventEmitter {
    * Execute a spawn command
    */
   protected async executeSpawn(name: string, cli: string, task: string): Promise<void> {
-    // Try daemon socket first (preferred path)
-    if (this.client.state === 'READY') {
-      try {
-        const result = await this.client.spawn({
-          name,
-          cli,
-          task,
-          cwd: this.config.cwd ?? process.cwd(),
-          socketPath: this.config.socketPath,
-        });
-        if (result.success) {
-          console.log(`[${this.config.name}] Spawned ${name} via daemon (pid: ${result.pid})`);
-          return;
-        }
-        console.error(`[${this.config.name}] Daemon spawn failed: ${result.error}`);
-        // Fall through to other methods
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[${this.config.name}] Daemon spawn error: ${msg}`);
-        // Fall through to other methods
-      }
-    }
+    // TODO: Re-enable daemon socket spawn when client.spawn() is implemented
+    // See: docs/SDK-MIGRATION-PLAN.md for planned implementation
+    // For now, go directly to dashboard API or callback
 
-    // Try dashboard API as fallback (backwards compatibility)
+    // Try dashboard API
     if (this.config.dashboardPort) {
       try {
         const response = await fetch(
-          `http://localhost:${this.config.dashboardPort}/api/agents/spawn`,
+          `http://localhost:${this.config.dashboardPort}/api/spawn`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -404,22 +541,9 @@ export abstract class BaseWrapper extends EventEmitter {
    * Execute a release command
    */
   protected async executeRelease(name: string): Promise<void> {
-    // Try daemon socket first (preferred path)
-    if (this.client.state === 'READY') {
-      try {
-        const success = await this.client.release(name);
-        if (success) {
-          console.log(`[${this.config.name}] Released ${name} via daemon`);
-          return;
-        }
-        console.error(`[${this.config.name}] Daemon release failed for ${name}`);
-        // Fall through to other methods
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[${this.config.name}] Daemon release error: ${msg}`);
-        // Fall through to other methods
-      }
-    }
+    // TODO: Re-enable daemon socket release when client.release() is implemented
+    // See: docs/SDK-MIGRATION-PLAN.md for planned implementation
+    // For now, go directly to dashboard API or callback
 
     // Try dashboard API as fallback (backwards compatibility)
     if (this.config.dashboardPort) {

@@ -1,7 +1,7 @@
 ---
 name: prototyper
 description: Use for rapid prototyping, MVPs, proof-of-concepts, and quick experimental implementations.
-allowed-tools: Read, Grep, Glob, Bash, Edit, Write
+tools: Read, Grep, Glob, Bash, Edit, Write
 skills: using-agent-relay
 ---
 
@@ -113,34 +113,46 @@ STILL avoid even in prototypes:
 ## Communication Patterns
 
 Starting prototype:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/ack << 'EOF'
+TO: Lead
+
 ACK: Starting prototype for [feature]
 - Hypothesis: [what we're testing]
 - Scope: [core flow only]
 - Timeline: [hours, not days]
-- Shortcuts: [what I'll fake/skip]>>>
+- Shortcuts: [what I'll fake/skip]
+EOF
 ```
+Then: `->relay-file:ack`
 
 Progress update:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 STATUS: Prototype progress
 - Core flow: Working
 - Hardcoded: User data, config
 - Faked: Payment processing
-- Ready for: Internal demo>>>
+- Ready for: Internal demo
+EOF
 ```
+Then: `->relay-file:status`
 
 Completion:
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 DONE: Prototype ready for feedback
 - Demo: [link/instructions]
 - Works: [core scenarios]
 - Faked: [list of shortcuts]
-- Next: [recommend keep/kill/iterate]>>>
+- Next: [recommend keep/kill/iterate]
+EOF
 ```
+Then: `->relay-file:done`
 
 ## Prototype Documentation
 

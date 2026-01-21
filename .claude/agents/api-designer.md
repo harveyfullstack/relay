@@ -1,7 +1,7 @@
 ---
 name: api-designer
 description: REST and GraphQL API design - endpoint design, request/response schemas, versioning, and documentation. Use for designing new APIs or evolving existing ones.
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash, WebSearch, WebFetch
+tools: Read, Write, Edit, Grep, Glob, Bash, WebSearch, WebFetch
 skills: using-agent-relay
 ---
 
@@ -79,17 +79,23 @@ You are an expert API designer specializing in RESTful and GraphQL API design. Y
 ## Communication
 
 ### Starting Work
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/starting << 'EOF'
+TO: Lead
+
 **API:** Designing [endpoint/feature]
 
 **Scope:** [What the API needs to do]
-**Consumers:** [Who will use this]>>>
+**Consumers:** [Who will use this]
+EOF
 ```
+Then: `->relay-file:starting`
 
 ### Design Proposal
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/proposal << 'EOF'
+TO: Lead
+
 **API DESIGN:** [Feature name]
 
 **Endpoints:**
@@ -100,16 +106,22 @@ You are an expert API designer specializing in RESTful and GraphQL API design. Y
 [Brief schema outline]
 
 **Questions:**
-- [Any decisions needed]>>>
+- [Any decisions needed]
+EOF
 ```
+Then: `->relay-file:proposal`
 
 ### Completion
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 **DONE:** [API feature]
 
 **Endpoints added:**
 - [List endpoints]
 
-**Documentation:** [Location of API docs]>>>
+**Documentation:** [Location of API docs]
+EOF
 ```
+Then: `->relay-file:done`

@@ -9,7 +9,8 @@ import { EventEmitter } from 'events';
 import { createLogger } from '../resiliency/logger.js';
 import { getSupervisor } from '../resiliency/supervisor.js';
 import { detectProvider } from '../resiliency/provider-context.js';
-import { PtyWrapper, type PtyWrapperConfig, type SummaryEvent, type SessionEndEvent } from '../wrapper/pty-wrapper.js';
+import { RelayPtyOrchestrator, type RelayPtyOrchestratorConfig } from '../wrapper/relay-pty-orchestrator.js';
+import type { SummaryEvent, SessionEndEvent } from '../wrapper/wrapper-types.js';
 import { resolveCommand } from '../utils/command-resolver.js';
 import type {
   Agent,
@@ -20,7 +21,7 @@ import type {
 
 /**
  * Optional cloud persistence handler.
- * When set, agent-manager forwards PtyWrapper events to this handler.
+ * When set, agent-manager forwards wrapper events to this handler.
  */
 export interface CloudPersistenceHandler {
   onSummary: (agentId: string, event: SummaryEvent) => Promise<void>;
@@ -36,7 +37,7 @@ function generateId(): string {
 }
 
 interface ManagedAgent extends Agent {
-  pty?: PtyWrapper;
+  pty?: RelayPtyOrchestrator;
 }
 
 export class AgentManager extends EventEmitter {
@@ -73,7 +74,7 @@ export class AgentManager extends EventEmitter {
   }
 
   /**
-   * Set cloud persistence handler for forwarding PtyWrapper events.
+   * Set cloud persistence handler for forwarding RelayPtyOrchestrator events.
    * When set, 'summary' and 'session-end' events from agents are forwarded
    * to the handler for cloud persistence (PostgreSQL/Redis).
    */
@@ -120,6 +121,9 @@ export class AgentManager extends EventEmitter {
       if (provider === 'codex' && !args.includes('--dangerously-bypass-approvals-and-sandbox')) {
         args.push('--dangerously-bypass-approvals-and-sandbox');
       }
+      if (provider === 'cursor' && !args.includes('--force')) {
+        args.push('--force');
+      }
 
       // Create agent record
       const agent: ManagedAgent = {
@@ -135,12 +139,14 @@ export class AgentManager extends EventEmitter {
       };
 
       // Create PTY config
-      const ptyConfig: PtyWrapperConfig = {
+      const ptyConfig: RelayPtyOrchestratorConfig = {
         name,
         command,
         args,
         cwd: workspacePath,
-        logsDir: this.logsDir,
+        streamLogs: true,
+        // Skip continuity for cloud-managed agents
+        skipContinuity: true,
         env: {
           CLOUD_API_URL: process.env.CLOUD_API_URL || '',
           WORKSPACE_TOKEN: process.env.WORKSPACE_TOKEN || '',
@@ -154,13 +160,13 @@ export class AgentManager extends EventEmitter {
       };
 
       // Create and start PTY
-      const pty = new PtyWrapper(ptyConfig);
+      const pty = new RelayPtyOrchestrator(ptyConfig);
       await pty.start();
 
       agent.pid = pty.pid;
       agent.pty = pty;
 
-      // Subscribe to PtyWrapper events for cloud persistence
+      // Subscribe to RelayPtyOrchestrator events for cloud persistence
       this.bindPtyEvents(agent.id, pty);
 
       // Inject initial task
@@ -411,14 +417,19 @@ export class AgentManager extends EventEmitter {
       if (agent.provider === 'codex' && !args.includes('--dangerously-bypass-approvals-and-sandbox')) {
         args.push('--dangerously-bypass-approvals-and-sandbox');
       }
+      if (agent.provider === 'cursor' && !args.includes('--force')) {
+        args.push('--force');
+      }
 
       // Create new PTY
-      const ptyConfig: PtyWrapperConfig = {
+      const ptyConfig: RelayPtyOrchestratorConfig = {
         name: agent.name,
         command,
         args,
         cwd: workspacePath,
-        logsDir: this.logsDir,
+        streamLogs: true,
+        // Skip continuity for cloud-managed agents
+        skipContinuity: true,
         env: {
           CLOUD_API_URL: process.env.CLOUD_API_URL || '',
           WORKSPACE_TOKEN: process.env.WORKSPACE_TOKEN || '',
@@ -430,7 +441,7 @@ export class AgentManager extends EventEmitter {
         },
       };
 
-      const pty = new PtyWrapper(ptyConfig);
+      const pty = new RelayPtyOrchestrator(ptyConfig);
       await pty.start();
 
       agent.pid = pty.pid;
@@ -489,14 +500,14 @@ export class AgentManager extends EventEmitter {
   }
 
   /**
-   * Bind PtyWrapper events to cloud persistence and daemon events.
+   * Bind RelayPtyOrchestrator events to cloud persistence and daemon events.
    *
    * Events bound:
    * - 'summary': Agent output a [[SUMMARY]] block
    * - 'session-end': Agent output a [[SESSION_END]] block
    * - 'injection-failed': Message injection failed after retries
    */
-  private bindPtyEvents(agentId: string, pty: PtyWrapper): void {
+  private bindPtyEvents(agentId: string, pty: RelayPtyOrchestrator): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 

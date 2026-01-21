@@ -1,18 +1,25 @@
 /**
  * Agent Spawner
- * Handles spawning and releasing worker agents via node-pty.
+ * Handles spawning and releasing worker agents via relay-pty.
  * Workers run headlessly with output capture for logs.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { sleep } from './utils.js';
 import { getProjectPaths } from '../utils/project-namespace.js';
 import { resolveCommand } from '../utils/command-resolver.js';
-import { PtyWrapper, type PtyWrapperConfig, type SummaryEvent, type SessionEndEvent } from '../wrapper/pty-wrapper.js';
+import { RelayPtyOrchestrator, type RelayPtyOrchestratorConfig } from '../wrapper/relay-pty-orchestrator.js';
+import type { SummaryEvent, SessionEndEvent } from '../wrapper/wrapper-types.js';
 import { selectShadowCli } from './shadow-cli.js';
+
+// Get the directory where this module is located (for binary path resolution)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import { AgentPolicyService, type CloudPolicyFetcher } from '../policy/agent-policy.js';
-import { buildClaudeArgs } from '../utils/agent-config.js';
+import { buildClaudeArgs, findAgentConfig } from '../utils/agent-config.js';
+import { composeForAgent, type AgentRole } from '../wrapper/prompt-composer.js';
 import { getUserDirectoryService } from '../daemon/user-directory.js';
 import type {
   SpawnRequest,
@@ -22,6 +29,16 @@ import type {
   SpawnWithShadowResult,
   SpeakOnTrigger,
 } from './types.js';
+
+/**
+ * CLI command mapping for providers
+ * Maps provider names to actual CLI command names
+ */
+const CLI_COMMAND_MAP: Record<string, string> = {
+  cursor: 'agent',  // Cursor CLI installs as 'agent'
+  google: 'gemini', // Google provider uses 'gemini' CLI
+  // Other providers use their name as the command (claude, codex, etc.)
+};
 
 /**
  * Cloud persistence handler interface.
@@ -55,8 +72,11 @@ interface ListenerBindings {
   sessionEnd?: (event: SessionEndEvent) => void;
 }
 
+/** Type alias for the wrapper - uses RelayPtyOrchestrator (relay-pty Rust binary) */
+type AgentWrapper = RelayPtyOrchestrator;
+
 interface ActiveWorker extends WorkerInfo {
-  pty: PtyWrapper;
+  pty: AgentWrapper;
   logFile?: string;
   listeners?: ListenerBindings;
   userId?: string;
@@ -71,16 +91,140 @@ export type OnAgentDeathCallback = (info: {
 }) => void;
 
 /**
- * Get a minimal relay reminder.
- * Agents already have full relay docs via CLAUDE.md - this is just a brief reminder.
- * Loading full docs (400+ lines) overwhelms agents and causes "meandering".
+ * Get relay protocol instructions for a spawned agent.
+ * This provides the agent with the communication protocol it needs to work with the relay.
  */
-function getMinimalRelayReminder(): string {
-  return `# Quick Relay Reference
-- Send: \`->relay:Name <<<message>>>\`
-- ACK tasks, send DONE when complete
-- Use \`trail start/decision/complete\` for trajectories
-- Output \`[[SESSION_END]]..[[/SESSION_END]]\` when done`;
+function getRelayInstructions(agentName: string): string {
+  return [
+    '# Agent Relay Protocol',
+    '',
+    `You are agent "${agentName}" connected to Agent Relay for multi-agent coordination.`,
+    '',
+    '## Sending Messages',
+    '',
+    'Write a file to your outbox, then output the trigger:',
+    '',
+    '```bash',
+    `cat > /tmp/relay-outbox/${agentName}/msg << 'EOF'`,
+    'TO: TargetAgent',
+    '',
+    'Your message here.',
+    'EOF',
+    '```',
+    '',
+    'Then output: `->relay-file:msg`',
+    '',
+    '## Communication Rules',
+    '',
+    '1. **ACK immediately** - When you receive a task:',
+    '```bash',
+    `cat > /tmp/relay-outbox/${agentName}/ack << 'EOF'`,
+    'TO: Sender',
+    '',
+    'ACK: Brief description of task received',
+    'EOF',
+    '```',
+    'Then: `->relay-file:ack`',
+    '',
+    '2. **Report completion** - When done:',
+    '```bash',
+    `cat > /tmp/relay-outbox/${agentName}/done << 'EOF'`,
+    'TO: Sender',
+    '',
+    'DONE: Brief summary of what was completed',
+    'EOF',
+    '```',
+    'Then: `->relay-file:done`',
+    '',
+    '## Message Format',
+    '',
+    '```',
+    'TO: Target',
+    'THREAD: optional-thread',
+    '',
+    'Message body (everything after blank line)',
+    '```',
+    '',
+    '| TO Value | Behavior |',
+    '|----------|----------|',
+    '| `AgentName` | Direct message |',
+    '| `*` | Broadcast to all |',
+    '| `#channel` | Channel message |',
+  ].join('\n');
+}
+
+/**
+ * Check if the relay-pty binary is available.
+ * Returns the path to the binary if found, null otherwise.
+ *
+ * Search order:
+ * 1. bin/relay-pty in package root (installed by postinstall)
+ * 2. relay-pty/target/release/relay-pty (local Rust build)
+ * 3. /usr/local/bin/relay-pty (global install)
+ */
+function findRelayPtyBinary(): string | null {
+  // Get the package root (three levels up from dist/bridge/)
+  const packageRoot = path.join(__dirname, '..', '..');
+
+  const candidates = [
+    // Primary: installed by postinstall from platform-specific binary
+    path.join(packageRoot, 'bin', 'relay-pty'),
+    // Development: local Rust build
+    path.join(packageRoot, 'relay-pty', 'target', 'release', 'relay-pty'),
+    path.join(packageRoot, 'relay-pty', 'target', 'debug', 'relay-pty'),
+    // Local build in cwd (for development)
+    path.join(process.cwd(), 'relay-pty', 'target', 'release', 'relay-pty'),
+    // Installed globally
+    '/usr/local/bin/relay-pty',
+    // In node_modules (when installed as dependency)
+    path.join(process.cwd(), 'node_modules', 'agent-relay', 'bin', 'relay-pty'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+/** Cached result of relay-pty binary check */
+let relayPtyBinaryPath: string | null | undefined;
+let relayPtyBinaryChecked = false;
+
+/**
+ * Check if relay-pty binary is available (cached).
+ * Returns true if the binary exists, false otherwise.
+ */
+function hasRelayPtyBinary(): boolean {
+  if (!relayPtyBinaryChecked) {
+    relayPtyBinaryPath = findRelayPtyBinary();
+    relayPtyBinaryChecked = true;
+    if (relayPtyBinaryPath) {
+      console.log(`[spawner] relay-pty binary found: ${relayPtyBinaryPath}`);
+    } else {
+      console.log('[spawner] relay-pty binary not found, will use PtyWrapper fallback');
+    }
+  }
+  return relayPtyBinaryPath !== null;
+}
+
+/** Options for AgentSpawner constructor */
+export interface AgentSpawnerOptions {
+  projectRoot: string;
+  tmuxSession?: string;
+  dashboardPort?: number;
+  /**
+   * Callback to mark an agent as spawning (before HELLO completes).
+   * Messages sent to this agent will be queued for delivery after registration.
+   */
+  onMarkSpawning?: (agentName: string) => void;
+  /**
+   * Callback to clear the spawning flag for an agent.
+   * Called when spawn fails or is cancelled.
+   */
+  onClearSpawning?: (agentName: string) => void;
 }
 
 export class AgentSpawner {
@@ -95,15 +239,30 @@ export class AgentSpawner {
   private cloudPersistence?: CloudPersistenceHandler;
   private policyService?: AgentPolicyService;
   private policyEnforcementEnabled = false;
+  private onMarkSpawning?: (agentName: string) => void;
+  private onClearSpawning?: (agentName: string) => void;
 
-  constructor(projectRoot: string, _tmuxSession?: string, dashboardPort?: number) {
-    const paths = getProjectPaths(projectRoot);
+  constructor(projectRoot: string, _tmuxSession?: string, dashboardPort?: number);
+  constructor(options: AgentSpawnerOptions);
+  constructor(projectRootOrOptions: string | AgentSpawnerOptions, _tmuxSession?: string, dashboardPort?: number) {
+    // Handle both old and new constructor signatures
+    const options: AgentSpawnerOptions = typeof projectRootOrOptions === 'string'
+      ? { projectRoot: projectRootOrOptions, tmuxSession: _tmuxSession, dashboardPort }
+      : projectRootOrOptions;
+
+    const paths = getProjectPaths(options.projectRoot);
     this.projectRoot = paths.projectRoot;
-    this.agentsPath = path.join(paths.teamDir, 'agents.json');
+    // Use connected-agents.json (live socket connections) instead of agents.json (historical registry)
+    // This ensures spawned agents have actual daemon connections for channel message delivery
+    this.agentsPath = path.join(paths.teamDir, 'connected-agents.json');
     this.socketPath = paths.socketPath;
     this.logsDir = path.join(paths.teamDir, 'worker-logs');
     this.workersPath = path.join(paths.teamDir, 'workers.json');
-    this.dashboardPort = dashboardPort;
+    this.dashboardPort = options.dashboardPort;
+
+    // Store spawn tracking callbacks
+    this.onMarkSpawning = options.onMarkSpawning;
+    this.onClearSpawning = options.onClearSpawning;
 
     // Ensure logs directory exists
     fs.mkdirSync(this.logsDir, { recursive: true });
@@ -142,6 +301,49 @@ export class AgentSpawner {
     return this.policyService;
   }
 
+  private async fetchGhTokenFromCloud(): Promise<string | null> {
+    const cloudApiUrl = process.env.CLOUD_API_URL || process.env.AGENT_RELAY_CLOUD_URL;
+    const workspaceId = process.env.WORKSPACE_ID;
+    const workspaceToken = process.env.WORKSPACE_TOKEN;
+
+    if (!cloudApiUrl || !workspaceId || !workspaceToken) {
+      return null;
+    }
+
+    const normalizedUrl = cloudApiUrl.replace(/\/$/, '');
+    const url = `${normalizedUrl}/api/git/token?workspaceId=${encodeURIComponent(workspaceId)}`;
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${workspaceToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        console.warn(`[spawner] Failed to fetch GH token from cloud: ${response.status} ${response.statusText}`);
+        return null;
+      }
+
+      const data = await response.json() as { userToken?: string | null; token?: string | null };
+      return data.userToken || data.token || null;
+    } catch (err) {
+      console.warn('[spawner] Failed to fetch GH token from cloud', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  private async resolveGhToken(): Promise<string | null> {
+    const cloudToken = await this.fetchGhTokenFromCloud();
+    if (cloudToken) {
+      return cloudToken;
+    }
+
+    return process.env.GH_TOKEN || null;
+  }
+
   /**
    * Set the dashboard port (for nested spawn API calls).
    * Called after the dashboard server starts and we know the actual port.
@@ -160,7 +362,7 @@ export class AgentSpawner {
   }
 
   /**
-   * Set cloud persistence handler for forwarding PtyWrapper events.
+   * Set cloud persistence handler for forwarding RelayPtyOrchestrator events.
    * When set, 'summary' and 'session-end' events from spawned agents
    * are forwarded to the handler for cloud persistence (PostgreSQL/Redis).
    *
@@ -172,10 +374,10 @@ export class AgentSpawner {
   }
 
   /**
-   * Bind cloud persistence event handlers to a PtyWrapper.
+   * Bind cloud persistence event handlers to a RelayPtyOrchestrator.
    * Returns the listener references for cleanup.
    */
-  private bindCloudPersistenceEvents(name: string, pty: PtyWrapper): Partial<ListenerBindings> {
+  private bindCloudPersistenceEvents(name: string, pty: AgentWrapper): Partial<ListenerBindings> {
     if (!this.cloudPersistence) return {};
 
     const summaryListener = async (event: SummaryEvent) => {
@@ -201,9 +403,9 @@ export class AgentSpawner {
   }
 
   /**
-   * Unbind all tracked listeners from a PtyWrapper.
+   * Unbind all tracked listeners from a RelayPtyOrchestrator.
    */
-  private unbindListeners(pty: PtyWrapper, listeners?: ListenerBindings): void {
+  private unbindListeners(pty: AgentWrapper, listeners?: ListenerBindings): void {
     if (!listeners) return;
 
     if (listeners.output) {
@@ -218,7 +420,7 @@ export class AgentSpawner {
   }
 
   /**
-   * Spawn a new worker agent using node-pty
+   * Spawn a new worker agent using relay-pty
    */
   async spawn(request: SpawnRequest): Promise<SpawnResult> {
     const { name, cli, task, team, spawnerName, userId } = request;
@@ -251,10 +453,15 @@ export class AgentSpawner {
     }
 
     try {
-      // Parse CLI command
+      // Parse CLI command and apply mapping (e.g., cursor -> agent)
       const cliParts = cli.split(' ');
-      const commandName = cliParts[0];
+      const rawCommandName = cliParts[0];
+      const commandName = CLI_COMMAND_MAP[rawCommandName] || rawCommandName;
       const args = cliParts.slice(1);
+
+      if (commandName !== rawCommandName) {
+        console.log(`[spawner] Mapped CLI '${rawCommandName}' -> '${commandName}'`);
+      }
 
       // Resolve full path to avoid posix_spawnp failures
       const command = resolveCommand(commandName);
@@ -270,13 +477,26 @@ export class AgentSpawner {
         args.push('--dangerously-skip-permissions');
       }
 
+      // Add --force for Cursor agents (CLI is 'agent', may be passed as 'cursor')
+      const isCursorCli = commandName === 'agent' || rawCommandName === 'cursor';
+      if (isCursorCli && !args.includes('--force')) {
+        args.push('--force');
+      }
+
       // Apply agent config (model, --agent flag) from .claude/agents/ if available
       // This ensures spawned agents respect their profile settings
       if (isClaudeCli) {
+        // Get agent config for model tracking
+        const agentConfig = findAgentConfig(name, this.projectRoot);
+        const model = agentConfig?.model || 'sonnet'; // Default to sonnet
+
         const configuredArgs = buildClaudeArgs(name, args, this.projectRoot);
         // Replace args with configured version (includes --model and --agent if found)
         args.length = 0;
         args.push(...configuredArgs);
+
+        // Cost tracking: log which model is being used
+        console.log(`[spawner] Agent ${name}: model=${model}, cli=${cli}`);
         if (debug) console.log(`[spawner:debug] Applied agent config for ${name}: ${args.join(' ')}`);
       }
 
@@ -284,6 +504,50 @@ export class AgentSpawner {
       const isCodexCli = commandName.startsWith('codex');
       if (isCodexCli && !args.includes('--dangerously-bypass-approvals-and-sandbox')) {
         args.push('--dangerously-bypass-approvals-and-sandbox');
+      }
+
+      // Add --yolo for Gemini agents (auto-accept all prompts)
+      const isGeminiCli = commandName === 'gemini';
+      if (isGeminiCli && !args.includes('--yolo')) {
+        args.push('--yolo');
+      }
+
+      // Inject relay protocol instructions via CLI-specific system prompt
+      let relayInstructions = getRelayInstructions(name);
+
+      // Compose role-specific prompts if agent has a role defined in .claude/agents/
+      const agentConfigForRole = isClaudeCli ? findAgentConfig(name, this.projectRoot) : null;
+      if (agentConfigForRole?.role) {
+        const validRoles: AgentRole[] = ['planner', 'worker', 'reviewer', 'lead', 'shadow'];
+        const role = agentConfigForRole.role.toLowerCase() as AgentRole;
+        if (validRoles.includes(role)) {
+          try {
+            const composed = await composeForAgent(
+              { name, role },
+              this.projectRoot,
+              { taskDescription: task }
+            );
+            if (composed.content) {
+              relayInstructions = `${composed.content}\n\n---\n\n${relayInstructions}`;
+              if (debug) console.log(`[spawner:debug] Composed role prompt for ${name} (role: ${role})`);
+            }
+          } catch (err: any) {
+            console.warn(`[spawner] Failed to compose role prompt for ${name}: ${err.message}`);
+          }
+        }
+      }
+
+      if (isClaudeCli && !args.includes('--append-system-prompt')) {
+        args.push('--append-system-prompt', relayInstructions);
+      } else if (isCodexCli && !args.some(a => a.includes('developer_instructions'))) {
+        args.push('--config', `developer_instructions=${relayInstructions}`);
+      }
+
+      // Codex requires an initial prompt in TTY mode (unlike Claude which waits for input)
+      // Pass the task as the initial prompt, or a generic "ready" message if no task
+      if (isCodexCli) {
+        const initialPrompt = task || 'You are ready. Wait for messages from the relay system.';
+        args.push(initialPrompt);
       }
 
       if (debug) console.log(`[spawner:debug] Spawning ${name} with: ${command} ${args.join(' ')}`);
@@ -312,70 +576,96 @@ export class AgentSpawner {
         }
       }
 
-      const ptyConfig: PtyWrapperConfig = {
+      const mergedUserEnv = { ...(userEnv ?? {}) };
+      if (!mergedUserEnv.GH_TOKEN) {
+        const ghToken = await this.resolveGhToken();
+        if (ghToken) {
+          mergedUserEnv.GH_TOKEN = ghToken;
+        }
+      }
+      if (Object.keys(mergedUserEnv).length > 0) {
+        userEnv = mergedUserEnv;
+      }
+
+      if (debug) console.log(`[spawner:debug] Socket path for ${name}: ${this.socketPath ?? 'undefined'}`);
+
+      // Require relay-pty binary
+      if (!hasRelayPtyBinary()) {
+        const error = 'relay-pty binary not found. Install with: npm run build:relay-pty';
+        console.error(`[spawner] ${error}`);
+        return {
+          success: false,
+          name,
+          error,
+        };
+      }
+
+      // Common exit handler for both wrapper types
+      const onExitHandler = (code: number) => {
+        if (debug) console.log(`[spawner:debug] Worker ${name} exited with code ${code}`);
+
+        // Get the agentId and clean up listeners before removing from active workers
+        const worker = this.activeWorkers.get(name);
+        const agentId = worker?.pty?.getAgentId?.();
+        if (worker?.listeners) {
+          this.unbindListeners(worker.pty, worker.listeners);
+        }
+
+        this.activeWorkers.delete(name);
+        try {
+          this.saveWorkersMetadata();
+        } catch (err) {
+          console.error(`[spawner] Failed to save metadata on exit:`, err);
+        }
+
+        // Notify if agent died unexpectedly (non-zero exit)
+        if (code !== 0 && code !== null && this.onAgentDeath) {
+          this.onAgentDeath({
+            name,
+            exitCode: code,
+            agentId,
+            resumeInstructions: agentId
+              ? `To resume this agent's work, use: --resume ${agentId}`
+              : undefined,
+          });
+        }
+      };
+
+      // Common spawn/release handlers
+      const onSpawnHandler = this.dashboardPort ? undefined : async (workerName: string, workerCli: string, workerTask: string) => {
+        if (debug) console.log(`[spawner:debug] Nested spawn: ${workerName}`);
+        await this.spawn({
+          name: workerName,
+          cli: workerCli,
+          task: workerTask,
+          userId,
+        });
+      };
+
+      const onReleaseHandler = this.dashboardPort ? undefined : async (workerName: string) => {
+        if (debug) console.log(`[spawner:debug] Release request: ${workerName}`);
+        await this.release(workerName);
+      };
+
+      // Create RelayPtyOrchestrator (relay-pty Rust binary)
+      const ptyConfig: RelayPtyOrchestratorConfig = {
         name,
         command,
         args,
         socketPath: this.socketPath,
         cwd: agentCwd,
-        logsDir: this.logsDir,
         dashboardPort: this.dashboardPort,
         env: userEnv,
-        // Interactive mode - disables auto-accept for auth setup flows
-        interactive: request.interactive,
-        // Shadow agent configuration
+        streamLogs: true,
         shadowOf: request.shadowOf,
         shadowSpeakOn: request.shadowSpeakOn,
-        // Only use callbacks if dashboardPort is not set (for backwards compatibility)
-        onSpawn: this.dashboardPort ? undefined : async (workerName, workerCli, workerTask) => {
-          // Handle nested spawn requests (legacy path, may fail in non-TTY)
-          if (debug) console.log(`[spawner:debug] Nested spawn: ${workerName}`);
-          await this.spawn({
-            name: workerName,
-            cli: workerCli,
-            task: workerTask,
-            // Nested spawns don't inherit team - they're flat by default
-            userId,
-          });
-        },
-        onRelease: this.dashboardPort ? undefined : async (workerName) => {
-          // Handle release requests from workers (legacy path)
-          if (debug) console.log(`[spawner:debug] Release request: ${workerName}`);
-          await this.release(workerName);
-        },
-        onExit: (code) => {
-          if (debug) console.log(`[spawner:debug] Worker ${name} exited with code ${code}`);
-
-          // Get the agentId and clean up listeners before removing from active workers
-          const worker = this.activeWorkers.get(name);
-          const agentId = worker?.pty?.getAgentId?.();
-          if (worker?.listeners) {
-            this.unbindListeners(worker.pty, worker.listeners);
-          }
-
-          this.activeWorkers.delete(name);
-          try {
-            this.saveWorkersMetadata();
-          } catch (err) {
-            console.error(`[spawner] Failed to save metadata on exit:`, err);
-          }
-
-          // Notify if agent died unexpectedly (non-zero exit)
-          if (code !== 0 && code !== null && this.onAgentDeath) {
-            this.onAgentDeath({
-              name,
-              exitCode: code,
-              agentId,
-              resumeInstructions: agentId
-                ? `To resume this agent's work, use: --resume ${agentId}`
-                : undefined,
-            });
-          }
-        },
+        skipContinuity: true,
+        onSpawn: onSpawnHandler,
+        onRelease: onReleaseHandler,
+        onExit: onExitHandler,
       };
-
-      // Create and start the pty wrapper
-      const pty = new PtyWrapper(ptyConfig);
+      const pty = new RelayPtyOrchestrator(ptyConfig);
+      if (debug) console.log(`[spawner:debug] Using RelayPtyOrchestrator for ${name}`);
 
       // Track listener references for proper cleanup
       const listeners: ListenerBindings = {};
@@ -396,6 +686,13 @@ export class AgentSpawner {
       if (cloudListeners.summary) listeners.summary = cloudListeners.summary;
       if (cloudListeners.sessionEnd) listeners.sessionEnd = cloudListeners.sessionEnd;
 
+      // Mark agent as spawning BEFORE starting PTY
+      // This allows messages sent to this agent to be queued until HELLO completes
+      if (this.onMarkSpawning) {
+        this.onMarkSpawning(name);
+        if (debug) console.log(`[spawner:debug] Marked ${name} as spawning`);
+      }
+
       await pty.start();
 
       if (debug) console.log(`[spawner:debug] PTY started, pid: ${pty.pid}`);
@@ -405,6 +702,10 @@ export class AgentSpawner {
       if (!registered) {
         const error = `Worker ${name} failed to register within 30s`;
         console.error(`[spawner] ${error}`);
+        // Clear spawning flag since spawn failed
+        if (this.onClearSpawning) {
+          this.onClearSpawning(name);
+        }
         await pty.kill();
         return {
           success: false,
@@ -413,66 +714,45 @@ export class AgentSpawner {
         };
       }
 
-      // Build the full message: minimal relay reminder + policy instructions (if any) + task
-      // Only build message if there's an actual task - empty task means interactive mode
-      let fullMessage = task || '';
+      // Send task to the newly spawned agent if provided
+      // We do this AFTER registration AND after the CLI is ready to receive input
+      if (task && task.trim() && this.dashboardPort) {
+        try {
+          // Wait for the CLI to be ready (has produced output AND is idle)
+          // This is more reliable than a random sleep because it waits for actual signals
+          if ('waitUntilCliReady' in pty) {
+            const orchestrator = pty as RelayPtyOrchestrator;
+            const ready = await orchestrator.waitUntilCliReady(15000, 100);
+            if (!ready) {
+              console.warn(`[spawner] CLI for ${name} did not become ready within timeout, sending task anyway`);
+            } else if (debug) {
+              console.log(`[spawner:debug] CLI for ${name} is ready to receive messages`);
+            }
+          } else {
+            // PtyWrapper fallback - use short delay as it doesn't have waitUntilCliReady
+            await sleep(500);
+          }
 
-      // Only prepend relay reminder if we have an actual task
-      // Empty task = interactive mode, user will respond to prompts directly
-      if (fullMessage.trim()) {
-        // Prepend a brief relay reminder (agents have full docs via CLAUDE.md)
-        // Note: Previously loaded full 400+ line docs which overwhelmed agents
-        const relayReminder = getMinimalRelayReminder();
-        if (relayReminder) {
-          fullMessage = `${relayReminder}\n\n---\n\n${fullMessage}`;
-          if (debug) console.log(`[spawner:debug] Prepended relay reminder for ${name}`);
-        }
-      }
-
-      // Prepend policy instructions if enforcement is enabled (only if we have a task)
-      if (fullMessage.trim() && this.policyEnforcementEnabled && this.policyService) {
-        const policyInstruction = await this.policyService.getPolicyInstruction(name);
-        if (policyInstruction) {
-          fullMessage = `${policyInstruction}\n\n${fullMessage}`;
-          if (debug) console.log(`[spawner:debug] Prepended policy instructions to task for ${name}`);
-        }
-      }
-
-      // Send task via relay message if provided (not via direct PTY injection)
-      // This ensures the agent is ready to receive before processing the task
-      if (fullMessage && fullMessage.trim()) {
-        if (debug) console.log(`[spawner:debug] Will send task via relay: ${fullMessage.substring(0, 50)}...`);
-
-        // If we have dashboard API, send task as relay message
-        if (this.dashboardPort) {
-          // Wait a moment for the agent's relay client to be ready
-          await sleep(1000);
-          try {
-            const response = await fetch(`http://localhost:${this.dashboardPort}/api/send`, {
+          const sendResponse = await fetch(
+            `http://localhost:${this.dashboardPort}/api/send`,
+            {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 to: name,
-                message: fullMessage,
-                from: '__spawner__',
+                message: task,
+                from: spawnerName, // Include spawner name so message appears from correct agent
               }),
-            });
-            const result = await response.json() as { success: boolean; error?: string };
-            if (result.success) {
-              if (debug) console.log(`[spawner:debug] Task sent via relay to ${name}`);
-            } else {
-              console.warn(`[spawner] Failed to send task via relay: ${result.error}`);
-              // Fall back to direct injection
-              pty.write(fullMessage + '\r');
             }
-          } catch (err: any) {
-            console.warn(`[spawner] Relay send failed, falling back to direct injection: ${err.message}`);
-            pty.write(fullMessage + '\r');
+          );
+
+          if (sendResponse.ok) {
+            if (debug) console.log(`[spawner:debug] Task sent to ${name}`);
+          } else {
+            console.error(`[spawner] Failed to send task to ${name}: ${sendResponse.status}`);
           }
-        } else {
-          // No dashboard API available - use direct injection as fallback
-          if (debug) console.log(`[spawner:debug] No dashboard API, using direct injection`);
-          pty.write(fullMessage + '\r');
+        } catch (err: any) {
+          console.error(`[spawner] Error sending task to ${name}:`, err.message);
         }
       }
 
@@ -504,6 +784,10 @@ export class AgentSpawner {
     } catch (err: any) {
       console.error(`[spawner] Failed to spawn ${name}:`, err.message);
       if (debug) console.error(`[spawner:debug] Full error:`, err);
+      // Clear spawning flag since spawn failed
+      if (this.onClearSpawning) {
+        this.onClearSpawning(name);
+      }
       return {
         success: false,
         name,
@@ -785,15 +1069,15 @@ export class AgentSpawner {
 
     try {
       const raw = JSON.parse(fs.readFileSync(this.agentsPath, 'utf-8'));
-      const agents: Array<{ name?: string }> = Array.isArray(raw?.agents)
-        ? raw.agents
-        : raw?.agents && typeof raw.agents === 'object'
-          ? Object.values(raw.agents)
-          : [];
+      // connected-agents.json format: { agents: string[], users: string[], updatedAt: number }
+      // agents is a string array of connected agent names (not objects)
+      const agents: string[] = Array.isArray(raw?.agents) ? raw.agents : [];
 
-      return agents.some((a) => a?.name === name);
+      // Case-insensitive check to match router behavior
+      const lowerName = name.toLowerCase();
+      return agents.some((a) => typeof a === 'string' && a.toLowerCase() === lowerName);
     } catch (err: any) {
-      console.error('[spawner] Failed to read agents registry:', err.message);
+      console.error('[spawner] Failed to read connected-agents.json:', err.message);
       return false;
     }
   }

@@ -1,7 +1,7 @@
 ---
 name: accessibility
 description: A11y auditing, WCAG compliance, and inclusive design review. Ensures digital content is usable by everyone.
-allowed-tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
+tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 skills: using-agent-relay
 ---
 
@@ -158,29 +158,41 @@ npx pa11y https://example.com
 ## Communication Patterns
 
 **Acknowledge audit request:**
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/ack << 'EOF'
+TO: Sender
+
+ACK: Starting accessibility audit for [scope]
+EOF
 ```
-->relay:Sender <<<
-ACK: Starting accessibility audit for [scope]>>>
-```
+Then: `->relay-file:ack`
 
 **Report findings:**
-```
-->relay:Sender <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/report << 'EOF'
+TO: Sender
+
 A11Y AUDIT COMPLETE:
 - Critical: X issues
 - Serious: Y issues
 - Moderate: Z issues
 WCAG Level AA: [Pass/Fail]
-Key blocker: [if any]>>>
+Key blocker: [if any]
+EOF
 ```
+Then: `->relay-file:report`
 
 **Recommend priority fixes:**
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/priority << 'EOF'
+TO: Lead
+
 A11Y PRIORITY: [component] blocks keyboard users
 Recommend: [specific fix]
-Effort: [Low/Medium/High]>>>
+Effort: [Low/Medium/High]
+EOF
 ```
+Then: `->relay-file:priority`
 
 ## Common Issues
 

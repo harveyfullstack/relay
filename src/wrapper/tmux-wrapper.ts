@@ -298,11 +298,18 @@ export class TmuxWrapper extends BaseWrapper {
       return this.config.command;
     }
 
-    // Quote any argument that contains spaces, quotes, or special chars
+    // Quote any argument that contains spaces, quotes, or shell special chars
+    // Must handle: spaces, quotes, $, <, >, |, &, ;, (, ), `, etc.
     const quotedArgs = this.config.args.map(arg => {
-      if (arg.includes(' ') || arg.includes('"') || arg.includes("'") || arg.includes('$')) {
-        // Use double quotes and escape internal quotes
-        return `"${arg.replace(/"/g, '\\"')}"`;
+      if (/[\s"'$<>|&;()`,!\\]/.test(arg)) {
+        // Use double quotes and escape internal quotes and special chars
+        const escaped = arg
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"')
+          .replace(/\$/g, '\\$')
+          .replace(/`/g, '\\`')
+          .replace(/!/g, '\\!');
+        return `"${escaped}"`;
       }
       return arg;
     });
@@ -334,10 +341,15 @@ export class TmuxWrapper extends BaseWrapper {
     }
 
     // Connect to relay daemon (in background, don't block)
-    this.client.connect().catch((err: Error) => {
-      // Connection failures will retry via client backoff; surface once to stderr.
-      this.logStderr(`Relay connect failed: ${err.message}. Will retry if enabled.`, true);
-    });
+    this.client.connect()
+      .then(() => {
+        this.logStderr(`Relay connected (state: ${this.client.state})`, true);
+      })
+      .catch((err: Error) => {
+        // Connection failures will retry via client backoff; surface once to stderr.
+        this.logStderr(`Relay connect failed: ${err.message}. Will retry if enabled.`, true);
+        this.logStderr(`Relay client state: ${this.client.state}`, true);
+      });
 
     // Kill any existing session with this name
     try {
@@ -422,9 +434,13 @@ export class TmuxWrapper extends BaseWrapper {
       await this.waitForShellReady();
 
       // Send the command to run
+      this.logStderr('Sending command to tmux...');
       await this.sendKeysLiteral(fullCommand);
-      await sleep(100);
+      await sleep(300);  // Give shell time to process the command literal
+      this.logStderr('Sending Enter...');
       await this.sendKeys('Enter');
+      await sleep(500);  // Ensure Enter is processed and command starts before we continue
+      this.logStderr('Command sent');
 
     } catch (err: any) {
       throw new Error(`Failed to create tmux session: ${err.message}`);
@@ -448,6 +464,7 @@ export class TmuxWrapper extends BaseWrapper {
 
     // Initialize idle detector with the tmux pane PID for process state inspection
     this.initializeIdleDetectorPid();
+    this.startStuckDetection();
 
     // Wait for agent to be ready, then inject instructions
     // This replaces the fixed 3-second delay with actual readiness detection
@@ -558,6 +575,7 @@ export class TmuxWrapper extends BaseWrapper {
    */
   private async injectInstructions(): Promise<void> {
     if (!this.running) return;
+    if (this.config.skipInstructions) return;
 
     // Use escaped prefix (\->relay:) in examples to prevent parser from treating them as real commands
     const escapedPrefix = '\\' + this.relayPrefix;
@@ -945,6 +963,21 @@ export class TmuxWrapper extends BaseWrapper {
       };
     }
 
+    if (cmd.sync?.blocking) {
+      this.client.sendAndWait(cmd.to, cmd.body, {
+        timeoutMs: cmd.sync.timeoutMs,
+        kind: cmd.kind,
+        data: cmd.data,
+        thread: cmd.thread,
+      }).then(() => {
+        this.sentMessageHashes.add(msgHash);
+        this.queuedMessageHashes.delete(msgHash);
+      }).catch((err) => {
+        this.logStderr(`sendAndWait failed for ${cmd.to}: ${err.message}`, true);
+      });
+      return;
+    }
+
     const success = this.client.sendMessage(cmd.to, cmd.body, cmd.kind, cmd.data, cmd.thread, sendMeta);
     if (success) {
       this.sentMessageHashes.add(msgHash);
@@ -1173,21 +1206,118 @@ export class TmuxWrapper extends BaseWrapper {
   }
 
   /**
-   * Execute spawn via daemon, API, or callback.
-   * Delegates to BaseWrapper which tries daemon first.
+   * Execute spawn via API (if dashboardPort set) or callback.
+   * After spawning, waits for the agent to come online and sends the task via relay.
    */
   protected override async executeSpawn(name: string, cli: string, task: string): Promise<void> {
-    // Delegate to base which tries daemon first, then HTTP, then callback
-    await super.executeSpawn(name, cli, task);
+    let spawned = false;
+
+    if (this.config.dashboardPort) {
+      // Use dashboard API for spawning (works from any context, no terminal required)
+      try {
+        const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/spawn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, cli }), // No task - we send it after agent is online
+        });
+        const result = await response.json() as { success: boolean; error?: string };
+        if (result.success) {
+          this.logStderr(`Spawned ${name} via API`);
+          spawned = true;
+        } else {
+          this.logStderr(`Spawn failed: ${result.error}`, true);
+        }
+      } catch (err: any) {
+        this.logStderr(`Spawn API call failed: ${err.message}`, true);
+      }
+    } else if (this.config.onSpawn) {
+      // Fall back to callback
+      try {
+        await this.config.onSpawn(name, cli, task);
+        spawned = true;
+      } catch (err: any) {
+        this.logStderr(`Spawn failed: ${err.message}`, true);
+      }
+    }
+
+    // If spawn succeeded and we have a task, wait for agent to come online and send it
+    if (spawned && task && task.trim() && this.config.dashboardPort) {
+      await this.waitAndSendTask(name, task);
+    }
   }
 
   /**
-   * Execute release via daemon, API, or callback.
-   * Delegates to BaseWrapper which tries daemon first.
+   * Wait for a spawned agent to come online, then send the task via relay.
+   * Uses the wrapper's own relay client so the message comes "from" this agent,
+   * not from the dashboard's relay client.
+   */
+  private async waitAndSendTask(agentName: string, task: string): Promise<void> {
+    const maxWaitMs = 30000;
+    const pollIntervalMs = 500;
+    const startTime = Date.now();
+
+    this.logStderr(`Waiting for ${agentName} to come online...`);
+
+    // Poll for agent to be online using dedicated status endpoint
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/agents/${encodeURIComponent(agentName)}/online`);
+        const data = await response.json() as { name: string; online: boolean };
+
+        if (data.online) {
+          this.logStderr(`${agentName} is online, sending task...`);
+
+          // Send task directly via our relay client (not dashboard API)
+          // This ensures the message comes "from" this agent, not from _DashboardUI
+          if (this.client.state === 'READY') {
+            const sent = this.client.sendMessage(agentName, task, 'message');
+            if (sent) {
+              this.logStderr(`Task sent to ${agentName}`);
+            } else {
+              this.logStderr(`Failed to send task to ${agentName}: sendMessage returned false`, true);
+            }
+          } else {
+            this.logStderr(`Failed to send task to ${agentName}: relay client not ready (state: ${this.client.state})`, true);
+          }
+          return;
+        }
+      } catch (_err: unknown) {
+        // Ignore poll errors, keep trying
+      }
+
+      await sleep(pollIntervalMs);
+    }
+
+    this.logStderr(`Timeout waiting for ${agentName} to come online`, true);
+  }
+
+  /**
+   * Execute release via API (if dashboardPort set) or callback
    */
   protected override async executeRelease(name: string): Promise<void> {
-    // Delegate to base which tries daemon first, then HTTP, then callback
-    await super.executeRelease(name);
+    if (this.config.dashboardPort) {
+      // Use dashboard API for release (works from any context, no terminal required)
+      try {
+        const response = await fetch(`http://localhost:${this.config.dashboardPort}/api/spawned/${encodeURIComponent(name)}`, {
+          method: 'DELETE',
+        });
+        const result = await response.json() as { success: boolean; error?: string };
+        if (result.success) {
+          this.logStderr(`Released ${name} via API`);
+        } else {
+          this.logStderr(`Release failed: ${result.error}`, true);
+        }
+      } catch (err: any) {
+        this.logStderr(`Release API call failed: ${err.message}`, true);
+      }
+    } else if (this.config.onRelease) {
+      // Fall back to callback
+      try {
+        await this.config.onRelease(name);
+      } catch (err: any) {
+        this.logStderr(`Release failed: ${err.message}`, true);
+      }
+    }
   }
 
   /**
@@ -1203,6 +1333,12 @@ export class TmuxWrapper extends BaseWrapper {
     // Only process if we have API or callbacks configured
     const canSpawn = this.config.dashboardPort || this.config.onSpawn;
     const canRelease = this.config.dashboardPort || this.config.onRelease;
+
+    // Debug: Log spawn capability status
+    if (content.includes('->relay:spawn')) {
+      this.logStderr(`[spawn-debug] canSpawn=${!!canSpawn} dashboardPort=${this.config.dashboardPort} hasOnSpawn=${!!this.config.onSpawn}`);
+    }
+
     if (!canSpawn && !canRelease) return;
 
     const lines = content.split('\n');
@@ -1216,6 +1352,13 @@ export class TmuxWrapper extends BaseWrapper {
 
       // Strip common line prefixes (bullets, prompts) before checking for commands
       trimmed = trimmed.replace(linePrefixPattern, '');
+
+      // Fix for over-stripping: the linePrefixPattern includes - and > characters,
+      // which can accidentally strip the -> from ->relay:spawn, leaving just relay:spawn.
+      // If we detect this happened, restore the -> prefix.
+      if (/^(relay|thinking|continuity):/.test(trimmed)) {
+        trimmed = '->' + trimmed;
+      }
 
       // If we're in fenced spawn mode, accumulate lines until we see >>>
       if (this.pendingFencedSpawn) {
@@ -1359,11 +1502,66 @@ export class TmuxWrapper extends BaseWrapper {
     this.trajectory?.message('received', from, this.config.name, payload.body);
 
     // Queue for injection - include originalTo so we can inform the agent how to route responses
-    this.messageQueue.push({ from, body: payload.body, messageId, thread: payload.thread, importance: meta?.importance, data: payload.data, originalTo });
+    this.messageQueue.push({
+      from,
+      body: payload.body,
+      messageId,
+      thread: payload.thread,
+      importance: meta?.importance,
+      data: payload.data,
+      sync: meta?.sync,
+      originalTo,
+    });
 
     // Write to inbox if enabled
     if (this.inbox) {
       this.inbox.addMessage(from, payload.body);
+    }
+
+    // Try to inject
+    this.checkForInjectionOpportunity();
+  }
+
+  /**
+   * Handle incoming channel message from relay.
+   * Channel messages include a channel indicator so the agent knows to reply to the channel.
+   */
+  protected override handleIncomingChannelMessage(
+    from: string,
+    channel: string,
+    body: string,
+    envelope: import('../protocol/types.js').Envelope<import('../protocol/channels.js').ChannelMessagePayload>
+  ): void {
+    const messageId = envelope.id;
+
+    if (this.hasSeenIncoming(messageId)) {
+      this.logStderr(`← ${from} [${channel}]: duplicate delivery (${messageId.substring(0, 8)})`);
+      return;
+    }
+
+    const truncatedBody = body.substring(0, Math.min(DEBUG_LOG_TRUNCATE_LENGTH, body.length));
+    this.logStderr(`← ${from} [${channel}]: ${truncatedBody}...`);
+
+    // Record in trajectory via trail
+    this.trajectory?.message('received', from, this.config.name, body);
+
+    // Queue for injection - include channel as originalTo so we can inform the agent how to route responses
+    this.messageQueue.push({
+      from,
+      body,
+      messageId,
+      thread: envelope.payload.thread,
+      data: {
+        _isChannelMessage: true,
+        _channel: channel,
+        _mentions: envelope.payload.mentions,
+      },
+      originalTo: channel, // Set channel as the reply target
+    });
+
+    // Write to inbox if enabled
+    if (this.inbox) {
+      this.inbox.addMessage(from, body);
     }
 
     // Try to inject
@@ -1389,12 +1587,6 @@ export class TmuxWrapper extends BaseWrapper {
       return;
     }
 
-    // Log detection method in debug mode
-    if (this.config.debug && idleResult.signals.length > 0) {
-      const signalInfo = idleResult.signals.map(s => `${s.source}:${(s.confidence * 100).toFixed(0)}%`).join(', ');
-      this.logStderr(`Idle detected (${signalInfo})`);
-    }
-
     this.injectNextMessage();
   }
 
@@ -1407,21 +1599,18 @@ export class TmuxWrapper extends BaseWrapper {
     if (!msg) return;
 
     this.isInjecting = true;
-    this.logStderr(`Injecting message from ${msg.from} (cli: ${this.cliType})`);
 
     try {
       const shortId = msg.messageId.substring(0, 8);
 
       // Wait for input to be clear before injecting
       // If input is not clear (human typing), re-queue and try later - never clear forcefully!
-      // Fix for agent-relay-j9z: forceful clearing destroys human input in progress
       const waitTimeoutMs = this.config.inputWaitTimeoutMs ?? 5000;
       const waitPollMs = this.config.inputWaitPollMs ?? 200;
       const inputClear = await this.waitForClearInput(waitTimeoutMs, waitPollMs);
       if (!inputClear) {
         // Input still has text after timeout - DON'T clear forcefully, re-queue instead
-        // This preserves any human input in progress
-        this.logStderr('Input not clear after waiting, re-queuing injection to preserve human input');
+        this.logStderr('Input not clear, re-queuing injection');
         this.messageQueue.unshift(msg);
         this.isInjecting = false;
         setTimeout(() => this.checkForInjectionOpportunity(), this.config.injectRetryMs ?? 1000);
@@ -1482,7 +1671,9 @@ export class TmuxWrapper extends BaseWrapper {
           }
         },
         performInjection: async (inj: string) => {
-          await this.pasteLiteral(inj);
+          // Use send-keys -l (literal) instead of paste-buffer
+          // paste-buffer causes issues where Claude shows "[Pasted text]" but content doesn't appear
+          await this.sendKeysLiteral(inj);
           await sleep(INJECTION_CONSTANTS.ENTER_DELAY_MS);
           await this.sendKeys('Enter');
         },
@@ -1496,6 +1687,7 @@ export class TmuxWrapper extends BaseWrapper {
 
       if (result.success) {
         this.logStderr(`Injection complete (attempt ${result.attempts})`);
+        this.sendSyncAck(msg.messageId, msg.sync, true);
       } else {
         // All retries failed - log and optionally fall back to inbox
         this.logStderr(
@@ -1508,10 +1700,12 @@ export class TmuxWrapper extends BaseWrapper {
           this.inbox.addMessage(msg.from, msg.body);
           this.logStderr('Wrote message to inbox as fallback');
         }
+        this.sendSyncAck(msg.messageId, msg.sync, false, { error: 'injection_failed' });
       }
 
     } catch (err: any) {
       this.logStderr(`Injection failed: ${err.message}`, true);
+      this.sendSyncAck(msg.messageId, msg.sync, false, { error: err.message });
     } finally {
       this.isInjecting = false;
 
@@ -1543,7 +1737,14 @@ export class TmuxWrapper extends BaseWrapper {
    * Send special keys to tmux
    */
   private async sendKeys(keys: string): Promise<void> {
-    await execAsync(`"${this.tmuxPath}" send-keys -t ${this.sessionName} ${keys}`);
+    const cmd = `"${this.tmuxPath}" send-keys -t ${this.sessionName} ${keys}`;
+    try {
+      await execAsync(cmd);
+      this.logStderr(`[sendKeys] Sent: ${keys}`);
+    } catch (err: any) {
+      this.logStderr(`[sendKeys] Failed to send ${keys}: ${err.message}`, true);
+      throw err;
+    }
   }
 
   /**
@@ -1559,7 +1760,13 @@ export class TmuxWrapper extends BaseWrapper {
       .replace(/\$/g, '\\$')
       .replace(/`/g, '\\`')
       .replace(/!/g, '\\!');
-    await execAsync(`"${this.tmuxPath}" send-keys -t ${this.sessionName} -l "${escaped}"`);
+    try {
+      await execAsync(`"${this.tmuxPath}" send-keys -t ${this.sessionName} -l "${escaped}"`);
+      this.logStderr(`[sendKeysLiteral] Sent ${text.length} chars`);
+    } catch (err: any) {
+      this.logStderr(`[sendKeysLiteral] Failed: ${err.message}`, true);
+      throw err;
+    }
   }
 
   /**
@@ -1577,14 +1784,9 @@ export class TmuxWrapper extends BaseWrapper {
       .replace(/!/g, '\\!');
 
     // Set tmux buffer then paste
-    // Skip bracketed paste (-p) for CLIs that don't handle it properly (droid, other)
-    await execAsync(`"${this.tmuxPath}" set-buffer -- "${escaped}"`);
-    const useBracketedPaste = this.cliType === 'claude' || this.cliType === 'codex' || this.cliType === 'gemini' || this.cliType === 'opencode';
-    if (useBracketedPaste) {
-      await execAsync(`"${this.tmuxPath}" paste-buffer -t ${this.sessionName} -p`);
-    } else {
-      await execAsync(`"${this.tmuxPath}" paste-buffer -t ${this.sessionName}`);
-    }
+    const setBufferCmd = `"${this.tmuxPath}" set-buffer -- "${escaped}"`;
+    await execAsync(setBufferCmd);
+    await execAsync(`"${this.tmuxPath}" paste-buffer -t ${this.sessionName}`);
   }
 
   /**
@@ -1764,6 +1966,7 @@ export class TmuxWrapper extends BaseWrapper {
     if (!this.running) return;
     this.running = false;
     this.activityState = 'disconnected';
+    this.stopStuckDetection();
 
     // Auto-save continuity state before shutdown (fire and forget)
     // Pass sessionEndData to populate handoff (fixes empty handoff issue)

@@ -111,6 +111,65 @@ Broadcast to ALL agents in ALL projects>>>
 | **No global agent registry** | Agent name collisions possible across machines | Medium |
 | **Limited offline queuing** | Messages lost if cloud unavailable | Low |
 
+### 1.5 Message Injection Architecture (relay-pty)
+
+The system uses a Rust-based PTY wrapper (`relay-pty`) for reliable message injection:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       RELAY-PTY MESSAGE FLOW                                 │
+│                                                                              │
+│  Agent writes file          relay-pty parses         Orchestrator routes    │
+│  to outbox                  and emits JSON           via daemon/cloud       │
+│                                                                              │
+│  ┌────────────────┐        ┌────────────────┐        ┌────────────────┐    │
+│  │ Agent (claude) │        │   relay-pty    │        │  Orchestrator  │    │
+│  │                │        │   (Rust PTY)   │        │  (TypeScript)  │    │
+│  │ cat > outbox/  │        │                │        │                │    │
+│  │   msg << EOF   │───────►│ Parse output   │───────►│ Route message  │    │
+│  │ TO: Bob        │ stdout │ Detect ->relay │ stderr │ via daemon or  │    │
+│  │ Hello!         │        │ -file:ID       │  JSON  │ cloud API      │    │
+│  │ EOF            │        │                │        │                │    │
+│  │                │        │ Read file,     │        │                │    │
+│  │ ->relay-file:  │        │ emit JSON to   │        │                │    │
+│  │   msg          │        │ stderr         │        │                │    │
+│  └────────────────┘        └────────────────┘        └────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**File-based Format (Preferred):**
+```
+# Agent writes to /tmp/relay-outbox/$AGENT_RELAY_NAME/msg-001
+TO: Bob
+THREAD: optional
+
+Message body here.
+No escaping needed.
+```
+
+Then outputs: `->relay-file:msg-001`
+
+**Why File-based?**
+1. **Avoids terminal corruption** - Terminal line wrapping can corrupt inline messages
+2. **No escaping required** - Heredoc syntax prevents bash interpretation issues
+3. **Reliable parsing** - File content isn't affected by ANSI codes or TUI rendering
+4. **Simpler for agents** - Header format is more natural than JSON
+
+**Spawn/Release via Files:**
+```
+# Spawn
+KIND: spawn
+NAME: WorkerName
+CLI: claude
+
+Task description here.
+
+# Release
+KIND: release
+NAME: WorkerName
+```
+
 ---
 
 ## 2. Architecture Deep Dive
@@ -169,30 +228,47 @@ projectGroups {
 ```
 Alice@MachineA wants to message Carol@MachineB:
 
-1. Alice outputs: ->relay:Carol <<<Hello!>>>
+1. Alice writes file and outputs: ->relay-file:msg-001
+   (File contains: TO: Carol\n\nHello!)
 
-2. TmuxWrapper captures, sends to local daemon
+2. relay-pty detects pattern, reads file, emits JSON to stderr
 
-3. Router checks: Carol not local
+3. RelayPtyOrchestrator receives JSON, calls sendRelayCommand()
 
-4. Router calls CloudSyncService.sendCrossMachineMessage()
+4. Router checks: Carol not local
 
-5. CloudSyncService POSTs to /api/messages/relay:
+5. Router calls CloudSyncService.sendCrossMachineMessage()
+
+6. CloudSyncService POSTs to /api/messages/relay:
    {
      from: { daemonId: "daemon-a", agent: "Alice" },
      to: "Carol",
      content: "Hello!"
    }
 
-6. Cloud API looks up Carol's daemon via linkedDaemons table
+7. Cloud API looks up Carol's daemon via linkedDaemons table
 
-7. Cloud queues message in daemon-b's messageQueue
+8. Cloud queues message in daemon-b's messageQueue
 
-8. MachineB's CloudSyncService polls and receives message
+9. MachineB's CloudSyncService polls and receives message
 
-9. MachineB's Router delivers to Carol via local socket
+10. MachineB's Router delivers to Carol via relay-pty socket injection
 
 Total latency: 100-500ms (depends on poll interval)
+```
+
+**Local Message Flow (Same Machine):**
+```
+Alice -> Bob (both on MachineA):
+
+1. Alice writes file, outputs ->relay-file:msg-001
+2. relay-pty parses, emits JSON
+3. Orchestrator calls router.send()
+4. Router finds Bob is local
+5. Router delivers via Bob's relay-pty socket
+6. Bob's relay-pty injects message into PTY
+
+Total latency: <50ms
 ```
 
 ### 2.3 Scaling Characteristics

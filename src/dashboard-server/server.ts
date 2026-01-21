@@ -388,6 +388,16 @@ export interface DashboardOptions {
   projectRoot?: string;
   /** Tmux session name for workers */
   tmuxSession?: string;
+  /**
+   * Callback to mark an agent as spawning (before HELLO completes).
+   * Messages sent to this agent will be queued for delivery after registration.
+   */
+  onMarkSpawning?: (agentName: string) => void;
+  /**
+   * Callback to clear the spawning flag for an agent.
+   * Called when spawn fails or is cancelled.
+   */
+  onClearSpawning?: (agentName: string) => void;
 }
 
 export async function startDashboard(port: number, dataDir: string, teamDir: string, dbPath?: string): Promise<number>;
@@ -403,13 +413,191 @@ export async function startDashboard(
     ? { port: portOrOptions, dataDir: dataDirArg!, teamDir: teamDirArg!, dbPath: dbPathArg }
     : portOrOptions;
 
-  const { port, dataDir, teamDir, dbPath, enableSpawner, projectRoot, tmuxSession } = options;
+  const { port, dataDir, teamDir, dbPath, enableSpawner, projectRoot, tmuxSession, onMarkSpawning, onClearSpawning } = options;
 
   console.log('Starting dashboard...');
 
-  const storage: StorageAdapter | undefined = dbPath
-    ? new SqliteStorageAdapter({ dbPath })
-    : undefined;
+  const disableStorage = process.env.RELAY_DISABLE_STORAGE === 'true';
+  const storage: StorageAdapter | undefined = disableStorage
+    ? undefined
+    : new SqliteStorageAdapter({
+        dbPath: dbPath ?? path.join(dataDir, 'dashboard.db'),
+      });
+
+  const defaultWorkspaceId = process.env.RELAY_WORKSPACE_ID ?? process.env.AGENT_RELAY_WORKSPACE_ID;
+
+  const resolveWorkspaceId = (req: express.Request): string | undefined => {
+    const fromQuery = req.query.workspaceId as string | undefined;
+    const fromBody = (req.body as Record<string, unknown> | undefined)?.workspaceId as string | undefined;
+    const fromHeader = (req.headers['x-workspace-id'] as string | undefined);
+    return fromQuery || fromBody || fromHeader || defaultWorkspaceId;
+  };
+
+  interface ChannelRecord {
+    id: string;
+    visibility: 'public' | 'private';
+    status: 'active' | 'archived';
+    createdAt?: number;
+    createdBy?: string;
+    description?: string;
+    lastActivityAt: number;
+    lastMessage?: { content: string; from: string; timestamp: string };
+    members: Set<string>;
+    dmParticipants?: string[];
+  }
+
+  const loadChannelRecords = async (workspaceId?: string): Promise<Map<string, ChannelRecord>> => {
+    const map = new Map<string, ChannelRecord>();
+    if (!storage) {
+      return map;
+    }
+    const stored = await storage.getMessages({ order: 'asc' });
+
+    const ensureRecord = (id: string): ChannelRecord => {
+      let record = map.get(id);
+      if (!record) {
+        record = {
+          id,
+          visibility: 'public',
+          status: 'active',
+          lastActivityAt: 0,
+          members: new Set(),
+        };
+        if (id.startsWith('dm:')) {
+          const participants = id.split(':').slice(1).filter(Boolean);
+          if (participants.length > 0) {
+            participants.forEach((participant) => record!.members.add(participant));
+            record.dmParticipants = participants;
+          }
+        }
+        map.set(id, record);
+      }
+      return record;
+    };
+
+    const addMember = (record: ChannelRecord, member: string) => {
+      if (!member) return;
+      record.members.add(member);
+    };
+
+    for (const msg of stored) {
+      const target = msg.to;
+      if (!target || (!target.startsWith('#') && !target.startsWith('dm:'))) {
+        continue;
+      }
+
+      const data = msg.data as Record<string, unknown> | undefined;
+      const messageWorkspaceId = typeof data?._workspaceId === 'string' ? data._workspaceId : undefined;
+      if (workspaceId && messageWorkspaceId && messageWorkspaceId !== workspaceId) {
+        continue;
+      }
+
+      const record = ensureRecord(target);
+      const timestamp = typeof msg.ts === 'number' ? msg.ts : Date.now();
+
+      const channelCreate = data?._channelCreate as { createdBy?: string; description?: string; isPrivate?: boolean } | undefined;
+      if (channelCreate) {
+        record.createdAt = record.createdAt ?? timestamp;
+        record.createdBy = channelCreate.createdBy ?? record.createdBy;
+        if (channelCreate.description) {
+          record.description = String(channelCreate.description);
+        }
+        record.visibility = channelCreate.isPrivate ? 'private' : 'public';
+      }
+
+      const stateChange = data?._channelState as string | undefined;
+      if (stateChange) {
+        record.status = stateChange === 'archived' ? 'archived' : 'active';
+        record.lastActivityAt = Math.max(record.lastActivityAt, timestamp);
+      }
+
+      const membership = data?._channelMembership as { member?: string; action?: string } | undefined;
+      if (membership?.member) {
+        if (membership.action === 'leave') {
+          record.members.delete(membership.member);
+        } else {
+          addMember(record, membership.member);
+        }
+        record.lastActivityAt = Math.max(record.lastActivityAt, timestamp);
+      }
+
+      const isChannelMessage = Boolean(data?._isChannelMessage);
+      if (isChannelMessage) {
+        addMember(record, msg.from);
+        record.lastActivityAt = Math.max(record.lastActivityAt, timestamp);
+        record.lastMessage = {
+          content: msg.body,
+          from: msg.from || '__system__',
+          timestamp: new Date(timestamp).toISOString(),
+        };
+        if (target.startsWith('dm:') && !record.dmParticipants) {
+          const participants = target.split(':').slice(1).filter(Boolean);
+          if (participants.length > 0) {
+            participants.forEach((participant) => record.members.add(participant));
+            record.dmParticipants = participants;
+          }
+        }
+      }
+    }
+
+    return map;
+  };
+
+  const loadPersistedChannelsForUser = async (username: string, workspaceId?: string): Promise<string[]> => {
+    const channelMap = await loadChannelRecords(workspaceId);
+    const result: string[] = [];
+    for (const record of channelMap.values()) {
+      if (record.status === 'archived') {
+        continue;
+      }
+      if (record.members.has(username)) {
+        result.push(record.id);
+      }
+    }
+    if (!result.includes('#general')) {
+      result.unshift('#general');
+    }
+    return result;
+  };
+
+  const persistChannelMembershipEvent = async (
+    channel: string,
+    member: string,
+    action: 'join' | 'leave' | 'invite',
+    options?: { invitedBy?: string; workspaceId?: string }
+  ) => {
+    if (!storage) return;
+    const data: Record<string, unknown> = {
+      _channelMembership: {
+        member,
+        action,
+        invitedBy: options?.invitedBy,
+      },
+    };
+    const workspaceToStore = options?.workspaceId ?? defaultWorkspaceId;
+    if (workspaceToStore) {
+      data._workspaceId = workspaceToStore;
+    }
+
+    await storage.saveMessage({
+      id: `channel-membership-${crypto.randomUUID()}`,
+      ts: Date.now(),
+      from: '__system__',
+      to: channel,
+      topic: undefined,
+      kind: 'state',
+      body: `${action}:${member}`,
+      data,
+      status: 'read',
+      is_urgent: false,
+      is_broadcast: true,
+    }).catch((err) => {
+      console.error('[channels] Failed to persist membership event', err);
+    });
+    await notifyDaemonOfMembershipUpdate(channel, member, action, workspaceToStore).catch((err) => {
+      console.error('[channels] Failed to notify daemon of membership update', err);
+    });
+  };
 
   // Initialize spawner if enabled
   // Use detectWorkspacePath to find the actual repo directory in cloud workspaces
@@ -417,8 +605,15 @@ export async function startDashboard(
   console.log(`[dashboard] Workspace path: ${workspacePath}`);
 
   // Pass dashboard port to spawner so spawned agents can call spawn/release APIs for nested spawning
+  // Also pass spawn tracking callbacks so messages can be queued before HELLO completes
   const spawner: AgentSpawner | undefined = enableSpawner
-    ? new AgentSpawner(workspacePath, tmuxSession, port)
+    ? new AgentSpawner({
+        projectRoot: workspacePath,
+        tmuxSession,
+        dashboardPort: port,
+        onMarkSpawning,
+        onClearSpawning,
+      })
     : undefined;
 
   // Initialize cloud persistence and memory monitoring if enabled (RELAY_CLOUD_ENABLED=true)
@@ -632,6 +827,14 @@ export async function startDashboard(
     await storage.init();
   }
 
+  // Request logger for debugging
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/channels')) {
+      console.log(`[dashboard] ${req.method} ${req.path} - incoming request`);
+    }
+    next();
+  });
+
   // Increase JSON body limit for base64 image uploads (10MB)
   app.use(express.json({ limit: '10mb' }));
 
@@ -709,8 +912,12 @@ export async function startDashboard(
     app.use(express.static(dashboardDir, { extensions: ['html'] }));
 
     // Fallback for Next.js pages (e.g., /metrics -> /metrics.html)
+    // These are needed when a route exists as both a directory and .html file
     app.get('/metrics', (req, res) => {
       res.sendFile(path.join(dashboardDir, 'metrics.html'));
+    });
+    app.get('/app', (req, res) => {
+      res.sendFile(path.join(dashboardDir, 'app.html'));
     });
   } else {
     console.error('[dashboard] Dashboard not found at:', dashboardDistDir, 'or', dashboardSourceDir);
@@ -720,15 +927,47 @@ export async function startDashboard(
   // Map of senderName -> RelayClient for per-user connections
   const socketPath = path.join(dataDir, 'relay.sock');
   const relayClients = new Map<string, RelayClient>();
+  // Forward declaration - initialized later, used by getRelayClient to avoid duplicate connections
+  // eslint-disable-next-line prefer-const
+  let userBridge: UserBridge | undefined;
+  const notifyDaemonOfMembershipUpdate = async (
+    channel: string,
+    member: string,
+    action: 'join' | 'leave' | 'invite',
+    workspaceId?: string
+  ) => {
+    const client = await getRelayClient('Dashboard');
+    if (!client || client.state !== 'READY') {
+      return;
+    }
+    client.sendMessage('_router', '', 'state', {
+      _channelMembershipUpdate: {
+        channel,
+        member,
+        action,
+        workspaceId,
+      },
+    });
+  };
   // Track pending client connections to prevent race conditions
   const pendingConnections = new Map<string, Promise<RelayClient | undefined>>();
 
   // Get or create a relay client for a specific sender
-  const getRelayClient = async (senderName: string = 'Dashboard'): Promise<RelayClient | undefined> => {
+  const getRelayClient = async (senderName: string = 'Dashboard', entityType?: 'agent' | 'user'): Promise<RelayClient | undefined> => {
     // Check if we already have a connected client for this sender
     const existing = relayClients.get(senderName);
     if (existing && existing.state === 'READY') {
       return existing;
+    }
+
+    // Check if userBridge has a client for this user (avoid duplicate connections)
+    // This prevents the connection storm where two clients fight for the same name
+    if (userBridge) {
+      const userBridgeClient = userBridge.getRelayClient(senderName);
+      if (userBridgeClient && userBridgeClient.state === 'READY') {
+        console.log(`[dashboard] Reusing userBridge client for ${senderName}`);
+        return userBridgeClient as unknown as RelayClient;
+      }
     }
 
     // Check if there's already a pending connection for this sender
@@ -746,9 +985,12 @@ export async function startDashboard(
     // Create connection promise to prevent race conditions
     const connectionPromise = (async (): Promise<RelayClient | undefined> => {
       // Create new client for this sender
+      // Default to 'user' entityType for non-Dashboard senders (human users)
+      const resolvedEntityType = entityType ?? (senderName === 'Dashboard' ? undefined : 'user');
       const client = new RelayClient({
         socketPath,
         agentName: senderName,
+        entityType: resolvedEntityType,
         cli: 'dashboard',
         reconnect: true,
         maxReconnectAttempts: 5,
@@ -764,6 +1006,33 @@ export async function startDashboard(
         if (state === 'DISCONNECTED') {
           relayClients.delete(senderName);
         }
+      };
+
+      // Set up channel message handler to forward messages to presence WebSocket
+      // This enables cloud users to receive channel messages via the presence bridge
+      client.onChannelMessage = (from, channel, body, envelope) => {
+        console.log(`[dashboard] *** CHANNEL MESSAGE RECEIVED *** for ${senderName}: ${from} -> ${channel}`);
+
+        // Look up sender's avatar from presence (if they're an online user)
+        const senderPresence = onlineUsers.get(from);
+        const fromAvatarUrl = senderPresence?.info.avatarUrl;
+        // Determine entity type: user if they have presence state, agent otherwise
+        const fromEntityType: 'user' | 'agent' = senderPresence ? 'user' : 'agent';
+
+        // Broadcast to presence WebSocket clients so cloud can forward to its users
+        // Include the target user so cloud knows who to forward to
+        broadcastChannelMessage({
+          type: 'channel_message',
+          targetUser: senderName,
+          channel,
+          from,
+          fromAvatarUrl,
+          fromEntityType,
+          body,
+          thread: envelope?.payload?.thread,
+          mentions: envelope?.payload?.mentions,
+          timestamp: new Date().toISOString(),
+        });
       };
 
       try {
@@ -786,16 +1055,19 @@ export async function startDashboard(
   };
 
   // Start default relay client connection (non-blocking)
-  getRelayClient('Dashboard').catch(() => {});
+  // Use '_DashboardUI' to avoid conflicts with agents named 'Dashboard'
+  getRelayClient('_DashboardUI').catch(() => {});
 
   // User bridge for human-to-human and human-to-agent messaging
-  const userBridge = new UserBridge({
+  userBridge = new UserBridge({
     socketPath,
     createRelayClient: async (options) => {
       const client = new RelayClient({
         socketPath: options.socketPath,
         agentName: options.agentName,
         entityType: options.entityType,
+        displayName: options.displayName,
+        avatarUrl: options.avatarUrl,
         cli: 'dashboard',
         reconnect: true,
         maxReconnectAttempts: 5,
@@ -807,6 +1079,16 @@ export async function startDashboard(
 
       await client.connect();
       return client;
+    },
+    loadPersistedChannels: (username: string) =>
+      loadPersistedChannelsForUser(username, defaultWorkspaceId),
+    // Look up user info (avatar URL) from presence
+    lookupUserInfo: (username: string) => {
+      const presence = onlineUsers.get(username);
+      if (presence) {
+        return { avatarUrl: presence.info.avatarUrl };
+      }
+      return undefined;
     },
   });
 
@@ -900,9 +1182,27 @@ export async function startDashboard(
     }
   };
 
+  // Helper to check if a user is a remote user (connected via cloud dashboard)
+  const isRemoteUser = (username: string): boolean => {
+    const remoteUsersPath = path.join(teamDir, 'remote-users.json');
+    if (!fs.existsSync(remoteUsersPath)) return false;
+
+    try {
+      const data = JSON.parse(fs.readFileSync(remoteUsersPath, 'utf-8'));
+      // Check if file is stale (more than 60 seconds old)
+      if (data.updatedAt && Date.now() - data.updatedAt > 60 * 1000) {
+        return false;
+      }
+      return data.users?.some((u: { name: string }) => u.name === username) ?? false;
+    } catch {
+      return false;
+    }
+  };
+
   const isUserOnline = (username: string): boolean => {
     if (username === '*') return true;
-    return onlineUsers.has(username) || userBridge.isUserRegistered(username);
+    // Check local presence, userBridge registration, and remote users from cloud
+    return onlineUsers.has(username) || userBridge.isUserRegistered(username) || isRemoteUser(username);
   };
 
   const isRecipientOnline = (name: string): boolean => (
@@ -953,6 +1253,12 @@ export async function startDashboard(
   app.post('/api/send', async (req, res) => {
     const { to, message, thread, attachments: attachmentIds, from: senderName } = req.body;
 
+    // DEBUG: Trace message routing through /api/send
+    console.log(`[api/send] === MESSAGE TRACE ===`);
+    console.log(`[api/send] to=${to}, from=${senderName || 'not-specified'}`);
+    console.log(`[api/send] message length=${message?.length}, thread=${thread || 'none'}`);
+    console.log(`[api/send] message preview: ${message?.substring(0, 100)}...`);
+
     if (!to || !message) {
       return res.status(400).json({ error: 'Missing "to" or "message" field' });
     }
@@ -980,8 +1286,10 @@ export async function startDashboard(
       targets = [to];
     }
 
-    // Get or create relay client for this sender (defaults to 'Dashboard' for non-cloud mode)
-    const relayClient = await getRelayClient(senderName || 'Dashboard');
+    // Always use '_DashboardUI' client to avoid name conflicts with user agents
+    // (underscore prefix indicates system client, prevents collision if user names an agent "Dashboard")
+    // The sender name is preserved in message history/logs but not used for the relay connection
+    const relayClient = await getRelayClient('_DashboardUI');
     if (!relayClient || relayClient.state !== 'READY') {
       return res.status(503).json({ error: 'Relay daemon not connected' });
     }
@@ -999,8 +1307,9 @@ export async function startDashboard(
         }
       }
 
-      // Include attachments and channel context in the message data field
+      // Include attachments, channel context, and sender info in the message data field
       // For broadcasts (to='*'), include channel: 'general' so replies can be routed back
+      // For dashboard messages, include senderName so frontend can display actual user instead of '_DashboardUI'
       const isBroadcast = targets.length === 1 && targets[0] === '*';
       const messageData: Record<string, unknown> = {};
 
@@ -1010,6 +1319,12 @@ export async function startDashboard(
 
       if (isBroadcast) {
         messageData.channel = 'general';
+      }
+
+      // Include actual sender name for dashboard messages (relay client uses '_DashboardUI' but
+      // we want the real user's name displayed in message history)
+      if (senderName) {
+        messageData.senderName = senderName;
       }
 
       const hasMessageData = Object.keys(messageData).length > 0;
@@ -1252,10 +1567,19 @@ export async function startDashboard(
   const mapStoredMessages = (rows: StoredMessage[]): Message[] => rows
     // Filter out messages from/to internal system agents (e.g., __spawner__)
     .filter((row) => !isInternalAgent(row.from) && !isInternalAgent(row.to))
+    // Filter out channel messages - these are shown in the channels view, not the agent messages view
+    .filter((row) => {
+      if (row.data && typeof row.data === 'object' && '_isChannelMessage' in row.data) {
+        return false;
+      }
+      return true;
+    })
     .map((row) => {
-      // Extract attachments and channel from the data field if present
+      // Extract attachments, channel, and senderName from the data field if present
       let attachments: Attachment[] | undefined;
       let channel: string | undefined;
+      let effectiveFrom = row.from;
+
       if (row.data && typeof row.data === 'object') {
         if ('attachments' in row.data) {
           attachments = (row.data as { attachments: Attachment[] }).attachments;
@@ -1263,10 +1587,15 @@ export async function startDashboard(
         if ('channel' in row.data) {
           channel = (row.data as { channel: string }).channel;
         }
+        // For dashboard messages sent via _DashboardUI, use the actual sender name
+        // This provides proper attribution in message history
+        if ('senderName' in row.data && row.from === '_DashboardUI') {
+          effectiveFrom = (row.data as { senderName: string }).senderName;
+        }
       }
 
       return {
-        from: row.from,
+        from: effectiveFrom,
         to: row.to,
         content: row.body,
         timestamp: new Date(row.ts).toISOString(),
@@ -1366,8 +1695,15 @@ export async function startDashboard(
     // These users are tracked in onlineUsers for presence but need to appear in the agents list
     // with cli: 'dashboard' so they show up in the sidebar for DM conversations
     for (const [username, state] of onlineUsers) {
-      // Don't overwrite existing entries (e.g., if user is also in team.json)
-      if (!agentsMap.has(username)) {
+      const existing = agentsMap.get(username);
+      if (existing) {
+        // Update existing entry to ensure cli: 'dashboard' for proper human/agent separation
+        // This fixes the bug where users appear as both human AND agent if they have a stale
+        // entry in agents.json with a different cli value
+        existing.cli = 'dashboard';
+        existing.status = 'online';
+        existing.avatarUrl = state.info.avatarUrl || existing.avatarUrl;
+      } else {
         agentsMap.set(username, {
           name: username,
           role: 'User',
@@ -1379,6 +1715,44 @@ export async function startDashboard(
           needsAttention: false,
           avatarUrl: state.info.avatarUrl,
         });
+      }
+    }
+
+    // Inject remote users (connected via cloud dashboard) into agentsMap
+    // These users are synced from the cloud server and stored in remote-users.json
+    const remoteUsersPath = path.join(teamDir, 'remote-users.json');
+    if (fs.existsSync(remoteUsersPath)) {
+      try {
+        const remoteData = JSON.parse(fs.readFileSync(remoteUsersPath, 'utf-8'));
+        // Only include if file is fresh (within 60 seconds)
+        if (remoteData.updatedAt && Date.now() - remoteData.updatedAt <= 60 * 1000) {
+          for (const user of remoteData.users || []) {
+            // Don't override local users
+            if (onlineUsers.has(user.name)) continue;
+
+            const existing = agentsMap.get(user.name);
+            if (existing) {
+              existing.cli = 'dashboard';
+              existing.status = 'online';
+              if (user.avatarUrl) existing.avatarUrl = user.avatarUrl;
+            } else {
+              const now = new Date().toISOString();
+              agentsMap.set(user.name, {
+                name: user.name,
+                role: 'User',
+                cli: 'dashboard',
+                messageCount: 0,
+                status: 'online',
+                lastSeen: now,
+                lastActive: now,
+                needsAttention: false,
+                avatarUrl: user.avatarUrl,
+              });
+            }
+          }
+        }
+      } catch {
+        // Ignore parse errors for remote users file
       }
     }
 
@@ -1497,6 +1871,9 @@ export async function startDashboard(
 
         // Exclude agents starting with __ (internal/system agents)
         if (agent.name.startsWith('__')) return false;
+
+        // Exclude _DashboardUI (system client for sending dashboard messages)
+        if (agent.name === '_DashboardUI') return false;
 
         // Exclude agents without a proper CLI (improperly registered or stale)
         if (!agent.cli || agent.cli === 'Unknown') return false;
@@ -1990,6 +2367,28 @@ export async function startDashboard(
     });
   };
 
+  // Helper to broadcast channel messages to all presence clients
+  // This is used by fallback relay clients to forward messages to cloud-connected users
+  const broadcastChannelMessage = (message: {
+    type: 'channel_message';
+    targetUser: string;
+    channel: string;
+    from: string;
+    fromAvatarUrl?: string;
+    fromEntityType?: 'user' | 'agent';
+    body: string;
+    thread?: string;
+    mentions?: string[];
+    timestamp: string;
+  }) => {
+    const payload = JSON.stringify(message);
+    wssPresence.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    });
+  };
+
   // Helper to get online users list (without ws references)
   const getOnlineUsersList = (): UserPresenceInfo[] => {
     return Array.from(onlineUsers.values()).map((state) => state.info);
@@ -2058,6 +2457,11 @@ export async function startDashboard(
               // Add this connection to existing user
               existing.connections.add(ws);
               existing.info.lastSeen = now;
+
+              // Update userBridge to use the new WebSocket for message delivery
+              // This ensures messages are sent to an active connection, not a stale one
+              userBridge.updateWebSocket(username, ws);
+
               // Only log at milestones to reduce noise
               const count = existing.connections.size;
               if (count === 2 || count === 5 || count === 10 || count % 50 === 0) {
@@ -2288,13 +2692,241 @@ export async function startDashboard(
   /**
    * GET /api/channels - Get list of channels the user has joined
    */
-  app.get('/api/channels', (req, res) => {
-    const username = req.query.username as string;
-    if (!username) {
-      return res.status(400).json({ error: 'username query param required' });
+  app.get('/api/channels', async (req, res) => {
+    const username = req.query.username as string | undefined;
+    const workspaceId = resolveWorkspaceId(req);
+
+    if (!storage) {
+      if (!username) {
+        return res.status(400).json({ error: 'username query param required' });
+      }
+      const channels = userBridge.getUserChannels(username);
+      return res.json({
+        channels: channels.map((id) => ({
+          id,
+          name: id.startsWith('#') ? id.slice(1) : id,
+          visibility: 'public',
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          createdBy: username,
+          memberCount: 0,
+          unreadCount: 0,
+          hasMentions: false,
+          isDm: id.startsWith('dm:'),
+        })),
+        archivedChannels: [],
+      });
     }
-    const channels = userBridge.getUserChannels(username);
-    res.json({ channels });
+
+    try {
+      const channelMap = await loadChannelRecords(workspaceId);
+      type ChannelResponse = {
+        id: string;
+        name: string;
+        description?: string;
+        visibility: string;
+        status: string;
+        createdAt: string;
+        createdBy: string;
+        lastActivityAt?: string;
+        memberCount: number;
+        unreadCount: number;
+        hasMentions: boolean;
+        lastMessage?: { content: string; from: string; timestamp: string };
+        isDm: boolean;
+        dmParticipants?: string[];
+      };
+      const activeChannels: ChannelResponse[] = [];
+      const archivedChannels: ChannelResponse[] = [];
+
+      for (const record of channelMap.values()) {
+        const isMember = !username || record.members.has(username) || record.id === '#general';
+        if (!isMember) {
+          continue;
+        }
+
+        const channel = {
+          id: record.id,
+          name: record.id.startsWith('#') ? record.id.slice(1) : record.id,
+          description: record.description,
+          visibility: record.visibility,
+          status: record.status,
+          createdAt: record.createdAt ? new Date(record.createdAt).toISOString() : new Date(record.lastActivityAt || Date.now()).toISOString(),
+          createdBy: record.createdBy || '__system__',
+          lastActivityAt: record.lastActivityAt ? new Date(record.lastActivityAt).toISOString() : undefined,
+          memberCount: record.members.size,
+          unreadCount: 0,
+          hasMentions: false,
+          lastMessage: record.lastMessage,
+          isDm: record.id.startsWith('dm:'),
+          dmParticipants: record.dmParticipants,
+        };
+
+        if (record.status === 'archived') {
+          archivedChannels.push(channel);
+        } else {
+          activeChannels.push(channel);
+        }
+      }
+
+      return res.json({
+        channels: activeChannels,
+        archivedChannels,
+      });
+    } catch (err) {
+      console.error('[channels] Failed to load channels', err);
+      return res.status(500).json({ error: 'Failed to load channels' });
+    }
+  });
+
+  /**
+   * POST /api/channels - Create a new channel
+   */
+  app.post('/api/channels', express.json(), async (req, res) => {
+    const { name, description, isPrivate, invites } = req.body as {
+      name: string;
+      description?: string;
+      isPrivate?: boolean;
+      invites?: string; // comma-separated usernames to invite
+    };
+    const workspaceId = resolveWorkspaceId(req);
+    const username = (req.query.username as string) || (req.body.username as string) || 'Dashboard';
+
+    if (!name) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    // Normalize channel name
+    const channelId = name.startsWith('#') ? name : `#${name}`;
+
+    try {
+      // Join the creator to the channel
+      // Note: userBridge.joinChannel triggers router's persistChannelMembership via protocol
+      // We only persist here for dashboard-initiated creates (no daemon connection)
+      await userBridge.joinChannel(username, channelId);
+      await persistChannelMembershipEvent(channelId, username, 'join', { workspaceId });
+
+      // Handle invites if provided
+      if (invites) {
+        const inviteList = invites.split(',').map((s) => s.trim()).filter(Boolean);
+        for (const invitee of inviteList) {
+          // userBridge.joinChannel handles persistence via protocol
+          await userBridge.joinChannel(invitee, channelId);
+          await persistChannelMembershipEvent(channelId, invitee, 'invite', { invitedBy: username, workspaceId });
+        }
+      }
+
+      // Persist channel creation as a system message
+      if (storage) {
+        await storage.saveMessage({
+          id: `channel-create-${crypto.randomUUID()}`,
+          ts: Date.now(),
+          from: '__system__',
+          to: channelId,
+          topic: undefined,
+          kind: 'state', // channel creation stored as state
+          body: `Channel created by ${username}`,
+          data: {
+            _channelCreate: {
+              createdBy: username,
+              description,
+              isPrivate: isPrivate ?? false,
+            },
+            ...(workspaceId ? { _workspaceId: workspaceId } : {}),
+          },
+          status: 'read',
+          is_urgent: false,
+          is_broadcast: true,
+        });
+      }
+
+      res.json({
+        channel: {
+          id: channelId,
+          name: name.startsWith('#') ? name.slice(1) : name,
+          description,
+          isPrivate: isPrivate ?? false,
+          createdBy: username,
+        },
+      });
+    } catch (err: any) {
+      console.error('[channels] Failed to create channel:', err);
+      res.status(500).json({ error: err.message || 'Failed to create channel' });
+    }
+  });
+
+  /**
+   * POST /api/channels/invite - Invite members to a channel
+   * Invites can be:
+   * - Array of strings (usernames, assumed to be agents)
+   * - Comma-separated string of usernames
+   * - Array of objects with { id: string, type: 'user' | 'agent' }
+   */
+  app.post('/api/channels/invite', express.json(), async (req, res) => {
+    const { channel, invites, invitedBy } = req.body as {
+      channel: string;
+      invites: string | string[] | Array<{ id: string; type?: 'user' | 'agent' }>;
+      invitedBy?: string;
+    };
+    const workspaceId = resolveWorkspaceId(req);
+
+    if (!channel || !invites) {
+      return res.status(400).json({ error: 'channel and invites are required' });
+    }
+
+    // Don't add '#' prefix to DM channels (they use 'dm:' prefix)
+    const channelId = channel.startsWith('dm:')
+      ? channel
+      : (channel.startsWith('#') ? channel : `#${channel}`);
+
+    // Normalize invite list to array of { id, type }
+    type InviteItem = { id: string; type: 'user' | 'agent' };
+    let inviteList: InviteItem[];
+
+    if (typeof invites === 'string') {
+      // Comma-separated string - assume agents (legacy behavior)
+      inviteList = invites.split(',').map((s: string) => s.trim()).filter(Boolean)
+        .map(id => ({ id, type: 'agent' as const }));
+    } else if (Array.isArray(invites)) {
+      // Array - could be strings or objects
+      inviteList = invites.map(item => {
+        if (typeof item === 'string') {
+          return { id: item, type: 'agent' as const };
+        }
+        return { id: item.id, type: item.type || 'agent' };
+      });
+    } else {
+      return res.status(400).json({ error: 'invites must be a string or array' });
+    }
+
+    try {
+      const results: Array<{ id: string; type: string; success: boolean; reason?: string }> = [];
+      for (const invitee of inviteList) {
+        let success = false;
+        let reason: string | undefined;
+        if (userBridge.isUserRegistered(invitee.id)) {
+          success = await userBridge.joinChannel(invitee.id, channelId);
+          if (!success) {
+            reason = 'join_failed';
+          }
+        } else {
+          success = true;
+          reason = 'pending';
+        }
+
+        await persistChannelMembershipEvent(channelId, invitee.id, 'invite', {
+          invitedBy,
+          workspaceId,
+        });
+
+        results.push({ id: invitee.id, type: invitee.type, success, reason });
+      }
+
+      res.json({ channel: channelId, invited: results });
+    } catch (err: any) {
+      console.error('[channels] Failed to invite to channel:', err);
+      res.status(500).json({ error: err.message || 'Failed to invite members' });
+    }
   });
 
   /**
@@ -2309,16 +2941,54 @@ export async function startDashboard(
    * POST /api/channels/join - Join a channel
    */
   app.post('/api/channels/join', express.json(), async (req, res) => {
+    console.log('[channels] POST /api/channels/join received:', req.body);
     const { username, channel } = req.body;
     if (!username || !channel) {
+      console.log('[channels] Join: missing username or channel');
       return res.status(400).json({ error: 'username and channel required' });
     }
-    try {
-      const success = await userBridge.joinChannel(username, channel);
-      res.json({ success, channel });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+    const workspaceId = resolveWorkspaceId(req);
+    // Don't add '#' prefix to DM channels (they use 'dm:' prefix)
+    const channelId = channel.startsWith('dm:')
+      ? channel
+      : (channel.startsWith('#') ? channel : `#${channel}`);
+
+    let success = false;
+
+    // Step 1: Try userBridge (for users connected via local WebSocket)
+    const isLocalUser = userBridge.isUserRegistered(username);
+    console.log(`[channels] Join: isLocalUser=${isLocalUser}`);
+
+    if (isLocalUser) {
+      console.log(`[channels] Calling userBridge.joinChannel(${username}, ${channelId})`);
+      success = await userBridge.joinChannel(username, channelId);
+      console.log(`[channels] userBridge.joinChannel returned: ${success}`);
     }
+
+    // Step 2: If not local or userBridge failed, use relay client fallback
+    if (!success) {
+      console.log('[channels] Using relay client fallback for join');
+      try {
+        const client = await getRelayClient(username);
+        console.log(`[channels] Got relay client: ${client ? `state=${client.state}` : 'null'}`);
+
+        if (client && client.state === 'READY') {
+          success = client.joinChannel(channelId, username);
+          console.log(`[channels] relay client joinChannel returned: ${success}`);
+        } else {
+          console.log('[channels] Relay client not ready or null');
+        }
+      } catch (err: any) {
+        console.log(`[channels] Relay client error: ${err.message}`);
+      }
+    }
+
+    if (success) {
+      await persistChannelMembershipEvent(channelId, username, 'join', { workspaceId });
+    }
+
+    console.log(`[channels] Join final result: success=${success}`);
+    res.json({ success, channel: channelId });
   });
 
   /**
@@ -2329,10 +2999,310 @@ export async function startDashboard(
     if (!username || !channel) {
       return res.status(400).json({ error: 'username and channel required' });
     }
+    const workspaceId = resolveWorkspaceId(req);
     try {
       const success = await userBridge.leaveChannel(username, channel);
+      if (success) {
+        await persistChannelMembershipEvent(channel, username, 'leave', { workspaceId });
+      }
       res.json({ success, channel });
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/channels/admin-join - Add a member to a channel (admin operation)
+   * Used by cloud server to sync channel memberships for agents
+   */
+  app.post('/api/channels/admin-join', express.json(), async (req, res) => {
+    const { channel, member } = req.body;
+    if (!channel || !member) {
+      return res.status(400).json({ error: 'channel and member required' });
+    }
+    const workspaceId = resolveWorkspaceId(req);
+    try {
+      console.log(`[channels] Admin join: ${member} -> ${channel}`);
+      const success = await userBridge.adminJoinChannel(channel, member);
+      if (success) {
+        await persistChannelMembershipEvent(channel, member, 'join', { workspaceId });
+      }
+
+      // Check if member is connected (warning for unconnected members)
+      let warning: string | undefined;
+      const connectedAgentsPath = path.join(teamDir, 'connected-agents.json');
+      try {
+        if (fs.existsSync(connectedAgentsPath)) {
+          const data = JSON.parse(fs.readFileSync(connectedAgentsPath, 'utf-8'));
+          const connectedAgents: string[] = data.agents || [];
+          const connectedUsers: string[] = data.users || [];
+          const allConnected = [...connectedAgents, ...connectedUsers];
+          // Case-insensitive check
+          const isConnected = allConnected.some(
+            (name) => name.toLowerCase() === member.toLowerCase()
+          );
+          if (!isConnected) {
+            warning = `Member "${member}" is not currently connected to the daemon. Messages sent to this channel will not be delivered until the agent connects.`;
+            console.log(`[channels] Warning: ${member} added to ${channel} but not connected`);
+          }
+        }
+      } catch {
+        // Ignore errors reading connected-agents.json
+      }
+
+      res.json({ success, channel, member, warning });
+    } catch (err: any) {
+      console.error('[channels] Admin join failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/channels/admin-remove - Remove a member from a channel (admin operation)
+   * Used by dashboard to remove members from channels
+   */
+  app.post('/api/channels/admin-remove', express.json(), async (req, res) => {
+    const { channel, member } = req.body;
+    if (!channel || !member) {
+      return res.status(400).json({ error: 'channel and member required' });
+    }
+    const workspaceId = resolveWorkspaceId(req);
+    try {
+      console.log(`[channels] Admin remove: ${member} <- ${channel}`);
+      const success = await userBridge.adminRemoveMember(channel, member);
+      if (success) {
+        await persistChannelMembershipEvent(channel, member, 'leave', { workspaceId });
+      }
+      res.json({ success, channel, member });
+    } catch (err: any) {
+      console.error('[channels] Admin remove failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/channels/:channel/members - Get members of a channel
+   */
+  app.get('/api/channels/:channel/members', async (req, res) => {
+    const channelId = req.params.channel.startsWith('#') ? req.params.channel : `#${req.params.channel}`;
+    const workspaceId = resolveWorkspaceId(req);
+
+    try {
+      // Get persisted members from storage
+      const channelMap = await loadChannelRecords(workspaceId);
+      const record = channelMap.get(channelId);
+
+      // Get online agents from agents.json
+      const agentsPath = path.join(teamDir, 'agents.json');
+      const onlineAgents: string[] = [];
+      const thirtySecondsAgo = Date.now() - 30 * 1000;
+      if (fs.existsSync(agentsPath)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
+          for (const agent of (data.agents || [])) {
+            if (agent.lastSeen && new Date(agent.lastSeen).getTime() > thirtySecondsAgo) {
+              onlineAgents.push(agent.name);
+            }
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+
+      // Get connected users from userBridge
+      const connectedUsers = userBridge.getRegisteredUsers();
+
+      // Build member list
+      const memberSet = new Set<string>();
+
+      // Add persisted members
+      if (record?.members) {
+        for (const member of record.members) {
+          memberSet.add(member);
+        }
+      }
+
+      // For #general, also add all connected agents and users
+      if (channelId === '#general') {
+        for (const agent of onlineAgents) {
+          memberSet.add(agent);
+        }
+        for (const user of connectedUsers) {
+          memberSet.add(user);
+        }
+      }
+
+      // Build response with entity type info
+      const members = Array.from(memberSet).map((name) => {
+        const isOnlineAgent = onlineAgents.includes(name);
+        const isOnlineUser = connectedUsers.includes(name);
+        return {
+          id: name,
+          displayName: name,
+          entityType: isOnlineUser ? 'user' : 'agent',
+          role: 'member',
+          status: isOnlineAgent || isOnlineUser ? 'online' : 'offline',
+          joinedAt: new Date().toISOString(),
+        };
+      });
+
+      return res.json({ members });
+    } catch (err: any) {
+      console.error('[channels] Failed to get channel members:', err);
+      return res.status(500).json({ error: err.message || 'Failed to get channel members' });
+    }
+  });
+
+  /**
+   * GET /api/channels/:channel/messages - Get persisted messages for a channel
+   */
+  app.get('/api/channels/:channel/messages', async (req, res) => {
+    if (!storage) {
+      return res.status(503).json({ error: 'Storage not configured' });
+    }
+
+    const channelId = req.params.channel;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 200;
+    const beforeTs = req.query.before ? parseInt(req.query.before as string, 10) : undefined;
+    const workspaceId = resolveWorkspaceId(req);
+
+    try {
+      const query: any = {
+        to: channelId,
+        limit,
+        order: 'desc',
+      };
+      if (beforeTs) {
+        query.sinceTs = beforeTs;
+      }
+      let messages = await storage.getMessages(query);
+      // Only include channel messages for this workspace
+      messages = messages.filter((m) => {
+        const data = m.data as any;
+        if (workspaceId && data?._workspaceId && data._workspaceId !== workspaceId) {
+          return false;
+        }
+        return Boolean(data?._isChannelMessage);
+      });
+
+      // Sort ascending for UI
+      messages.sort((a, b) => a.ts - b.ts);
+
+      res.json({
+        messages: messages.map((m) => {
+          // Look up sender's avatar from presence (if they're currently online)
+          const senderPresence = onlineUsers.get(m.from);
+          const fromAvatarUrl = senderPresence?.info.avatarUrl;
+          // Determine entity type: user if they have presence state, agent otherwise
+          const fromEntityType: 'user' | 'agent' = senderPresence ? 'user' : 'agent';
+          return {
+            id: m.id,
+            channelId: channelId,
+            from: m.from,
+            fromEntityType,
+            fromAvatarUrl,
+            content: m.body,
+            timestamp: new Date(m.ts).toISOString(),
+            threadId: m.thread || undefined,
+            isRead: true,
+          };
+        }),
+        hasMore: messages.length === limit,
+      });
+    } catch (err) {
+      console.error('[channels] Failed to fetch channel messages', err);
+      res.status(500).json({ error: 'Failed to fetch channel messages' });
+    }
+  });
+
+  /**
+   * POST /api/channels/subscribe - Subscribe a cloud user to channel messages
+   * This joins the user to channels through their existing relay connection.
+   * IMPORTANT: Prefers userBridge (for cloud users connected via presence) over
+   * getRelayClient (fallback) to avoid creating duplicate connections that would
+   * conflict and break message routing.
+   */
+  app.post('/api/channels/subscribe', express.json(), async (req, res) => {
+    const { username, channels, workspaceId: _workspaceId } = req.body;
+    console.log(`[channel-debug] SUBSCRIBE request: username=${username}, channels=${JSON.stringify(channels)}`);
+
+    if (!username) {
+      return res.status(400).json({ error: 'username required' });
+    }
+
+    try {
+      const joinedChannels: string[] = [];
+      const channelList = channels || ['#general'];
+
+      // Wait for userBridge registration to complete (cloud users send presence join
+      // which triggers async registration - we need to wait for it to finish)
+      // This prevents falling back to getRelayClient which creates a conflicting connection
+      let regAttempts = 0;
+      const maxRegAttempts = 20; // 2 seconds max wait
+      while (!userBridge.isUserRegistered(username) && regAttempts < maxRegAttempts) {
+        await new Promise(r => setTimeout(r, 100));
+        regAttempts++;
+      }
+
+      if (regAttempts > 0) {
+        console.log(`[channel-debug] SUBSCRIBE waited ${regAttempts * 100}ms for userBridge registration`);
+      }
+
+      // Check if user is registered with userBridge (cloud users via presence)
+      // This is the preferred path as it uses the existing relay connection
+      // and ensures channel messages flow through the proper callback chain
+      if (userBridge.isUserRegistered(username)) {
+        console.log(`[channel-debug] SUBSCRIBE via userBridge for ${username}`);
+        for (const channel of channelList) {
+          const channelId = channel.startsWith('dm:')
+            ? channel
+            : (channel.startsWith('#') ? channel : `#${channel}`);
+          const joined = await userBridge.joinChannel(username, channelId);
+          if (joined) {
+            joinedChannels.push(channelId);
+          }
+        }
+        console.log(`[channel-debug] SUBSCRIBE success via userBridge: ${username} joined ${joinedChannels.join(', ')}`);
+        return res.json({ success: true, channels: joinedChannels });
+      }
+
+      // Fallback: Use getRelayClient for users not registered with userBridge
+      // This path is used for direct API calls or when presence isn't established
+      console.log(`[channel-debug] SUBSCRIBE via getRelayClient fallback for ${username}`);
+      const client = await getRelayClient(username);
+      if (!client) {
+        console.log(`[channel-debug] SUBSCRIBE failed: could not create relay client for ${username}`);
+        return res.status(503).json({ error: 'Could not connect to daemon' });
+      }
+
+      // Wait for client to be ready
+      let attempts = 0;
+      while (client.state !== 'READY' && attempts < 50) {
+        await new Promise((r) => setTimeout(r, 100));
+        attempts++;
+      }
+
+      if (client.state !== 'READY') {
+        console.log(`[channel-debug] SUBSCRIBE failed: client not ready for ${username}`);
+        return res.status(503).json({ error: 'Relay client not ready' });
+      }
+
+      // Join the user to their channels
+      for (const channel of channelList) {
+        // Don't add '#' prefix to DM channels (they use 'dm:' prefix)
+        const channelId = channel.startsWith('dm:')
+          ? channel
+          : (channel.startsWith('#') ? channel : `#${channel}`);
+        const joined = client.joinChannel(channelId, username);
+        if (joined) {
+          joinedChannels.push(channelId);
+        }
+      }
+
+      console.log(`[channel-debug] SUBSCRIBE success via fallback: ${username} joined ${joinedChannels.join(', ')}`);
+      res.json({ success: true, channels: joinedChannels });
+    } catch (err: any) {
+      console.log(`[channel-debug] SUBSCRIBE error: ${err.message}`);
       res.status(500).json({ error: err.message });
     }
   });
@@ -2341,15 +3311,146 @@ export async function startDashboard(
    * POST /api/channels/message - Send a message to a channel
    */
   app.post('/api/channels/message', express.json(), async (req, res) => {
+    // Build marker - if you don't see this, you're running old code
+    console.log('[channel-msg] === BUILD v4 === Handler called');
+
     const { username, channel, body, thread } = req.body;
+    // DEBUG: Enhanced tracing for DM message routing
+    console.log(`[channel-msg] === MESSAGE TRACE ===`);
+    console.log(`[channel-msg] username=${username}, channel=${channel}`);
+    console.log(`[channel-msg] isDM=${channel?.startsWith('dm:')}, thread=${thread || 'none'}`);
+    console.log(`[channel-msg] body length=${body?.length}, preview: ${body?.substring(0, 100)}...`);
+
     if (!username || !channel || !body) {
+      console.log('[channel-msg] Missing required fields');
       return res.status(400).json({ error: 'username, channel, and body required' });
     }
+
+    const workspaceId = resolveWorkspaceId(req);
+    // Don't add '#' prefix to DM channels (they use 'dm:' prefix)
+    const channelId = channel.startsWith('dm:')
+      ? channel
+      : (channel.startsWith('#') ? channel : `#${channel}`);
+
+    // SIMPLE APPROACH: Always try relay client first for sending
+    // userBridge is only useful for users connected via local WebSocket
+    // For cloud-proxied requests, we need to use relay client directly
+
+    let success = false;
+
+    // Step 1: Check if user is registered with userBridge (local mode)
+    const isLocalUser = userBridge.isUserRegistered(username);
+    console.log(`[channel-msg] Is local user: ${isLocalUser}`);
+
+    if (isLocalUser) {
+      // Local user - use userBridge
+      console.log('[channel-msg] Using userBridge (local user)');
+      success = await userBridge.sendChannelMessage(username, channelId, body, {
+        thread,
+        data: workspaceId ? { _workspaceId: workspaceId } : undefined,
+      });
+      console.log(`[channel-msg] userBridge result: ${success}`);
+    }
+
+    // Step 2: If not local or userBridge failed, use relay client
+    if (!success) {
+      console.log('[channel-msg] Using relay client fallback');
+      try {
+        const client = await getRelayClient(username);
+        console.log(`[channel-msg] Got relay client: ${client ? `state=${client.state}` : 'null'}`);
+
+        if (client && client.state === 'READY') {
+          // Join the channel first (idempotent)
+          const joinResult = client.joinChannel(channelId, username);
+          console.log(`[channel-msg] Join channel result: ${joinResult}`);
+
+          // Send the message
+          success = client.sendChannelMessage(channelId, body, {
+            thread,
+            data: workspaceId ? { _workspaceId: workspaceId } : undefined,
+          });
+          console.log(`[channel-msg] sendChannelMessage result: ${success}`);
+        } else {
+          console.log('[channel-msg] Relay client not ready or null');
+        }
+      } catch (err: any) {
+        console.log(`[channel-msg] Relay client error: ${err.message}`);
+      }
+    }
+
+    console.log(`[channel-msg] Final result: success=${success}`);
+    res.json({ success });
+  });
+
+  /**
+   * POST /api/channels/archive - Mark a channel as archived (persisted in storage)
+   */
+  app.post('/api/channels/archive', express.json(), async (req, res) => {
+    if (!storage) {
+      return res.status(503).json({ error: 'Storage not configured' });
+    }
+    const { channel } = req.body;
+    if (!channel) {
+      return res.status(400).json({ error: 'channel required' });
+    }
+    const workspaceId = resolveWorkspaceId(req);
     try {
-      const success = await userBridge.sendChannelMessage(username, channel, body, { thread });
-      res.json({ success });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      await storage.saveMessage({
+        id: `state-${Date.now()}`,
+        ts: Date.now(),
+        from: '__system__',
+        to: channel,
+        topic: undefined,
+        kind: 'message',
+        body: 'STATE:archived',
+        data: {
+          _channelState: 'archived',
+          ...(workspaceId ? { _workspaceId: workspaceId } : {}),
+        },
+        status: 'read',
+        is_urgent: false,
+        is_broadcast: true,
+      });
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[channels] Failed to archive channel', err);
+      res.status(500).json({ error: 'Failed to archive channel' });
+    }
+  });
+
+  /**
+   * POST /api/channels/unarchive - Mark a channel as active (persisted in storage)
+   */
+  app.post('/api/channels/unarchive', express.json(), async (req, res) => {
+    if (!storage) {
+      return res.status(503).json({ error: 'Storage not configured' });
+    }
+    const { channel } = req.body;
+    if (!channel) {
+      return res.status(400).json({ error: 'channel required' });
+    }
+    const workspaceId = resolveWorkspaceId(req);
+    try {
+      await storage.saveMessage({
+        id: `state-${Date.now()}`,
+        ts: Date.now(),
+        from: '__system__',
+        to: channel,
+        topic: undefined,
+        kind: 'message',
+        body: 'STATE:active',
+        data: {
+          _channelState: 'active',
+          ...(workspaceId ? { _workspaceId: workspaceId } : {}),
+        },
+        status: 'read',
+        is_urgent: false,
+        is_broadcast: true,
+      });
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[channels] Failed to unarchive channel', err);
+      res.status(500).json({ error: 'Failed to unarchive channel' });
     }
   });
 
@@ -2687,6 +3788,42 @@ export async function startDashboard(
     } catch (_error) {
       // File doesn't exist or is invalid
       res.json({ authenticated: false });
+    }
+  });
+
+  /**
+   * POST /api/credentials/apikey - Write API key credential to user's home directory
+   * Used by cloud API to persist API keys to workspace filesystem
+   */
+  app.post('/api/credentials/apikey', express.json(), async (req, res) => {
+    const { userId, provider, apiKey } = req.body;
+
+    if (!userId || typeof userId !== 'string') {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    if (!provider || typeof provider !== 'string') {
+      return res.status(400).json({ error: 'provider is required' });
+    }
+    if (!apiKey || typeof apiKey !== 'string') {
+      return res.status(400).json({ error: 'apiKey is required' });
+    }
+
+    try {
+      // Dynamically import to avoid loading user-directory in all cases
+      const { getUserDirectoryService } = await import('../daemon/user-directory.js');
+      const userDirService = getUserDirectoryService();
+      const credPath = userDirService.writeApiKeyCredential(userId, provider, apiKey);
+
+      console.log(`[credentials] Wrote ${provider} API key for user ${userId} to ${credPath}`);
+
+      res.json({
+        success: true,
+        message: `${provider} API key saved`,
+        path: credPath,
+      });
+    } catch (err) {
+      console.error(`[credentials] Failed to write ${provider} API key for user ${userId}:`, err);
+      res.status(500).json({ error: 'Failed to write credential file' });
     }
   });
 
@@ -3397,6 +4534,18 @@ export async function startDashboard(
     }
   });
 
+  // ===== Agent Status API =====
+
+  /**
+   * GET /api/agents/:name/online - Check if an agent is online
+   * Used by wrappers to wait for spawned agents before sending tasks.
+   */
+  app.get('/api/agents/:name/online', (req, res) => {
+    const { name } = req.params;
+    const online = isAgentOnline(name);
+    res.json({ name, online });
+  });
+
   // ===== Agent Spawn API =====
 
   /**
@@ -3455,6 +4604,15 @@ export async function startDashboard(
       if (result.success) {
         // Broadcast update to WebSocket clients
         broadcastData().catch(() => {});
+        // Broadcast agent_spawned event to activity feed
+        broadcastPresence({
+          type: 'agent_spawned',
+          agent: { name },
+          cli,
+          task,
+          spawnedBy: spawnerName || 'Dashboard',
+          timestamp: new Date().toISOString(),
+        });
       }
 
       res.json(result);
@@ -3524,18 +4682,37 @@ ${projectContext}
 
 ## Cross-Project Messaging
 
-Use this syntax to message agents in specific projects:
+Write a file to your outbox, then output the trigger. Use project:AgentName syntax for cross-project messages:
 
+\`\`\`bash
+# Message specific agent in a project
+cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/msg << 'EOF'
+TO: project-id:AgentName
+
+Your message to this agent.
+EOF
 \`\`\`
-->relay:project-id:AgentName <<<
-Your message to this agent>>>
+Then output: \`->relay-file:msg\`
 
-->relay:project-id:* <<<
-Broadcast to all agents in a project>>>
+\`\`\`bash
+# Broadcast to all agents in a project
+cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/broadcast << 'EOF'
+TO: project-id:*
 
-->relay:*:* <<<
-Broadcast to ALL agents in ALL projects>>>
+Broadcast to all agents in a project.
+EOF
 \`\`\`
+Then output: \`->relay-file:broadcast\`
+
+\`\`\`bash
+# Broadcast to ALL agents in ALL projects
+cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/all << 'EOF'
+TO: *:*
+
+Broadcast to ALL agents in ALL projects.
+EOF
+\`\`\`
+Then output: \`->relay-file:all\`
 
 ## Getting Started
 1. Check in with each project lead to understand current status
@@ -3664,6 +4841,13 @@ Start by greeting the project leads and asking for status updates.`;
 
       if (released) {
         broadcastData().catch(() => {});
+        // Broadcast agent_released event to activity feed
+        broadcastPresence({
+          type: 'agent_released',
+          agent: { name },
+          releasedBy: 'Dashboard',
+          timestamp: new Date().toISOString(),
+        });
       }
 
       res.json({
@@ -4035,7 +5219,7 @@ Start by greeting the project leads and asking for status updates.`;
 
     // Try to send message to agent
     try {
-      const client = await getRelayClient('Dashboard');
+      const client = await getRelayClient('_DashboardUI');
       if (client) {
         await client.sendMessage(agentName, responseMessage, 'message');
       }
@@ -4070,7 +5254,7 @@ Start by greeting the project leads and asking for status updates.`;
     }
 
     try {
-      const client = await getRelayClient('Dashboard');
+      const client = await getRelayClient('_DashboardUI');
       if (client) {
         await client.sendMessage(agentName, responseMessage, 'message');
       }
@@ -4311,7 +5495,7 @@ Start by greeting the project leads and asking for status updates.`;
 
     // Send task to agent via relay
     try {
-      const client = await getRelayClient('Dashboard');
+      const client = await getRelayClient('_DashboardUI');
       if (client) {
         const taskMessage = `TASK ASSIGNED [${priority.toUpperCase()}]: ${title}\n\n${description || 'No additional details.'}`;
         await client.sendMessage(agentName, taskMessage, 'message');
@@ -4368,7 +5552,7 @@ Start by greeting the project leads and asking for status updates.`;
     // Notify agent of cancellation if task is still active
     if (task.status === 'pending' || task.status === 'assigned' || task.status === 'in_progress') {
       try {
-        const client = await getRelayClient('Dashboard');
+        const client = await getRelayClient('_DashboardUI');
         if (client) {
           await client.sendMessage(task.agentName, `TASK CANCELLED: ${task.title}`, 'message');
         }
@@ -4455,7 +5639,7 @@ Start by greeting the project leads and asking for status updates.`;
     }
 
     try {
-      const client = await getRelayClient('Dashboard');
+      const client = await getRelayClient('_DashboardUI');
       if (!client) {
         return res.status(503).json({
           success: false,
@@ -4564,7 +5748,7 @@ Start by greeting the project leads and asking for status updates.`;
 
   return new Promise((resolve, reject) => {
     server.listen(availablePort, async () => {
-      console.log(`Dashboard running at http://localhost:${availablePort}`);
+      console.log(`Dashboard running at http://localhost:${availablePort} (build: cloud-channels-v2)`);
       console.log(`Monitoring: ${dataDir}`);
 
       // Set the dashboard port on spawner so spawned agents can use the API for nested spawns

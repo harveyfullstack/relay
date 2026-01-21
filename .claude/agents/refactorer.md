@@ -1,7 +1,7 @@
 ---
 name: refactorer
 description: Code refactoring and tech debt reduction. Use for improving code structure, extracting abstractions, reducing duplication, and improving maintainability without changing behavior.
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash, WebSearch, WebFetch
+tools: Read, Write, Edit, Grep, Glob, Bash, WebSearch, WebFetch
 skills: using-agent-relay
 ---
 
@@ -84,31 +84,41 @@ You are an expert at code refactoring and technical debt reduction. You improve 
 ## Communication
 
 ### Starting Work
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/starting << 'EOF'
+TO: Lead
+
 **REFACTOR:** Starting [area/component]
 
 **Goal:** [What improvement]
 **Reason:** [Why this matters]
 **Scope:** [What will be touched]
-**Risk:** [Low/Medium/High]>>>
+**Risk:** [Low/Medium/High]
+EOF
 ```
+Then: `->relay-file:starting`
 
 ### Progress Update
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/status << 'EOF'
+TO: Lead
+
 **REFACTOR STATUS:** [Area]
 
 **Completed:**
 - [Changes made]
 
 **Tests:** [Passing/Updated]
-**Next:** [Remaining steps]>>>
+**Next:** [Remaining steps]
+EOF
 ```
+Then: `->relay-file:status`
 
 ### Completion
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/done << 'EOF'
+TO: Lead
+
 **REFACTOR DONE:** [Area/component]
 
 **Improvement:** [What's better now]
@@ -116,12 +126,16 @@ You are an expert at code refactoring and technical debt reduction. You improve 
 - [List of changes]
 
 **Files:** [Modified files]
-**Tests:** [Test status]>>>
+**Tests:** [Test status]
+EOF
 ```
+Then: `->relay-file:done`
 
 ### Scope Question
-```
-->relay:Lead <<<
+```bash
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/question << 'EOF'
+TO: Lead
+
 **REFACTOR SCOPE:** [Question]
 
 **Found:** [Additional tech debt discovered]
@@ -129,5 +143,7 @@ You are an expert at code refactoring and technical debt reduction. You improve 
 1. [Fix now - impact]
 2. [Defer - risk]
 
-**Recommendation:** [What you suggest]>>>
+**Recommendation:** [What you suggest]
+EOF
 ```
+Then: `->relay-file:question`

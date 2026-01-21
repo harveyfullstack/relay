@@ -1,8 +1,8 @@
 # Trajectory: Investigate agent-relay codex-auth tunnel failure
 
 > **Status:** ❌ Abandoned
-> **Started:** January 10, 2026 at 05:02 AM
-> **Completed:** January 21, 2026 at 01:10 PM
+> **Started:** January 10, 2026 at 01:02 AM
+> **Completed:** January 10, 2026 at 10:13 PM
 
 ---
 
@@ -20,4 +20,4 @@
 *Agent: default*
 
 - Switched workspace SSH tunnel port to 3022: Switched workspace SSH tunnel port to 3022
-- Abandoned: Stale trajectory from 11 days ago, starting fresh for SDK work
+- Abandoned: Stale trajectory from previous session - starting new work on channels unification

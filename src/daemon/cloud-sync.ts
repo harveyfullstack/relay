@@ -65,8 +65,9 @@ export class CloudSyncService extends EventEmitter {
   private config: CloudSyncConfig;
   private heartbeatTimer?: NodeJS.Timeout;
   private machineId: string;
-  private localAgents: Map<string, { name: string; status: string }> = new Map();
+  private localAgents: Map<string, { name: string; status: string; isHuman?: boolean; avatarUrl?: string }> = new Map();
   private remoteAgents: RemoteAgent[] = [];
+  private remoteUsers: RemoteAgent[] = [];
   private connected = false;
   private storage: StorageAdapter | null = null;
   private lastMessageSyncTs: number = 0;
@@ -193,7 +194,7 @@ export class CloudSyncService extends EventEmitter {
   /**
    * Update local agent list (called by daemon when agents change)
    */
-  updateAgents(agents: Array<{ name: string; status: string }>): void {
+  updateAgents(agents: Array<{ name: string; status: string; isHuman?: boolean; avatarUrl?: string }>): void {
     this.localAgents.clear();
     for (const agent of agents) {
       this.localAgents.set(agent.name, agent);
@@ -257,6 +258,8 @@ export class CloudSyncService extends EventEmitter {
       const agents = Array.from(this.localAgents.entries()).map(([name, info]) => ({
         name,
         status: info.status,
+        isHuman: info.isHuman,
+        avatarUrl: info.avatarUrl,
       }));
 
       const response = await fetch(`${this.config.cloudUrl}/api/daemons/heartbeat`, {
@@ -311,6 +314,8 @@ export class CloudSyncService extends EventEmitter {
     const agents = Array.from(this.localAgents.entries()).map(([name, info]) => ({
       name,
       status: info.status,
+      isHuman: info.isHuman,
+      avatarUrl: info.avatarUrl,
     }));
 
     const response = await fetch(`${this.config.cloudUrl}/api/daemons/agents`, {
@@ -326,7 +331,7 @@ export class CloudSyncService extends EventEmitter {
       throw new Error(`Agent sync failed: ${response.status}`);
     }
 
-    const data = await response.json() as { allAgents: RemoteAgent[] };
+    const data = await response.json() as { allAgents: RemoteAgent[]; allUsers?: RemoteAgent[] };
 
     // Filter out our own agents
     this.remoteAgents = data.allAgents.filter(
@@ -335,6 +340,17 @@ export class CloudSyncService extends EventEmitter {
 
     if (this.remoteAgents.length > 0) {
       this.emit('remote-agents-updated', this.remoteAgents);
+    }
+
+    // Handle remote users (humans connected via cloud dashboard)
+    if (data.allUsers) {
+      this.remoteUsers = data.allUsers.filter(
+        (u) => !this.localAgents.has(u.name)
+      );
+
+      if (this.remoteUsers.length > 0) {
+        this.emit('remote-users-updated', this.remoteUsers);
+      }
     }
   }
 

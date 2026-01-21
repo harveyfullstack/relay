@@ -86,12 +86,11 @@ describe('SDK Public API Contract', () => {
       expect(typeof client.subscribe).toBe('function');
       expect(typeof client.unsubscribe).toBe('function');
 
-      // Agent spawning (for orchestrators)
-      expect(typeof client.spawn).toBe('function');
-      expect(typeof client.release).toBe('function');
-
       // Logging
       expect(typeof client.sendLog).toBe('function');
+
+      // TODO: spawn/release methods will be added as part of daemon-spawning work
+      // See: docs/SDK-MIGRATION-PLAN.md
     });
 
     it('has all expected instance properties', async () => {
@@ -230,21 +229,6 @@ describe('SDK Public API Contract', () => {
     });
   });
 
-  describe('Spawn/Release contract', () => {
-    it('spawn rejects when not connected', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
-      const client = new RelayClient({});
-
-      await expect(
-        client.spawn({ name: 'Worker', cli: 'claude', task: 'test' })
-      ).rejects.toThrow('Client not ready');
-    });
-
-    it('release rejects when not connected', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
-      const client = new RelayClient({});
-
-      await expect(client.release('Worker')).rejects.toThrow('Client not ready');
-    });
-  });
+  // TODO: Spawn/Release contract tests will be added when daemon-spawning is implemented
+  // See: docs/SDK-MIGRATION-PLAN.md for planned implementation
 });

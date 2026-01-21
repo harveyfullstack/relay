@@ -26,6 +26,7 @@ export interface Agent {
   isStuck?: boolean; // True when agent received message but hasn't responded within threshold
   isHuman?: boolean; // True if this is a human user, not an AI agent
   avatarUrl?: string; // Avatar URL for human users
+  authRevoked?: boolean; // True if agent's authentication has been revoked (needs re-login)
   // Local daemon agent fields
   isLocal?: boolean; // True if agent is from a linked local daemon
   daemonName?: string; // Name of the linked daemon
@@ -266,4 +267,33 @@ export interface SpawnAgentResponse {
   success: boolean;
   name: string;
   error?: string;
+}
+
+// Activity Feed Types
+export type ActivityEventType =
+  | 'agent_spawned'
+  | 'agent_released'
+  | 'agent_online'
+  | 'agent_offline'
+  | 'user_joined'
+  | 'user_left'
+  | 'broadcast'
+  | 'error';
+
+export interface ActivityEvent {
+  id: string;
+  type: ActivityEventType;
+  timestamp: string;
+  /** Actor who triggered the event (user or agent name) */
+  actor: string;
+  /** Optional avatar URL for the actor */
+  actorAvatarUrl?: string;
+  /** Whether actor is a user or agent */
+  actorType: 'user' | 'agent' | 'system';
+  /** Event title for display */
+  title: string;
+  /** Optional detailed description */
+  description?: string;
+  /** Optional metadata (e.g., task for spawns, cli type, etc.) */
+  metadata?: Record<string, unknown>;
 }
