@@ -4,8 +4,12 @@ node_modules/
 # Build output
 dist/
 
-# Bundled tmux binary (downloaded at install time)
+# Bundled binaries (downloaded/built at install time)
 bin/tmux
+bin/relay-pty
+
+# Rust build artifacts (relay-pty)
+relay-pty/target/
 
 # TypeScript build info (if enabled later)
 *.tsbuildinfo
