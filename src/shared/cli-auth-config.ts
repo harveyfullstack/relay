@@ -199,13 +199,28 @@ export const CLI_AUTH_CONFIG: Record<string, CLIAuthConfig> = {
     waitTimeout: 30000,
     prompts: [
       {
-        pattern: /login\s*with\s*google|google\s*account|choose.*auth/i,
-        response: '\r', // Select first option (Login with Google)
+        // Auth method selection - select first option (Login with Google for OAuth)
+        pattern: /login\s*with\s*google|google\s*account|choose.*auth|how\s*would\s*you\s*like\s*to\s*authenticate/i,
+        response: '\r',
         delay: 200,
         description: 'Auth method selection',
       },
+      {
+        // API key detected - press Enter to confirm/continue
+        pattern: /press\s*enter|enter\s*to\s*(confirm|continue|proceed)|using.*api.*key|api.*key.*detected/i,
+        response: '\r',
+        delay: 300,
+        description: 'API key confirmation',
+      },
+      {
+        // Accept terms/privacy notice
+        pattern: /terms\s*of\s*service|privacy\s*notice|accept|agree/i,
+        response: '\r',
+        delay: 200,
+        description: 'Terms acceptance',
+      },
     ],
-    successPatterns: [/success/i, /authenticated/i, /logged\s*in/i],
+    successPatterns: [/success/i, /authenticated/i, /logged\s*in/i, /ready/i],
   },
   opencode: {
     command: 'opencode',

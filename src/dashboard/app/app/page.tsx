@@ -47,6 +47,7 @@ interface ProvisioningInfo {
 const AI_PROVIDERS: ProviderInfo[] = [
   { id: 'anthropic', name: 'Anthropic', displayName: 'Claude', color: '#D97757', cliCommand: 'claude' },
   { id: 'codex', name: 'OpenAI', displayName: 'Codex', color: '#10A37F', cliCommand: 'codex login', supportsDeviceFlow: true, requiresUrlCopy: true },
+  { id: 'google', name: 'Google', displayName: 'Gemini', color: '#4285F4', cliCommand: 'gemini' },
   { id: 'opencode', name: 'OpenCode', displayName: 'OpenCode', color: '#00D4AA', cliCommand: 'opencode' },
   { id: 'droid', name: 'Factory', displayName: 'Droid', color: '#6366F1', cliCommand: 'droid' },
   { id: 'cursor', name: 'Cursor', displayName: 'Cursor', color: '#7C3AED', cliCommand: 'agent' },

@@ -505,6 +505,12 @@ export class AgentSpawner {
         args.push('--dangerously-bypass-approvals-and-sandbox');
       }
 
+      // Add --yolo for Gemini agents (auto-accept all prompts)
+      const isGeminiCli = commandName === 'gemini';
+      if (isGeminiCli && !args.includes('--yolo')) {
+        args.push('--yolo');
+      }
+
       // Inject relay protocol instructions via CLI-specific system prompt
       let relayInstructions = getRelayInstructions(name);
 
