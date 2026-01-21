@@ -21,6 +21,11 @@ import {
   type LogPayload,
   type SpeakOnTrigger,
   type EntityType,
+  type ChannelMessagePayload,
+  type ChannelJoinEnvelope,
+  type ChannelLeaveEnvelope,
+  type ChannelMessageEnvelope,
+  type MessageAttachment,
   PROTOCOL_VERSION,
 } from './protocol/types.js';
 import { encodeFrameLegacy, FrameParser } from './protocol/framing.js';
@@ -150,6 +155,10 @@ export class RelayClient {
 
   // Event handlers
   onMessage?: (from: string, payload: SendPayload, messageId: string, meta?: SendMeta, originalTo?: string) => void;
+  /**
+   * Callback for channel messages.
+   */
+  onChannelMessage?: (from: string, channel: string, body: string, envelope: Envelope<ChannelMessagePayload>) => void;
   onStateChange?: (state: ClientState) => void;
   onError?: (error: Error) => void;
 
@@ -470,6 +479,142 @@ export class RelayClient {
     return this.send(envelope);
   }
 
+  // =============================================================================
+  // Channel Operations
+  // =============================================================================
+
+  /**
+   * Join a channel.
+   * @param channel - Channel name (e.g., '#general', 'dm:alice:bob')
+   * @param displayName - Optional display name for this member
+   */
+  joinChannel(channel: string, displayName?: string): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: ChannelJoinEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_JOIN',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        displayName,
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Admin join: Add any member to a channel (does not require member to be connected).
+   * @param channel - Channel name
+   * @param member - Name of the member to add
+   */
+  adminJoinChannel(channel: string, member: string): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: ChannelJoinEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_JOIN',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        member,
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Leave a channel.
+   * @param channel - Channel name to leave
+   * @param reason - Optional reason for leaving
+   */
+  leaveChannel(channel: string, reason?: string): boolean {
+    if (this._state !== 'READY') return false;
+
+    const envelope: ChannelLeaveEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_LEAVE',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        reason,
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Admin remove: Remove any member from a channel.
+   * @param channel - Channel name
+   * @param member - Name of the member to remove
+   */
+  adminRemoveMember(channel: string, member: string): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: ChannelLeaveEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_LEAVE',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        member,
+      },
+    };
+
+    return this.send(envelope);
+  }
+
+  /**
+   * Send a message to a channel.
+   * @param channel - Channel name
+   * @param body - Message content
+   * @param options - Optional thread, mentions, attachments
+   */
+  sendChannelMessage(
+    channel: string,
+    body: string,
+    options?: {
+      thread?: string;
+      mentions?: string[];
+      attachments?: MessageAttachment[];
+      data?: Record<string, unknown>;
+    }
+  ): boolean {
+    if (this._state !== 'READY') {
+      return false;
+    }
+
+    const envelope: ChannelMessageEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'CHANNEL_MESSAGE',
+      id: generateId(),
+      ts: Date.now(),
+      payload: {
+        channel,
+        body,
+        thread: options?.thread,
+        mentions: options?.mentions,
+        attachments: options?.attachments,
+        data: options?.data,
+      },
+    };
+
+    return this.send(envelope);
+  }
+
   // Private methods
 
   private setState(state: ClientState): void {
@@ -559,6 +704,10 @@ export class RelayClient {
         this.handleDeliver(envelope as DeliverEnvelope);
         break;
 
+      case 'CHANNEL_MESSAGE':
+        this.handleChannelMessage(envelope as Envelope<ChannelMessagePayload> & { from?: string });
+        break;
+
       case 'PING':
         this.handlePing(envelope);
         break;
@@ -616,6 +765,38 @@ export class RelayClient {
         envelope.payload_meta,
         envelope.delivery.originalTo
       );
+    }
+  }
+
+  private handleChannelMessage(envelope: Envelope<ChannelMessagePayload> & { from?: string }): void {
+    const duplicate = this.dedupeCache.check(envelope.id);
+    if (duplicate) {
+      return;
+    }
+
+    // Notify channel message handler
+    if (this.onChannelMessage && envelope.from) {
+      this.onChannelMessage(
+        envelope.from,
+        envelope.payload.channel,
+        envelope.payload.body,
+        envelope as Envelope<ChannelMessagePayload>
+      );
+    }
+
+    // Also call onMessage for backwards compatibility
+    if (this.onMessage && envelope.from) {
+      const sendPayload: SendPayload = {
+        kind: 'message',
+        body: envelope.payload.body,
+        data: {
+          _isChannelMessage: true,
+          _channel: envelope.payload.channel,
+          _mentions: envelope.payload.mentions,
+        },
+        thread: envelope.payload.thread,
+      };
+      this.onMessage(envelope.from, sendPayload, envelope.id, undefined, envelope.payload.channel);
     }
   }
 

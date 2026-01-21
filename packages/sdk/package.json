@@ -26,6 +26,8 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -53,6 +55,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0"
   }
 }
