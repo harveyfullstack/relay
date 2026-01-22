@@ -6,7 +6,7 @@ import path from 'node:path';
 const execAsync = promisify(exec);
 
 // Path to the compiled CLI
-const CLI_PATH = path.resolve(__dirname, '../../dist/cli/index.js');
+const CLI_PATH = path.resolve(__dirname, '../../dist/src/cli/index.js');
 
 // Helper to run CLI commands
 async function runCli(args: string): Promise<{ stdout: string; stderr: string; code: number }> {
