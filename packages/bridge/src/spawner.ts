@@ -848,16 +848,48 @@ export class AgentSpawner {
       }
 
       // Send task to the newly spawned agent if provided
-      // We do this AFTER registration AND after the orchestrator is ready to receive messages
+      // We do this AFTER registration AND after the orchestrator is FULLY ready for messages
+      // This includes: CLI started, CLI idle, socket connected, readyForMessages flag set
       if (task && task.trim()) {
-        try {
-          if ('waitUntilCliReady' in pty) {
-            await (pty as RelayPtyOrchestrator).waitUntilCliReady(15000, 100);
+        const maxRetries = 3;
+        const retryDelayMs = 2000;
+        let taskSent = false;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            // Wait for full orchestrator readiness (CLI + socket + internal flags)
+            if ('waitUntilReadyForMessages' in pty) {
+              const orchestrator = pty as RelayPtyOrchestrator;
+              const ready = await orchestrator.waitUntilReadyForMessages(20000, 100);
+              if (!ready) {
+                console.warn(`[spawner] Attempt ${attempt}/${maxRetries}: ${name} not ready for messages within timeout`);
+                if (attempt < maxRetries) {
+                  await sleep(retryDelayMs);
+                  continue;
+                }
+                console.error(`[spawner] ${name} failed to become ready after ${maxRetries} attempts - task may be lost`);
+                break;
+              }
+            } else if ('waitUntilCliReady' in pty) {
+              // Fallback for older wrapper types
+              await (pty as RelayPtyOrchestrator).waitUntilCliReady(15000, 100);
+            }
+
+            // Write task to stdin
+            await pty.write(task + '\n');
+            taskSent = true;
+            if (debug) console.log(`[spawner:debug] Task injected to ${name} via PTY (attempt ${attempt})`);
+            break;
+          } catch (err: any) {
+            console.error(`[spawner] Attempt ${attempt}/${maxRetries}: Error injecting task for ${name}: ${err.message}`);
+            if (attempt < maxRetries) {
+              await sleep(retryDelayMs);
+            }
           }
-          pty.write(task + '\n');
-          if (debug) console.log(`[spawner:debug] Task injected to ${name} via PTY`);
-        } catch (err: any) {
-          console.error(`[spawner] Error injecting task for ${name}:`, err.message);
+        }
+
+        if (!taskSent) {
+          console.error(`[spawner] CRITICAL: Failed to deliver task to ${name} after ${maxRetries} attempts`);
         }
       }
 
