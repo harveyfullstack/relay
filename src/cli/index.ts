@@ -20,7 +20,7 @@ import { RelayClient } from '../wrapper/client.js';
 import { RelayPtyOrchestrator } from '../wrapper/relay-pty-orchestrator.js';
 import { AgentSpawner } from '../bridge/spawner.js';
 import { generateAgentName } from '../utils/name-generator.js';
-import { getTmuxPath } from '../utils/tmux-resolver.js';
+import { getTmuxPath } from '@agent-relay/wrapper';
 import { readWorkersMetadata, getWorkerLogsDir } from '../bridge/spawner.js';
 import type { SpawnRequest, SpawnResult } from '../bridge/types.js';
 import { getShadowForAgent } from '../bridge/shadow-config.js';

@@ -28,7 +28,7 @@
  * ```
  */
 
-import { generateId } from '../utils/id-generator.js';
+import { generateId } from '@agent-relay/wrapper';
 import {
   ConsensusEngine,
   createConsensusEngine,

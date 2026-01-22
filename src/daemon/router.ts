@@ -3,7 +3,7 @@
  * Handles routing messages between agents, topic subscriptions, and broadcast.
  */
 
-import { generateId } from '../utils/id-generator.js';
+import { generateId } from '@agent-relay/wrapper';
 import {
   type Envelope,
   type SendEnvelope,

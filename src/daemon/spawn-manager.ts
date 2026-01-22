@@ -4,7 +4,7 @@
  * Owns the AgentSpawner instance and handles SPAWN/RELEASE protocol messages.
  */
 
-import { generateId } from '../utils/id-generator.js';
+import { generateId } from '@agent-relay/wrapper';
 import {
   type Envelope,
   type SpawnPayload,

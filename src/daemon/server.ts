@@ -26,7 +26,7 @@ import { getProjectPaths } from '../utils/project-namespace.js';
 import { AgentRegistry } from './agent-registry.js';
 import { daemonLog as log } from '../utils/logger.js';
 import { getCloudSync, type CloudSyncService, type RemoteAgent, type CrossMachineMessage } from './cloud-sync.js';
-import { generateId } from '../utils/id-generator.js';
+import { generateId } from '@agent-relay/wrapper';
 import {
   ConsensusIntegration,
   createConsensusIntegration,

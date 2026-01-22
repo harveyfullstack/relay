@@ -15,7 +15,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { gzip } from 'node:zlib';
 import { promisify } from 'node:util';
-import { generateId } from '../utils/id-generator.js';
+import { generateId } from '@agent-relay/wrapper';
 import { createLogger } from '../utils/logger.js';
 import type { StoredMessage } from '@relay/storage/adapter';
 
