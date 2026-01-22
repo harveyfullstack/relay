@@ -38,7 +38,17 @@
       "@relay/memory": ["packages/memory/src/index.ts"],
       "@relay/memory/*": ["packages/memory/src/*"],
       "@relay/utils": ["packages/utils/src/index.ts"],
-      "@relay/utils/*": ["packages/utils/src/*"]
+      "@relay/utils/*": ["packages/utils/src/*"],
+      "@relay/resiliency": ["packages/resiliency/src/index.ts"],
+      "@relay/resiliency/*": ["packages/resiliency/src/*"],
+      "@relay/user-directory": ["packages/user-directory/src/index.ts"],
+      "@relay/user-directory/*": ["packages/user-directory/src/*"],
+      "@relay/cloud": ["packages/cloud/src/index.ts"],
+      "@relay/cloud/*": ["packages/cloud/src/*"],
+      "@relay/daemon": ["packages/daemon/src/index.ts"],
+      "@relay/daemon/*": ["packages/daemon/src/*"],
+      "@agent-relay/wrapper": ["packages/wrapper/src/index.ts"],
+      "@agent-relay/wrapper/*": ["packages/wrapper/src/*"]
     }
   },
   "include": ["src/**/*"],
