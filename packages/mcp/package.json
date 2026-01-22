@@ -5,6 +5,19 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "agent-relay-mcp": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./install": {
+      "types": "./dist/install.d.ts",
+      "import": "./dist/install.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -18,5 +31,9 @@
     "@types/node": "^22.19.3",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
+  },
+  "keywords": ["mcp", "agent-relay", "ai-agents", "claude", "cursor", "vscode"],
+  "publishConfig": {
+    "access": "public"
   }
 }

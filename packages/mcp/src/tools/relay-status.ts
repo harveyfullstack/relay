@@ -8,13 +8,7 @@ export type RelayStatusInput = z.infer<typeof relayStatusSchema>;
 
 export const relayStatusTool: Tool = {
   name: 'relay_status',
-  description: `Get relay connection status and diagnostics.
-
-Returns:
-- Connection state (connected/disconnected)
-- Your agent name
-- Project/socket info
-- Daemon version`,
+  description: `Show connection and daemon status for Agent Relay.`,
   inputSchema: {
     type: 'object',
     properties: {},
@@ -23,19 +17,41 @@ Returns:
 };
 
 /**
- * Return a human-readable relay status summary.
+ * Retrieve relay daemon status and format a human-readable summary.
  */
 export async function handleRelayStatus(
   client: RelayClient,
   _input: RelayStatusInput
 ): Promise<string> {
   const status = await client.getStatus();
+  const connected = status.connected ? 'Yes' : 'No';
 
-  return `Relay Status:
-- Connected: ${status.connected ? 'Yes' : 'No'}
-- Agent Name: ${status.agentName || 'Not registered'}
-- Project: ${status.project || 'Unknown'}
-- Socket: ${status.socketPath}
-- Daemon Version: ${status.daemonVersion || 'Unknown'}
-- Uptime: ${status.uptime || 'N/A'}`;
+  let agentCount: string | number = 'unknown';
+  if (typeof (client as any).listAgents === 'function') {
+    try {
+      const agents = await (client as any).listAgents({});
+      agentCount = Array.isArray(agents) ? agents.length : 'unknown';
+    } catch {
+      agentCount = 'unknown';
+    }
+  }
+
+  const lines = [
+    `Connected: ${connected}`,
+    `Agent Name: ${status.agentName}`,
+    `Project: ${status.project}`,
+    `Socket: ${status.socketPath}`,
+  ];
+
+  if (status.daemonVersion) {
+    lines.push(`Daemon Version: ${status.daemonVersion}`);
+  }
+
+  if (status.uptime) {
+    lines.push(`Uptime: ${status.uptime}`);
+  }
+
+  lines.push(`Agent Count: ${agentCount}`);
+
+  return lines.join('\n');
 }
