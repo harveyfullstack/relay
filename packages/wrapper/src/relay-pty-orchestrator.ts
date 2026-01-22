@@ -505,9 +505,9 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       return this.config.relayPtyPath;
     }
 
-    // Get the project root (four levels up from packages/wrapper/dist/)
+    // Get the project root (three levels up from packages/wrapper/dist/)
     // packages/wrapper/dist/ -> packages/wrapper -> packages -> project root
-    const projectRoot = join(__dirname, '..', '..', '..', '..');
+    const projectRoot = join(__dirname, '..', '..', '..');
 
     // Check common locations (ordered by priority)
     const candidates = [
