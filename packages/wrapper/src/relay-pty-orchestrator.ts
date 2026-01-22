@@ -1855,6 +1855,15 @@ Then output: \`->relay-file:spawn\`
     const startTime = Date.now();
     this.log(` Waiting for CLI to be ready (timeout: ${timeoutMs}ms)`);
 
+    // In interactive mode, stdout is inherited (not captured), so hasReceivedOutput
+    // will never be set. Trust that the process is ready if it's running.
+    if (this.isInteractive) {
+      this.log(` Interactive mode - trusting process is ready`);
+      // Give a brief moment for the CLI to initialize
+      await sleep(500);
+      return this.running;
+    }
+
     // Phase 1: Wait for first output (CLI has started)
     while (Date.now() - startTime < timeoutMs) {
       if (this.hasReceivedOutput) {
@@ -1888,8 +1897,13 @@ Then output: \`->relay-file:spawn\`
   /**
    * Check if the CLI has produced any output yet.
    * Useful for checking if the CLI has started without blocking.
+   * In interactive mode, returns true if process is running (output isn't captured).
    */
   hasCliStarted(): boolean {
+    // In interactive mode, stdout isn't captured so hasReceivedOutput is never set
+    if (this.isInteractive) {
+      return this.running;
+    }
     return this.hasReceivedOutput;
   }
 
