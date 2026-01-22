@@ -25,7 +25,7 @@ import {
   stripAnsiCodes,
   matchesSuccessPattern,
   findMatchingPrompt,
-} from '../../src/cloud/api/onboarding.js';
+} from '../../packages/cloud/src/api/onboarding.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

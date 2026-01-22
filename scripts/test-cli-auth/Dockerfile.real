@@ -68,12 +68,13 @@ ENV PATH="/app/bin:/home/testuser/.local/bin:$PATH"
 
 # Copy test files and source dependencies
 # Context is repo root, so paths are relative to that
-COPY --chown=testuser:testuser scripts/test-cli-auth/ci-test-real-clis.ts /app/
-COPY --chown=testuser:testuser scripts/test-cli-auth/package.json /app/
+# Maintain the same directory structure as the source repo so relative imports work
+COPY --chown=testuser:testuser scripts/test-cli-auth/ci-test-real-clis.ts /app/scripts/test-cli-auth/
+COPY --chown=testuser:testuser scripts/test-cli-auth/package.json /app/scripts/test-cli-auth/
 
 # Copy source modules from packages (after package extraction)
 # cli-pty-runner.ts imports from '@agent-relay/config/cli-auth-config'
-COPY --chown=testuser:testuser packages/cloud/src/api/cli-pty-runner.ts /app/src/cloud/api/
+COPY --chown=testuser:testuser packages/cloud/src/api/cli-pty-runner.ts /app/packages/cloud/src/api/
 
 # Set up @agent-relay/config package for the import to work
 # tsx can handle .ts files, so we copy source directly and set up proper exports
@@ -83,8 +84,8 @@ COPY --chown=testuser:testuser packages/config/src/ /app/node_modules/@agent-rel
 # Create dist symlink so subpath exports work (package.json points to dist/)
 RUN cd /app/node_modules/@agent-relay/config && ln -s src dist
 
-# Install test dependencies
-RUN npm install
+# Install test dependencies (from scripts/test-cli-auth directory)
+RUN cd /app/scripts/test-cli-auth && npm install
 
 # Verify relay-pty is available
 RUN echo "=== Checking relay-pty ===" && \
@@ -98,5 +99,8 @@ RUN echo "=== Installed CLIs ===" && \
     (which opencode && opencode --version 2>&1 | head -1) || echo "opencode: not found" && \
     (which droid && droid --version 2>&1 | head -1) || echo "droid: not found"
 
+# Set working directory to where the test script is (so npm/npx can find local node_modules)
+WORKDIR /app/scripts/test-cli-auth
+
 # Default command runs the CI tests
-CMD ["npx", "tsx", "/app/ci-test-real-clis.ts"]
+CMD ["npx", "tsx", "ci-test-real-clis.ts"]
