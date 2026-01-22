@@ -3,8 +3,8 @@
   "version": "1.6.0",
   "description": "Real-time agent-to-agent communication system",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "bin": {
     "agent-relay": "dist/src/cli/index.js"
   },
