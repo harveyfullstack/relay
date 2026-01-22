@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-22T14:01:19.896Z",
+  "lastUpdated": "2026-01-22T14:11:03.027Z",
   "trajectories": {
     "traj_ddtj404on2bq": {
       "title": "@relay/api-types extraction",
@@ -99,6 +99,13 @@
       "startedAt": "2026-01-22T14:00:41.663Z",
       "completedAt": "2026-01-22T14:01:19.870Z",
       "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_qk8r7suia1lm.json"
+    },
+    "traj_tiz8yftg1fmu": {
+      "title": "Fix relay-pty binary path resolution after package extraction",
+      "status": "completed",
+      "startedAt": "2026-01-22T14:11:02.603Z",
+      "completedAt": "2026-01-22T14:11:03.016Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_tiz8yftg1fmu.json"
     }
   }
 }
