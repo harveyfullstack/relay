@@ -17,7 +17,7 @@ import { gzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import { generateId } from '../utils/id-generator.js';
 import { createLogger } from '../utils/logger.js';
-import type { StoredMessage } from '/storage/adapter';
+import type { StoredMessage } from '@relay/storage/adapter';
 
 const gzipAsync = promisify(gzip);
 const log = createLogger('sync-queue');

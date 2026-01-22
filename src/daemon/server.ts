@@ -20,8 +20,8 @@ import {
   type ErrorPayload,
 } from '@relay/protocol/types';
 import type { ChannelJoinPayload, ChannelLeavePayload, ChannelMessagePayload } from '@relay/protocol/channels';
-import { createStorageAdapter, type StorageAdapter, type StorageConfig } from '/storage/adapter';
-import { SqliteStorageAdapter } from '/storage/sqlite-adapter';
+import { createStorageAdapter, type StorageAdapter, type StorageConfig } from '@relay/storage/adapter';
+import { SqliteStorageAdapter } from '@relay/storage/sqlite-adapter';
 import { getProjectPaths } from '../utils/project-namespace.js';
 import { AgentRegistry } from './agent-registry.js';
 import { daemonLog as log } from '../utils/logger.js';

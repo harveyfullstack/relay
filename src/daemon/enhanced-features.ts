@@ -43,7 +43,7 @@ import {
   type DLQConfig,
   type DeadLetter,
   type DLQStats,
-} from '/storage/dlq-adapter';
+} from '@relay/storage/dlq-adapter';
 
 import {
   ContextCompactor,

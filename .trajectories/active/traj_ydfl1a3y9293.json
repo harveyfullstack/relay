@@ -71,6 +71,18 @@
             "reasoning": "Keep last N messages and output chunks to bound memory usage while preserving enough context for recovery. Prevents unbounded growth in long-running agents."
           },
           "significance": "high"
+        },
+        {
+          "ts": 1769071751422,
+          "type": "decision",
+          "content": "Add protocol monitoring to orchestrator that watches outbox for common mistakes: Add protocol monitoring to orchestrator that watches outbox for common mistakes",
+          "raw": {
+            "question": "Add protocol monitoring to orchestrator that watches outbox for common mistakes",
+            "chosen": "Add protocol monitoring to orchestrator that watches outbox for common mistakes",
+            "alternatives": [],
+            "reasoning": "Agents sometimes have empty AGENT_RELAY_NAME or write files to wrong paths. Orchestrator now watches /tmp/relay-outbox/ and injects helpful reminders when issues are detected. Uses fs.watch with cooldown to avoid spam."
+          },
+          "significance": "high"
         }
       ]
     }

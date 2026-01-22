@@ -15,7 +15,7 @@ export {
   type MessageQuery,
   type StorageAdapter,
   type StorageConfig,
-} from './storage/adapter.js';
+} from '@relay/storage/adapter';
 
 // Memory types and adapters for external consumers
 export {
@@ -53,4 +53,4 @@ export {
   InMemoryDLQAdapter,
   createDLQAdapter,
   DEFAULT_DLQ_CONFIG,
-} from './storage/dlq-adapter.js';
+} from '.@relay/storage/dlq-adapter.js';

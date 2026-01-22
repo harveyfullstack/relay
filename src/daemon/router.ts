@@ -19,7 +19,7 @@ import type {
   ChannelLeavePayload,
   ChannelMessagePayload,
 } from '@relay/protocol/channels';
-import type { StorageAdapter } from '/storage/adapter';
+import type { StorageAdapter } from '@relay/storage/adapter';
 import type { AgentRegistry } from './agent-registry.js';
 import { routerLog } from '../utils/logger.js';
 import { RateLimiter, NoOpRateLimiter, type RateLimitConfig } from './rate-limiter.js';

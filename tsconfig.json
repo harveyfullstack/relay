@@ -20,7 +20,9 @@
       "@relay/protocol": ["packages/protocol/src/index.ts"],
       "@relay/protocol/*": ["packages/protocol/src/*"],
       "@relay/config": ["packages/config/src/index.ts"],
-      "@relay/config/*": ["packages/config/src/*"]
+      "@relay/config/*": ["packages/config/src/*"],
+      "@relay/storage": ["packages/storage/src/index.ts"],
+      "@relay/storage/*": ["packages/storage/src/*"]
     }
   },
   "include": ["src/**/*"],

@@ -19,7 +19,7 @@
 
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { generateId } from '../utils/id-generator.js';
+import { generateId } from '@agent-relay/wrapper';
 // Import types from SDK (re-exported via protocol for compatibility)
 import {
   type Envelope,
@@ -45,7 +45,7 @@ import type {
   MessageAttachment,
 } from '@relay/protocol/channels';
 import { encodeFrameLegacy, FrameParser } from '@relay/protocol/framing';
-import { DEFAULT_SOCKET_PATH } from '../daemon/server.js';
+import { DEFAULT_SOCKET_PATH } from '@relay/config/relay-config';
 
 export type ClientState = 'DISCONNECTED' | 'CONNECTING' | 'HANDSHAKING' | 'READY' | 'BACKOFF';
 

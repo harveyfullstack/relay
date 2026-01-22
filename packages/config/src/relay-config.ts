@@ -22,3 +22,6 @@ export const DEFAULT_TMUX_WRAPPER_CONFIG = {
 
 export const DEFAULT_IDLE_BEFORE_INJECT_MS = 1500;
 export const DEFAULT_IDLE_CONFIDENCE_THRESHOLD = 0.7;
+
+/** Default Unix socket path for daemon communication */
+export const DEFAULT_SOCKET_PATH = '/tmp/agent-relay.sock';
