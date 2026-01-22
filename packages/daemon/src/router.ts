@@ -1620,4 +1620,78 @@ export class Router {
       this.addChannelMember(update.channel, update.member, { persist: false });
     }
   }
+
+  /**
+   * Auto-rejoin an agent to their persisted channels on reconnect.
+   * This handles daemon restarts where in-memory channel state is lost.
+   * Queries both cloud DB (if available) and SQLite storage for memberships.
+   * Uses silent/admin mode to avoid spamming join notifications.
+   */
+  async autoRejoinChannelsForAgent(agentName: string): Promise<void> {
+    const channelsToJoin = new Set<string>();
+
+    // Query cloud DB if available
+    if (this.channelMembershipStore?.loadMembershipsForAgent) {
+      try {
+        const cloudMemberships = await this.channelMembershipStore.loadMembershipsForAgent(agentName);
+        for (const membership of cloudMemberships) {
+          channelsToJoin.add(membership.channel);
+        }
+        if (cloudMemberships.length > 0) {
+          routerLog.debug(`Found ${cloudMemberships.length} channel memberships for ${agentName} in cloud DB`);
+        }
+      } catch (err) {
+        routerLog.error('Failed to query cloud DB for channel memberships', {
+          agentName,
+          error: String(err),
+        });
+      }
+    }
+
+    // Query SQLite storage if available
+    if (this.storage?.getChannelMembershipsForAgent) {
+      try {
+        const sqliteMemberships = await this.storage.getChannelMembershipsForAgent(agentName);
+        for (const channel of sqliteMemberships) {
+          channelsToJoin.add(channel);
+        }
+        if (sqliteMemberships.length > 0) {
+          routerLog.debug(`Found ${sqliteMemberships.length} channel memberships for ${agentName} in SQLite`);
+        }
+      } catch (err) {
+        routerLog.error('Failed to query SQLite for channel memberships', {
+          agentName,
+          error: String(err),
+        });
+      }
+    }
+
+    if (channelsToJoin.size === 0) {
+      routerLog.debug(`No persisted channel memberships found for ${agentName}`);
+      return;
+    }
+
+    // Rejoin channels silently (don't notify other members)
+    let rejoinedCount = 0;
+    for (const channel of channelsToJoin) {
+      // Skip if already in channel (handles deduplication)
+      const members = this.channels.get(channel);
+      if (members && this.findMemberInSet(members, agentName)) {
+        routerLog.debug(`${agentName} already in ${channel}, skipping auto-rejoin`);
+        continue;
+      }
+
+      // Add to channel without persisting (already persisted) or notifying
+      const added = this.addChannelMember(channel, agentName, { persist: false });
+      if (added) {
+        rejoinedCount++;
+      }
+    }
+
+    if (rejoinedCount > 0) {
+      routerLog.info(`Auto-rejoined ${agentName} to ${rejoinedCount} channels`, {
+        channels: Array.from(channelsToJoin),
+      });
+    }
+  }
 }

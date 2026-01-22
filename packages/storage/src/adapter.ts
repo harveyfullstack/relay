@@ -100,6 +100,10 @@ export interface StorageAdapter {
   // Delivery resume helpers (optional)
   getPendingMessagesForSession?(agentName: string, sessionId: string): Promise<StoredMessage[]>;
   getMaxSeqByStream?(agentName: string, sessionId: string): Promise<Array<{ peer: string; topic?: string; maxSeq: number }>>;
+
+  // Channel membership helpers (optional)
+  /** Get channels that an agent is a member of (based on stored membership events) */
+  getChannelMembershipsForAgent?(memberName: string): Promise<string[]>;
 }
 
 /**

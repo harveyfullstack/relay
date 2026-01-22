@@ -813,6 +813,14 @@ export class Daemon {
         log.error('Failed to deliver pending messages', { error: String(err) });
       });
 
+      // Auto-rejoin channels that the agent was a member of before daemon restart
+      // This restores channel memberships from persisted storage (cloud DB or SQLite)
+      if (connection.agentName) {
+        this.router.autoRejoinChannelsForAgent(connection.agentName).catch(err => {
+          log.error('Failed to auto-rejoin channels', { error: String(err) });
+        });
+      }
+
       // Notify cloud sync about agent changes
       this.notifyCloudSync();
 
