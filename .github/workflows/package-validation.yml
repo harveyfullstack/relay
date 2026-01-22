@@ -297,6 +297,81 @@ jobs:
 
           echo "SUCCESS: All TypeScript checks passed"
 
+  # Dashboard integration test
+  dashboard-integration:
+    name: Dashboard Integration Test
+    runs-on: ubuntu-latest
+    env:
+      NPM_CONFIG_FUND: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all packages
+        run: npm run build
+
+      - name: Build dashboard
+        run: npm run build:dashboard
+
+      - name: Test dashboard server starts and serves content
+        run: |
+          echo "=== Testing dashboard integration ==="
+
+          # Start the CLI with dashboard in background
+          timeout 30 node dist/src/cli/index.js up --port 3999 --dashboard &
+          CLI_PID=$!
+
+          # Wait for dashboard to be ready
+          echo "Waiting for dashboard to start..."
+          for i in {1..20}; do
+            if curl -s http://localhost:3999 > /dev/null 2>&1; then
+              echo "Dashboard is ready"
+              break
+            fi
+            if [ $i -eq 20 ]; then
+              echo "ERROR: Dashboard failed to start within 20 seconds"
+              kill $CLI_PID 2>/dev/null || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # Test dashboard serves content (not 404)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3999)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Dashboard returned HTTP $HTTP_CODE instead of 200"
+            echo "This usually means the dashboard static files path is misconfigured"
+            kill $CLI_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "✓ Dashboard serves HTTP 200"
+
+          # Verify it's actually HTML content (not empty or error JSON)
+          CONTENT_TYPE=$(curl -s -o /dev/null -w "%{content_type}" http://localhost:3999)
+          if [[ ! "$CONTENT_TYPE" =~ "text/html" ]]; then
+            echo "ERROR: Dashboard content type is $CONTENT_TYPE, expected text/html"
+            kill $CLI_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "✓ Dashboard serves HTML content"
+
+          # Clean up
+          kill $CLI_PID 2>/dev/null || true
+
+          echo "SUCCESS: Dashboard integration test passed"
+
   # Circular dependency detection
   circular-deps:
     name: Circular Dependency Check
