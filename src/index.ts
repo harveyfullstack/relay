@@ -53,4 +53,4 @@ export {
   InMemoryDLQAdapter,
   createDLQAdapter,
   DEFAULT_DLQ_CONFIG,
-} from '.@relay/storage/dlq-adapter.js';
+} from '@relay/storage/dlq-adapter';

@@ -23,7 +23,7 @@ import {
 } from '../continuity/index.js';
 import { InboxManager } from './inbox.js';
 import type { SendPayload, SendMeta } from '@relay/protocol/types';
-import { SqliteStorageAdapter } from '..@relay/storage/sqlite-adapter.js';
+import { SqliteStorageAdapter } from '@relay/storage/sqlite-adapter';
 import { getProjectPaths } from '@relay/config/project-namespace';
 import { getTmuxPath } from '../utils/tmux-resolver.js';
 import { findAgentConfig } from '@relay/config/agent-config';
