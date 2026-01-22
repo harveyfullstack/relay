@@ -727,6 +727,11 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * In interactive mode, stdout goes directly to terminal via inherited stdio
    */
   private handleOutput(data: string): void {
+    // Skip processing if agent is no longer running (prevents ghost messages after release)
+    if (!this.running) {
+      return;
+    }
+
     this.rawBuffer += data;
     this.outputBuffer += data;
     this.hasReceivedOutput = true;
@@ -791,6 +796,11 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * Handle stderr from relay-pty (logs and JSON parsed commands)
    */
   private handleStderr(data: string): void {
+    // Skip processing if agent is no longer running (prevents ghost messages after release)
+    if (!this.running) {
+      return;
+    }
+
     // relay-pty outputs JSON parsed commands to stderr with --json-output
     const lines = data.split('\n').filter(l => l.trim());
     for (const line of lines) {

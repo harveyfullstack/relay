@@ -3,6 +3,9 @@ import {
   handleRelaySend,
   handleRelayInbox,
   handleRelayWho,
+  handleRelaySpawn,
+  handleRelayRelease,
+  handleRelayStatus,
 } from '../src/tools/index.js';
 
 describe('relay_send', () => {
@@ -144,5 +147,111 @@ describe('relay_who', () => {
     expect(result).toContain('- Alice (claude) - active');
     expect(result).toContain('- Bob (codex) - idle');
     expect(result).toContain('- Worker1 (claude) - active [worker of: Alice]');
+  });
+});
+
+describe('relay_spawn', () => {
+  const mockClient = {
+    spawn: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns success message when worker spawns', async () => {
+    mockClient.spawn.mockResolvedValue({ success: true });
+
+    const result = await handleRelaySpawn(mockClient as any, {
+      name: 'TestRunner',
+      cli: 'claude',
+      task: 'Run tests',
+      model: 'claude-3',
+      cwd: '/tmp',
+    });
+
+    expect(result).toContain('spawned successfully');
+    expect(mockClient.spawn).toHaveBeenCalledWith({
+      name: 'TestRunner',
+      cli: 'claude',
+      task: 'Run tests',
+      model: 'claude-3',
+      cwd: '/tmp',
+    });
+  });
+
+  it('returns failure message when spawn fails', async () => {
+    mockClient.spawn.mockResolvedValue({ success: false, error: 'Busy' });
+
+    const result = await handleRelaySpawn(mockClient as any, {
+      name: 'Worker',
+      cli: 'codex',
+      task: 'Do thing',
+    });
+
+    expect(result).toContain('Failed to spawn worker');
+    expect(result).toContain('Busy');
+  });
+});
+
+describe('relay_release', () => {
+  const mockClient = {
+    release: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns success message when worker released', async () => {
+    mockClient.release.mockResolvedValue({ success: true });
+
+    const result = await handleRelayRelease(mockClient as any, {
+      name: 'Worker1',
+      reason: 'done',
+    });
+
+    expect(result).toBe('Worker "Worker1" released.');
+    expect(mockClient.release).toHaveBeenCalledWith('Worker1', 'done');
+  });
+
+  it('returns failure message when release fails', async () => {
+    mockClient.release.mockResolvedValue({ success: false, error: 'not found' });
+
+    const result = await handleRelayRelease(mockClient as any, {
+      name: 'Worker2',
+    });
+
+    expect(result).toBe('Failed to release worker: not found');
+  });
+});
+
+describe('relay_status', () => {
+  const mockClient = {
+    getStatus: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('formats status output', async () => {
+    mockClient.getStatus.mockResolvedValue({
+      connected: true,
+      agentName: 'AgentA',
+      project: 'proj',
+      socketPath: '/tmp/socket',
+      daemonVersion: '0.1.0',
+      uptime: '1h',
+    });
+
+    const result = await handleRelayStatus(mockClient as any, {});
+
+    expect(result).toContain('Connected: Yes');
+    expect(result).toContain('Agent Name: AgentA');
+    expect(result).toContain('Project: proj');
+    expect(result).toContain('Socket: /tmp/socket');
+    expect(result).toContain('Daemon Version: 0.1.0');
+    expect(result).toContain('Uptime: 1h');
   });
 });
