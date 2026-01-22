@@ -2034,6 +2034,60 @@ Then output: \`->relay-file:spawn\`
   }
 
   /**
+   * Check if the orchestrator is ready to receive and inject messages.
+   * This requires:
+   * 1. relay-pty process spawned
+   * 2. Socket connected to relay-pty
+   * 3. running flag set
+   *
+   * Use this to verify the agent can actually receive injected messages,
+   * not just that the CLI is running.
+   */
+  isReadyForMessages(): boolean {
+    return this.readyForMessages && this.running && this.socketConnected;
+  }
+
+  /**
+   * Wait until the orchestrator is ready to receive and inject messages.
+   * This is more comprehensive than waitUntilCliReady because it ensures:
+   * 1. CLI is ready (has output and is idle)
+   * 2. Orchestrator is ready (socket connected, can inject)
+   *
+   * @param timeoutMs Maximum time to wait (default: 30s)
+   * @param pollMs Polling interval (default: 100ms)
+   * @returns true if ready, false if timeout
+   */
+  async waitUntilReadyForMessages(timeoutMs = 30000, pollMs = 100): Promise<boolean> {
+    const startTime = Date.now();
+    this.log(` Waiting for orchestrator to be ready for messages (timeout: ${timeoutMs}ms)`);
+
+    // First wait for CLI to be ready (output + idle)
+    const cliReady = await this.waitUntilCliReady(timeoutMs, pollMs);
+    if (!cliReady) {
+      this.log(` CLI not ready within timeout`);
+      return false;
+    }
+
+    // Then wait for readyForMessages flag
+    const remainingTime = timeoutMs - (Date.now() - startTime);
+    if (remainingTime <= 0) {
+      this.log(` No time remaining to wait for readyForMessages`);
+      return this.isReadyForMessages();
+    }
+
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.isReadyForMessages()) {
+        this.log(` Orchestrator is ready for messages`);
+        return true;
+      }
+      await sleep(pollMs);
+    }
+
+    this.log(` Timeout waiting for orchestrator to be ready for messages`);
+    return false;
+  }
+
+  /**
    * Get raw output buffer
    */
   getRawOutput(): string {
