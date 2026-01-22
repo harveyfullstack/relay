@@ -80,7 +80,7 @@ jobs:
         run: |
           echo "=== Testing package imports ==="
 
-          # Test each package can be imported
+          # Test each package can be imported (using ESM dynamic import)
           node --eval "
             const packages = [
               '@agent-relay/protocol',
@@ -105,29 +105,31 @@ jobs:
               '@agent-relay/spawner',
             ];
 
-            let errors = 0;
-            for (const pkg of packages) {
-              try {
-                require(pkg);
-                console.log('✓', pkg);
-              } catch (err) {
-                console.error('✗', pkg, '-', err.message);
-                errors++;
+            (async () => {
+              let errors = 0;
+              for (const pkg of packages) {
+                try {
+                  await import(pkg);
+                  console.log('✓', pkg);
+                } catch (err) {
+                  console.error('✗', pkg, '-', err.message);
+                  errors++;
+                }
               }
-            }
 
-            if (errors > 0) {
-              console.error('\\nFailed to import', errors, 'packages');
-              process.exit(1);
-            }
-            console.log('\\nAll packages imported successfully');
+              if (errors > 0) {
+                console.error('\\nFailed to import', errors, 'packages');
+                process.exit(1);
+              }
+              console.log('\\nAll packages imported successfully');
+            })();
           "
 
       - name: Test cross-package dependencies
         run: |
           echo "=== Testing cross-package dependencies ==="
 
-          # Test that internal dependencies resolve correctly
+          # Test that internal dependencies resolve correctly (using ESM dynamic import)
           node --eval "
             const tests = [
               // Test daemon can use bridge
@@ -140,27 +142,29 @@ jobs:
               { from: '@agent-relay/config', imports: ['shadowConfig'] },
             ];
 
-            let errors = 0;
-            for (const test of tests) {
-              try {
-                const mod = require(test.from);
-                for (const imp of test.imports) {
-                  if (!(imp in mod)) {
-                    throw new Error('Missing export: ' + imp);
+            (async () => {
+              let errors = 0;
+              for (const test of tests) {
+                try {
+                  const mod = await import(test.from);
+                  for (const imp of test.imports) {
+                    if (!(imp in mod)) {
+                      throw new Error('Missing export: ' + imp);
+                    }
                   }
+                  console.log('✓', test.from, 'exports:', test.imports.join(', '));
+                } catch (err) {
+                  console.error('✗', test.from, '-', err.message);
+                  errors++;
                 }
-                console.log('✓', test.from, 'exports:', test.imports.join(', '));
-              } catch (err) {
-                console.error('✗', test.from, '-', err.message);
-                errors++;
               }
-            }
 
-            if (errors > 0) {
-              console.error('\\nCross-package dependency errors:', errors);
-              process.exit(1);
-            }
-            console.log('\\nAll cross-package dependencies verified');
+              if (errors > 0) {
+                console.error('\\nCross-package dependency errors:', errors);
+                process.exit(1);
+              }
+              console.log('\\nAll cross-package dependencies verified');
+            })();
           "
 
       - name: Test main package entry point
