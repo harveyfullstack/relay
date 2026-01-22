@@ -939,7 +939,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
   /**
    * Get channels that an agent is a member of based on stored membership events.
    * Uses window function to find the most recent action per channel.
-   * @returns List of channel names where the agent's latest action is "join"
+   * @returns List of channel names where the agent's latest action is not "leave"
    */
   async getChannelMembershipsForAgent(memberName: string): Promise<string[]> {
     if (!this.db) {
@@ -947,7 +947,8 @@ export class SqliteStorageAdapter implements StorageAdapter {
     }
 
     // Query messages with _channelMembership metadata to find channels where
-    // the agent's most recent action is "join" (not "leave")
+    // the agent's most recent action is NOT "leave" (i.e., 'join' or 'invite')
+    // Note: 'invite' also adds a member to a channel (see handleMembershipUpdate)
     const stmt = this.db.prepare(`
       WITH membership_events AS (
         SELECT
@@ -965,7 +966,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
       )
       SELECT channel
       FROM membership_events
-      WHERE rn = 1 AND action = 'join'
+      WHERE rn = 1 AND action != 'leave'
     `);
 
     const rows = stmt.all(memberName) as Array<{ channel: string }>;
