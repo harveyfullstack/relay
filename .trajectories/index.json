@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-22T09:00:00.000Z",
+  "lastUpdated": "2026-01-22T12:13:58.774Z",
   "trajectories": {
     "traj_ddtj404on2bq": {
       "title": "@relay/api-types extraction",
@@ -60,9 +60,10 @@
     },
     "traj_ydfl1a3y9293": {
       "title": "Design CLI-agnostic auto-continuity for lead agents",
-      "status": "active",
+      "status": "completed",
       "startedAt": "2026-01-22T08:39:34.581Z",
-      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/active/traj_ydfl1a3y9293.json"
+      "completedAt": "2026-01-22T12:13:58.746Z",
+      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_ydfl1a3y9293.json"
     },
     "traj_4lcghlrot4vs": {
       "title": "Investigate git-credential-relay blocker",
