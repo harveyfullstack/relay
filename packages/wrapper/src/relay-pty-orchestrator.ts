@@ -40,6 +40,12 @@ import {
   verifyInjection,
   INJECTION_CONSTANTS,
 } from './shared.js';
+import {
+  getMemoryMonitor,
+  type AgentMemoryMonitor,
+  type MemoryAlert,
+  formatBytes,
+} from '@agent-relay/resiliency';
 
 // ============================================================================
 // Types for relay-pty socket protocol
@@ -209,6 +215,10 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   // Track if agent is being gracefully stopped (vs crashed)
   private isGracefulStop = false;
 
+  // Memory/CPU monitoring
+  private memoryMonitor: AgentMemoryMonitor;
+  private memoryAlertHandler: ((alert: MemoryAlert) => void) | null = null;
+
   // Note: sessionEndProcessed and lastSummaryRawContent are inherited from BaseWrapper
 
   constructor(config: RelayPtyOrchestratorConfig) {
@@ -275,6 +285,9 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     // Check if we're running interactively (stdin is a TTY)
     this.isInteractive = process.stdin.isTTY === true;
+
+    // Initialize memory monitor (shared singleton, 10s polling interval)
+    this.memoryMonitor = getMemoryMonitor({ checkIntervalMs: 10_000 });
   }
 
   /**
@@ -439,6 +452,13 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     this.stopQueueMonitor();
     this.stopProtocolMonitor();
     this.stopPeriodicReminder();
+
+    // Unregister from memory monitor
+    this.memoryMonitor.unregister(this.config.name);
+    if (this.memoryAlertHandler) {
+      this.memoryMonitor.off('alert', this.memoryAlertHandler);
+      this.memoryAlertHandler = null;
+    }
 
     this.log(` Stopping...`);
 
@@ -612,6 +632,16 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       this.log(` Process exited: code=${exitCode} signal=${signal}`);
       this.running = false;
 
+      // Get crash context before unregistering from memory monitor
+      const crashContext = this.memoryMonitor.getCrashContext(this.config.name);
+
+      // Unregister from memory monitor
+      this.memoryMonitor.unregister(this.config.name);
+      if (this.memoryAlertHandler) {
+        this.memoryMonitor.off('alert', this.memoryAlertHandler);
+        this.memoryAlertHandler = null;
+      }
+
       // Broadcast crash notification if not a graceful stop
       if (!this.isGracefulStop && this.client.state === 'READY') {
         const isNormalExit = exitCode === 0;
@@ -622,7 +652,12 @@ export class RelayPtyOrchestrator extends BaseWrapper {
             ? `killed by signal ${signal || 'SIGKILL'}`
             : `exit code ${exitCode}`;
 
-          const message = `AGENT CRASHED: "${this.config.name}" has died unexpectedly (${reason}).`;
+          // Include crash context analysis if available
+          const contextInfo = crashContext.likelyCause !== 'unknown'
+            ? ` Likely cause: ${crashContext.likelyCause}. ${crashContext.analysisNotes.slice(0, 2).join('. ')}`
+            : '';
+
+          const message = `AGENT CRASHED: "${this.config.name}" has died unexpectedly (${reason}).${contextInfo}`;
 
           this.log(` Broadcasting crash notification: ${message}`);
           this.client.broadcast(message, 'message', {
@@ -631,6 +666,12 @@ export class RelayPtyOrchestrator extends BaseWrapper {
             exitCode,
             signal: signal || undefined,
             crashType: 'unexpected_exit',
+            crashContext: {
+              likelyCause: crashContext.likelyCause,
+              peakMemory: crashContext.peakMemory,
+              averageMemory: crashContext.averageMemory,
+              memoryTrend: crashContext.memoryTrend,
+            },
           });
         }
       }
@@ -650,6 +691,33 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     if (proc.exitCode !== null) {
       throw new Error(`relay-pty exited immediately with code ${proc.exitCode}`);
+    }
+
+    // Register for memory/CPU monitoring
+    if (proc.pid) {
+      this.memoryMonitor.register(this.config.name, proc.pid);
+      this.memoryMonitor.start(); // Idempotent - starts if not already running
+
+      // Set up alert handler to broadcast resource alerts
+      this.memoryAlertHandler = (alert: MemoryAlert) => {
+        if (alert.agentName !== this.config.name) return;
+        if (this.client.state !== 'READY') return;
+
+        const message = alert.type === 'recovered'
+          ? `AGENT RECOVERED: "${this.config.name}" memory usage returned to normal.`
+          : `AGENT RESOURCE ALERT: "${this.config.name}" - ${alert.message} (${formatBytes(alert.currentRss)})`;
+
+        this.log(` Broadcasting resource alert: ${message}`);
+        this.client.broadcast(message, 'message', {
+          isSystemMessage: true,
+          agentName: this.config.name,
+          alertType: alert.type,
+          currentMemory: alert.currentRss,
+          threshold: alert.threshold,
+          recommendation: alert.recommendation,
+        });
+      };
+      this.memoryMonitor.on('alert', this.memoryAlertHandler);
     }
   }
 
