@@ -45,6 +45,7 @@ RUN chmod +x /app/bin/relay-pty
 RUN npm install -g @openai/codex || echo "Codex install failed"
 RUN npm install -g @google/gemini-cli || echo "Gemini install failed"
 RUN npm install -g opencode-ai@latest || echo "OpenCode install failed"
+RUN npm install -g typescript
 
 # Create test user (CLIs install to ~/.local/bin)
 RUN useradd -m -u 1001 testuser
@@ -86,9 +87,6 @@ COPY --chown=testuser:testuser packages/config/tsconfig.json /app/node_modules/@
 COPY --chown=testuser:testuser packages/protocol/package.json /app/node_modules/@agent-relay/protocol/
 COPY --chown=testuser:testuser packages/protocol/src/ /app/node_modules/@agent-relay/protocol/src/
 COPY --chown=testuser:testuser packages/protocol/tsconfig.json /app/node_modules/@agent-relay/protocol/
-
-# Install TypeScript globally for building packages
-RUN npm install -g typescript
 
 # Build protocol first (config depends on it)
 # Protocol has no runtime dependencies, just needs TypeScript to compile
