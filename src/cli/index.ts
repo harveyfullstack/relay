@@ -1140,7 +1140,7 @@ program
   .option('--cli <tool>', 'CLI tool override for all projects')
   .option('--architect [cli]', 'Spawn an architect agent to coordinate all projects (default: claude)')
   .action(async (projectPaths: string[], options) => {
-    const { resolveProjects, validateDaemons } = await import('@agent-relay/config');
+    const { resolveProjects, validateDaemons, getAgentOutboxTemplate } = await import('@agent-relay/config');
     const { MultiProjectClient } = await import('@agent-relay/bridge');
     const { getProjectPaths } = await import('@agent-relay/config');
     const fs = await import('node:fs');
@@ -1302,6 +1302,9 @@ program
       // Build project context for the architect
       const projectContext = valid.map(p => `- ${p.id}: ${p.path} (Lead: ${p.leadName})`).join('\n');
 
+      // Get outbox path template for agent instructions (escaped for template literal)
+      const outboxPath = getAgentOutboxTemplate().replace(/\$/g, '\\$');
+
       // Create architect system prompt
       const architectPrompt = `You are the Architect, a cross-project coordinator overseeing multiple codebases.
 
@@ -1320,7 +1323,7 @@ Write a file to your outbox, then output the trigger. Use project:AgentName synt
 
 \`\`\`bash
 # Message specific project lead
-cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/msg << 'EOF'
+cat > ${outboxPath}/msg << 'EOF'
 TO: ${valid[0].id}:${valid[0].leadName}
 
 Your message to this project's lead.
@@ -1330,7 +1333,7 @@ Then output: \`->relay-file:msg\`
 
 \`\`\`bash
 # Broadcast to all agents in a project
-cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/broadcast << 'EOF'
+cat > ${outboxPath}/broadcast << 'EOF'
 TO: ${valid.length > 1 ? valid[1].id : valid[0].id}:*
 
 Broadcast to all agents in a project.
@@ -1340,7 +1343,7 @@ Then output: \`->relay-file:broadcast\`
 
 \`\`\`bash
 # Broadcast to ALL agents in ALL projects
-cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/all << 'EOF'
+cat > ${outboxPath}/all << 'EOF'
 TO: *:*
 
 Broadcast to ALL agents in ALL projects.

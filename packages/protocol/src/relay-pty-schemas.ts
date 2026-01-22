@@ -14,7 +14,14 @@
 // =============================================================================
 
 /**
- * File format that agents write to /tmp/relay-outbox/$AGENT_RELAY_NAME/<filename>
+ * File format that agents write to the relay outbox.
+ *
+ * Default path: /tmp/relay-outbox/$AGENT_RELAY_NAME/<filename>
+ * Workspace path: /tmp/relay/{workspaceId}/outbox/{agentName}/<filename>
+ *
+ * Note: In workspace deployments, the default path is symlinked to the
+ * workspace path, so agents can use the simple path while maintaining
+ * workspace isolation.
  *
  * Header-based format (preferred over JSON):
  * - Headers are key: value pairs, one per line

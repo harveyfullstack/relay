@@ -43,3 +43,7 @@ export {
   type PromptHandler,
   type StartCLIAuthOptions,
 } from './cli-auth.js';
+
+// Relay file watchdog (file-based message detection and processing)
+export * from './relay-ledger.js';
+export * from './relay-watchdog.js';

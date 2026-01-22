@@ -23,6 +23,7 @@ import { join, dirname } from 'node:path';
 import { existsSync, unlinkSync, mkdirSync, symlinkSync, lstatSync, rmSync, watch, readdirSync } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import { getProjectPaths } from '@agent-relay/config/project-namespace';
+import { getAgentOutboxTemplate } from '@agent-relay/config/relay-file-writer';
 import { fileURLToPath } from 'node:url';
 
 // Get the directory where this module is located
@@ -1476,17 +1477,20 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     this.log(` Protocol issue detected: ${issue} (${filename})`);
 
+    // Get the outbox path for agent instructions
+    const outboxPath = getAgentOutboxTemplate(this.config.name);
+
     const reminders: Record<string, string> = {
       empty_agent_name: `⚠️ **Protocol Issue Detected**
 
 Your \`$AGENT_RELAY_NAME\` environment variable appears to be empty or unset.
 Your agent name is: **${this.config.name}**
 
-Correct outbox path: \`/tmp/relay-outbox/${this.config.name}/\`
+Correct outbox path: \`${outboxPath}/\`
 
 When writing relay files, use:
 \`\`\`bash
-cat > /tmp/relay-outbox/${this.config.name}/msg << 'EOF'
+cat > ${outboxPath}/msg << 'EOF'
 TO: TargetAgent
 
 Your message here
@@ -1499,11 +1503,11 @@ Then output: \`->relay-file:msg\``,
 Found file "${filename}" directly in \`/tmp/relay-outbox/\` instead of in your agent's subdirectory.
 Your agent name is: **${this.config.name}**
 
-Correct outbox path: \`/tmp/relay-outbox/${this.config.name}/\`
+Correct outbox path: \`${outboxPath}/\`
 
 Files should be created in your agent's directory:
 \`\`\`bash
-cat > /tmp/relay-outbox/${this.config.name}/${filename} << 'EOF'
+cat > ${outboxPath}/${filename} << 'EOF'
 TO: TargetAgent
 
 Your message here
@@ -1583,13 +1587,16 @@ EOF
 
     const sessionDurationMinutes = Math.round((Date.now() - this.sessionStartTime) / 60000);
 
+    // Get the outbox path for agent instructions
+    const outboxPath = getAgentOutboxTemplate(this.config.name);
+
     const reminder = `📋 **Protocol Reminder** (Session: ${sessionDurationMinutes} minutes)
 
 You are **${this.config.name}** in a multi-agent relay system. Here's how to communicate:
 
 **Sending Messages:**
 \`\`\`bash
-cat > /tmp/relay-outbox/${this.config.name}/msg << 'EOF'
+cat > ${outboxPath}/msg << 'EOF'
 TO: *
 
 Your message here
@@ -1601,7 +1608,7 @@ Use \`TO: *\` to broadcast to all agents, or \`TO: AgentName\` for a specific ag
 
 **Spawning Agents:**
 \`\`\`bash
-cat > /tmp/relay-outbox/${this.config.name}/spawn << 'EOF'
+cat > ${outboxPath}/spawn << 'EOF'
 KIND: spawn
 NAME: WorkerName
 CLI: claude

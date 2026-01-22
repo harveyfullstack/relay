@@ -19,7 +19,7 @@ import type { ProjectConfig, SpawnRequest } from '@agent-relay/bridge';
 import { listTrajectorySteps, getTrajectoryStatus, getTrajectoryHistory } from '@agent-relay/trajectory';
 import { loadTeamsConfig } from '@agent-relay/config';
 import { getMemoryMonitor } from '@agent-relay/resiliency';
-import { detectWorkspacePath } from '@agent-relay/config';
+import { detectWorkspacePath, getAgentOutboxTemplate } from '@agent-relay/config';
 import type { ThreadMetadata } from './types/threading.js';
 import {
   startCLIAuth,
@@ -4729,6 +4729,9 @@ export async function startDashboard(
       }
     }
 
+    // Get outbox path template for agent instructions (escaped for template literal)
+    const outboxPath = getAgentOutboxTemplate().replace(/\$/g, '\\$');
+
     // Build the architect prompt
     const architectPrompt = `You are the Architect, a cross-project coordinator overseeing multiple codebases.
 
@@ -4747,7 +4750,7 @@ Write a file to your outbox, then output the trigger. Use project:AgentName synt
 
 \`\`\`bash
 # Message specific agent in a project
-cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/msg << 'EOF'
+cat > ${outboxPath}/msg << 'EOF'
 TO: project-id:AgentName
 
 Your message to this agent.
@@ -4757,7 +4760,7 @@ Then output: \`->relay-file:msg\`
 
 \`\`\`bash
 # Broadcast to all agents in a project
-cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/broadcast << 'EOF'
+cat > ${outboxPath}/broadcast << 'EOF'
 TO: project-id:*
 
 Broadcast to all agents in a project.
@@ -4767,7 +4770,7 @@ Then output: \`->relay-file:broadcast\`
 
 \`\`\`bash
 # Broadcast to ALL agents in ALL projects
-cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/all << 'EOF'
+cat > ${outboxPath}/all << 'EOF'
 TO: *:*
 
 Broadcast to ALL agents in ALL projects.

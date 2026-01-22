@@ -9,3 +9,4 @@ export * from './cli-auth-config.js';
 export * from './cloud-config.js';
 export * from './project-namespace.js';
 export * from './schemas.js';
+export * from './relay-file-writer.js';

@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sleep } from './utils.js';
-import { getProjectPaths } from '@agent-relay/config';
+import { getProjectPaths, getAgentOutboxTemplate } from '@agent-relay/config';
 import { resolveCommand } from '@agent-relay/utils/command-resolver';
 import { RelayPtyOrchestrator, type RelayPtyOrchestratorConfig } from '@agent-relay/wrapper';
 import type { SummaryEvent, SessionEndEvent } from '@agent-relay/wrapper';
@@ -123,8 +123,14 @@ export type OnAgentDeathCallback = (info: {
 /**
  * Get relay protocol instructions for a spawned agent.
  * This provides the agent with the communication protocol it needs to work with the relay.
+ *
+ * Uses the legacy outbox path (/tmp/relay-outbox/) which is symlinked to workspace paths.
+ * This keeps agent instructions simple while supporting workspace isolation.
  */
 function getRelayInstructions(agentName: string): string {
+  // Get the outbox path template and replace variable with actual agent name
+  const outboxBase = getAgentOutboxTemplate(agentName);
+
   return [
     '# Agent Relay Protocol',
     '',
@@ -135,7 +141,7 @@ function getRelayInstructions(agentName: string): string {
     'Write a file to your outbox, then output the trigger:',
     '',
     '```bash',
-    `cat > /tmp/relay-outbox/${agentName}/msg << 'EOF'`,
+    `cat > ${outboxBase}/msg << 'EOF'`,
     'TO: TargetAgent',
     '',
     'Your message here.',
@@ -148,7 +154,7 @@ function getRelayInstructions(agentName: string): string {
     '',
     '1. **ACK immediately** - When you receive a task:',
     '```bash',
-    `cat > /tmp/relay-outbox/${agentName}/ack << 'EOF'`,
+    `cat > ${outboxBase}/ack << 'EOF'`,
     'TO: Sender',
     '',
     'ACK: Brief description of task received',
@@ -158,7 +164,7 @@ function getRelayInstructions(agentName: string): string {
     '',
     '2. **Report completion** - When done:',
     '```bash',
-    `cat > /tmp/relay-outbox/${agentName}/done << 'EOF'`,
+    `cat > ${outboxBase}/done << 'EOF'`,
     'TO: Sender',
     '',
     'DONE: Brief summary of what was completed',

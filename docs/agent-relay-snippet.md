@@ -68,6 +68,37 @@ Message body (everything after blank line)
 | `*` | Broadcast to all |
 | `#channel` | Channel message |
 
+## Agent Naming (Local vs Bridge)
+
+**Local communication** uses plain agent names. The `project:` prefix is **ONLY** for cross-project bridge mode.
+
+| Context | Correct | Incorrect |
+|---------|---------|-----------|
+| Local (same project) | `TO: Lead` | `TO: project:lead` |
+| Local (same project) | `TO: Worker1` | `TO: myproject:Worker1` |
+| Bridge (cross-project) | `TO: frontend:Designer` | N/A |
+| Bridge (to another lead) | `TO: otherproject:lead` | N/A |
+
+**Common mistake**: Using `project:lead` when communicating locally. This will fail because the relay looks for an agent literally named "project:lead".
+
+```bash
+# CORRECT - local communication to Lead agent
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/msg << 'EOF'
+TO: Lead
+
+Status update here.
+EOF
+```
+
+```bash
+# WRONG - project: prefix is only for bridge mode
+cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/msg << 'EOF'
+TO: project:lead
+
+This will fail locally!
+EOF
+```
+
 ## Spawning & Releasing
 
 **IMPORTANT**: The filename is always `spawn` (not `spawn-agentname`) and the trigger is always `->relay-file:spawn`. Spawn agents one at a time sequentially.
