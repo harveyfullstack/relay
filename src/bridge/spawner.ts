@@ -398,7 +398,15 @@ export class AgentSpawner {
   }
 
   private async resolveGhTokenFromGhCli(): Promise<string | null> {
-    const ghPath = fs.existsSync('/usr/bin/gh') ? '/usr/bin/gh' : null;
+    // Check common gh CLI installation paths across platforms
+    const ghPathCandidates = [
+      '/usr/bin/gh',                    // Linux package managers
+      '/usr/local/bin/gh',              // Homebrew (Intel Mac), manual install
+      '/opt/homebrew/bin/gh',           // Homebrew (Apple Silicon Mac)
+      '/home/linuxbrew/.linuxbrew/bin/gh', // Linuxbrew
+    ];
+
+    const ghPath = ghPathCandidates.find((p) => fs.existsSync(p));
     if (!ghPath) {
       return null;
     }
@@ -415,22 +423,38 @@ export class AgentSpawner {
     });
   }
 
+  /**
+   * Resolve GitHub token using multiple fallback sources.
+   *
+   * Fallback order (spawner context - runs on host/workspace server):
+   * 1. Cloud API - workspace-scoped token from Nango (preferred for cloud workspaces)
+   * 2. Environment - GH_TOKEN or GITHUB_TOKEN from parent process
+   * 3. hosts.yml - gh CLI config file (~/.config/gh/hosts.yml)
+   * 4. gh CLI - execute `gh auth token` command
+   *
+   * Note: git-credential-relay (runs inside container) has different order:
+   * env → cloud, because containers may not have cloud access configured.
+   */
   private async resolveGhToken(homeDir?: string): Promise<string | null> {
+    // 1. Try cloud API first (workspace-scoped, managed by Nango)
     const cloudToken = await this.fetchGhTokenFromCloud();
     if (cloudToken) {
       return cloudToken;
     }
 
+    // 2. Check environment variables
     const envToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
     if (envToken) {
       return envToken;
     }
 
+    // 3. Parse gh CLI hosts.yml config file
     const hostsToken = this.resolveGhTokenFromHostsFile(homeDir);
     if (hostsToken) {
       return hostsToken;
     }
 
+    // 4. Execute gh CLI as last resort
     return await this.resolveGhTokenFromGhCli();
   }
 

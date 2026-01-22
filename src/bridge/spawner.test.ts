@@ -294,6 +294,99 @@ describe('AgentSpawner', () => {
     expect(constructorCall.env?.GH_TOKEN).toBe('host-token-456');
   });
 
+  it('uses GITHUB_TOKEN when GH_TOKEN is not set', async () => {
+    process.env.GITHUB_TOKEN = 'github-token-789';
+    const { RelayPtyOrchestrator } = await import('../wrapper/relay-pty-orchestrator.js');
+    const RelayPtyOrchestratorMock = RelayPtyOrchestrator as Mock;
+
+    const spawner = new AgentSpawner(projectRoot);
+    await spawner.spawn({
+      name: 'GitHubTokenAgent',
+      cli: 'claude',
+      task: '',
+    });
+
+    const constructorCall = RelayPtyOrchestratorMock.mock.calls[RelayPtyOrchestratorMock.mock.calls.length - 1][0];
+    expect(constructorCall.env?.GH_TOKEN).toBe('github-token-789');
+  });
+
+  it('uses GH token from gh CLI when env and hosts.yml are missing', async () => {
+    process.env.HOME = '/home/test';
+    // Mock hosts.yml to not exist or be empty
+    readFileSyncMock.mockImplementation((filePath: string) => {
+      if (filePath.includes('hosts.yml')) {
+        return ''; // Empty hosts.yml
+      }
+      if (filePath.includes('agents.json')) {
+        return JSON.stringify({ agents: [] });
+      }
+      return '';
+    });
+    // Mock gh CLI to return a token
+    existsSyncMock.mockImplementation((filePath: string) => {
+      if (filePath === '/usr/bin/gh' || filePath === '/usr/local/bin/gh') {
+        return true;
+      }
+      if (filePath.includes('agent-relay-snippet') || filePath.includes('agent-relay-protocol')) {
+        return false;
+      }
+      return true;
+    });
+    execFileMock.mockImplementation((file, args, options, callback) => {
+      const cb = typeof options === 'function' ? options : callback;
+      if (file.includes('gh') && args.includes('auth')) {
+        cb(null, 'cli-token-abc\n', '');
+      } else if (cb) {
+        cb(new Error('not gh'), '', '');
+      }
+    });
+
+    const { RelayPtyOrchestrator } = await import('../wrapper/relay-pty-orchestrator.js');
+    const RelayPtyOrchestratorMock = RelayPtyOrchestrator as Mock;
+
+    const spawner = new AgentSpawner(projectRoot);
+    await spawner.spawn({
+      name: 'GhCliTokenAgent',
+      cli: 'claude',
+      task: '',
+    });
+
+    const constructorCall = RelayPtyOrchestratorMock.mock.calls[RelayPtyOrchestratorMock.mock.calls.length - 1][0];
+    expect(constructorCall.env?.GH_TOKEN).toBe('cli-token-abc');
+  });
+
+  it('handles malformed hosts.yml gracefully', async () => {
+    process.env.HOME = '/home/test';
+    readFileSyncMock.mockImplementation((filePath: string) => {
+      if (filePath.includes('hosts.yml')) {
+        // Malformed YAML - missing token
+        return [
+          'github.com:',
+          '  user: test-user',
+          '  git_protocol: https',
+        ].join('\n');
+      }
+      if (filePath.includes('agents.json')) {
+        return JSON.stringify({ agents: [] });
+      }
+      return '';
+    });
+
+    const { RelayPtyOrchestrator } = await import('../wrapper/relay-pty-orchestrator.js');
+    const RelayPtyOrchestratorMock = RelayPtyOrchestrator as Mock;
+
+    const spawner = new AgentSpawner(projectRoot);
+    await spawner.spawn({
+      name: 'MalformedHostsAgent',
+      cli: 'claude',
+      task: '',
+    });
+
+    // Should not have GH_TOKEN since hosts.yml has no token and gh CLI mock returns error by default
+    const constructorCall = RelayPtyOrchestratorMock.mock.calls[RelayPtyOrchestratorMock.mock.calls.length - 1][0];
+    expect(constructorCall.env?.GH_TOKEN).toBeUndefined();
+  });
+
   it('releases a worker and removes tracking', async () => {
     const { sleep } = await import('./utils.js');
     const sleepMock = sleep as Mock;
