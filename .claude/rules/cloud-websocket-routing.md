@@ -1,7 +1,7 @@
 ---
 paths:
-  - "src/cloud/server.ts"
-  - "src/cloud/*.ts"
+  - "packages/cloud/src/server.ts"
+  - "packages/cloud/src/*.ts"
 ---
 
 # Cloud WebSocket Routing - CRITICAL
@@ -50,12 +50,12 @@ This broke in commit `5569296` (Jan 13, 2026) when channel routing was changed t
 
 ## Tests
 
-See `src/cloud/websocket-routing.test.ts` for tests that verify this routing requirement.
+See `packages/cloud/src/websocket-routing.test.ts` for tests that verify this routing requirement.
 
 ## When Modifying WebSocket Routing
 
 1. **Check which WebSocket type you're modifying** (logs vs channels)
 2. **Logs must use `workspace.publicUrl`** - the agent runs there
 3. **Channels use `getLocalDashboardUrl()`** - channel state is local
-4. **Run the routing tests**: `npm test -- src/cloud/websocket-routing.test.ts`
+4. **Run the routing tests**: `npm test -- packages/cloud/src/websocket-routing.test.ts`
 5. **Test setup terminals manually** after changes to cloud WebSocket routing

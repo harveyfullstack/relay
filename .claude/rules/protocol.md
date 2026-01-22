@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/protocol/**/*.ts"
+  - "packages/protocol/src/**/*.ts"
 ---
 
 # Protocol Conventions

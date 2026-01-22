@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/cloud/server.ts"
+  - "packages/cloud/src/server.ts"
 ---
 
 # Express Route Mounting Order

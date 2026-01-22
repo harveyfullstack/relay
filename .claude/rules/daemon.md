@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/daemon/**/*.ts"
+  - "packages/daemon/src/**/*.ts"
 ---
 
 # Daemon Conventions

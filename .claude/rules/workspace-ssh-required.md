@@ -2,7 +2,7 @@
 paths:
   - "deploy/workspace/entrypoint.sh"
   - "deploy/workspace/Dockerfile*"
-  - "src/cloud/provisioner/**/*.ts"
+  - "packages/cloud/src/provisioner/**/*.ts"
 ---
 
 # Workspace SSH - CRITICAL REQUIREMENT
@@ -23,7 +23,7 @@ User Browser                 Cloud                    Workspace Container
 
 ## Required Components
 
-### 1. Provisioner (`src/cloud/provisioner/index.ts`)
+### 1. Provisioner (`packages/cloud/src/provisioner/index.ts`)
 
 Must pass these environment variables:
 

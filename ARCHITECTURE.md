@@ -88,16 +88,16 @@ The system is organized into six distinct layers:
 ### Layer 1: CLI Interface (`src/cli/`)
 Entry point for users. Parses commands, manages daemon lifecycle, wraps agent processes.
 
-### Layer 2: Agent Wrapper (`src/wrapper/`)
+### Layer 2: Agent Wrapper (`packages/wrapper/src/`)
 Monitors agent output, parses relay commands, injects incoming messages, maintains daemon connection.
 
-### Layer 3: Daemon (`src/daemon/`)
+### Layer 3: Daemon (`packages/daemon/src/`)
 Central message broker. Manages connections, routes messages, handles handshakes.
 
-### Layer 4: Protocol (`src/protocol/`)
+### Layer 4: Protocol (`packages/protocol/src/`)
 Wire format specification. Defines message types, envelope structure, framing.
 
-### Layer 5: Storage (`src/storage/`)
+### Layer 5: Storage (`packages/storage/src/`)
 Message persistence. SQLite for history, supports queries by sender/recipient/time.
 
 ### Layer 6: Dashboard (`src/dashboard/`)
@@ -146,7 +146,7 @@ Web UI for monitoring. Shows connected agents, message flow, real-time updates.
 
 ## 3. Component Deep Dive
 
-### 3.1 TmuxWrapper (`src/wrapper/tmux-wrapper.ts`)
+### 3.1 TmuxWrapper (`packages/wrapper/src/tmux-wrapper.ts`)
 
 The TmuxWrapper is the most complex component. It bridges the gap between agent output and the relay system.
 
@@ -244,7 +244,7 @@ Different CLIs need different injection strategies:
 - **Claude/Codex**: Direct `send-keys` with literal text
 - **Gemini**: Uses `printf` because Gemini interprets input as shell commands
 
-### 3.2 OutputParser (`src/wrapper/parser.ts`)
+### 3.2 OutputParser (`packages/wrapper/src/parser.ts`)
 
 Extracts relay commands from agent output.
 
@@ -290,7 +290,7 @@ if (this.inCodeFence) {
 }
 ```
 
-### 3.3 Daemon Server (`src/daemon/server.ts`)
+### 3.3 Daemon Server (`packages/daemon/src/server.ts`)
 
 The central message broker.
 
@@ -338,7 +338,7 @@ private writeAgentsFile(): void {
 }
 ```
 
-### 3.4 Connection State Machine (`src/daemon/connection.ts`)
+### 3.4 Connection State Machine (`packages/daemon/src/connection.ts`)
 
 Each client connection follows a strict state machine:
 
@@ -379,7 +379,7 @@ if (now - this.lastPongReceived > this.config.heartbeatMs * 2) {
 }
 ```
 
-### 3.5 Router (`src/daemon/router.ts`)
+### 3.5 Router (`packages/daemon/src/router.ts`)
 
 Manages agent registry and message routing.
 
@@ -423,7 +423,7 @@ getNextSeq(topic: string, peer: string): number {
 }
 ```
 
-### 3.6 RelayClient (`src/wrapper/client.ts`)
+### 3.6 RelayClient (`packages/wrapper/src/client.ts`)
 
 Client-side daemon connection with automatic reconnection.
 

@@ -2,7 +2,7 @@
 paths:
   - "relay-pty/src/protocol.rs"
   - "relay-pty/src/parser.rs"
-  - "src/protocol/**/*.ts"
+  - "packages/protocol/src/**/*.ts"
   - "docs/schemas/*.json"
 ---
 
@@ -24,7 +24,7 @@ When modifying relay-pty protocol types, you MUST update ALL corresponding schem
 - `relay-pty/src/parser.rs` - Header parsing (`TO:`, `KIND:`, `AWAIT:`, etc.)
 
 ### 2. TypeScript Schemas
-- `src/protocol/relay-pty-schemas.ts` - TypeScript interfaces matching Rust types
+- `packages/protocol/src/relay-pty-schemas.ts` - TypeScript interfaces matching Rust types
 
 ### 3. JSON Schemas (Documentation)
 - `docs/schemas/parsed-relay-command.schema.json` - ParsedRelayCommand

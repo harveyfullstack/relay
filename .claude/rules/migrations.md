@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/cloud/db/**/*.ts"
+  - "packages/cloud/src/db/**/*.ts"
   - "src/cloud/db/migrations/**/*.sql"
   - "drizzle.config.ts"
 ---
@@ -13,7 +13,7 @@ This project uses Drizzle ORM with PostgreSQL. Migrations run automatically on s
 
 ## When Schema Changes
 
-After modifying `src/cloud/db/schema.ts`:
+After modifying `packages/cloud/src/db/schema.ts`:
 
 1. **Generate migration**: `npm run db:generate`
 2. **Review the generated SQL** in `src/cloud/db/migrations/`
