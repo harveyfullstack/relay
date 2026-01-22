@@ -287,7 +287,9 @@ export class RelayPtyOrchestrator extends BaseWrapper {
    * Error log - always outputs (errors are important)
    */
   private logError(message: string): void {
-    console.error(`[relay-pty-orchestrator:${this.config.name}] ERROR: ${message}`);
+    if (this.config.debug) {
+      console.error(`[relay-pty-orchestrator:${this.config.name}] ERROR: ${message}`);
+    }
   }
 
   /**
@@ -700,9 +702,9 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         try {
           const parsed = JSON.parse(line);
           if (parsed.type === 'relay_command' && parsed.kind) {
-            // Always log spawn/release commands for visibility (they're important for debugging)
+            // Log parsed commands (only in debug mode to avoid TUI pollution)
             if (parsed.kind === 'spawn' || parsed.kind === 'release') {
-              console.log(`[relay-pty:${this.config.name}] Rust parsed [${parsed.kind}]: ${JSON.stringify({
+              this.log(`Rust parsed [${parsed.kind}]: ${JSON.stringify({
                 spawn_name: parsed.spawn_name,
                 spawn_cli: parsed.spawn_cli,
                 spawn_task: parsed.spawn_task?.substring(0, 50),
@@ -785,37 +787,37 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   private handleSpawnCommand(name: string, cli: string, task: string): void {
     const key = `spawn:${name}:${cli}`;
     if (this.processedSpawnCommands.has(key)) {
-      console.log(`[relay-pty:${this.config.name}] Spawn already processed: ${key}`);
+      this.log(`Spawn already processed: ${key}`);
       return;
     }
     this.processedSpawnCommands.add(key);
 
-    // Always log spawn attempts for visibility
-    console.log(`[relay-pty:${this.config.name}] SPAWN REQUEST: ${name} (${cli})`);
-    console.log(`[relay-pty:${this.config.name}]   dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn}`);
+    // Log spawn attempts (only in debug mode to avoid TUI pollution)
+    this.log(`SPAWN REQUEST: ${name} (${cli})`);
+    this.log(`  dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn}`);
 
     // Try dashboard API first, fall back to callback
     // The spawner will send the task after waitUntilCliReady()
     if (this.config.dashboardPort) {
-      console.log(`[relay-pty:${this.config.name}]   Calling dashboard API at port ${this.config.dashboardPort}`);
+      this.log(`Calling dashboard API at port ${this.config.dashboardPort}`);
       this.spawnViaDashboardApi(name, cli, task)
         .then(() => {
-          console.log(`[relay-pty:${this.config.name}] SPAWN SUCCESS: ${name} via dashboard API`);
+          this.log(`SPAWN SUCCESS: ${name} via dashboard API`);
         })
         .catch(err => {
-          console.error(`[relay-pty:${this.config.name}] SPAWN FAILED: ${name} - ${err.message}`);
+          this.logError(`SPAWN FAILED: ${name} - ${err.message}`);
           if (this.config.onSpawn) {
-            console.log(`[relay-pty:${this.config.name}]   Falling back to onSpawn callback`);
+            this.log(`Falling back to onSpawn callback`);
             Promise.resolve(this.config.onSpawn(name, cli, task))
-              .catch(e => console.error(`[relay-pty:${this.config.name}] SPAWN CALLBACK FAILED: ${e.message}`));
+              .catch(e => this.logError(`SPAWN CALLBACK FAILED: ${e.message}`));
           }
         });
     } else if (this.config.onSpawn) {
-      console.log(`[relay-pty:${this.config.name}]   Using onSpawn callback directly`);
+      this.log(`Using onSpawn callback directly`);
       Promise.resolve(this.config.onSpawn(name, cli, task))
-        .catch(e => console.error(`[relay-pty:${this.config.name}] SPAWN CALLBACK FAILED: ${e.message}`));
+        .catch(e => this.logError(`SPAWN CALLBACK FAILED: ${e.message}`));
     } else {
-      console.error(`[relay-pty:${this.config.name}] SPAWN FAILED: No spawn mechanism available! (dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn})`);
+      this.logError(`SPAWN FAILED: No spawn mechanism available! (dashboardPort=${this.config.dashboardPort}, onSpawn=${!!this.config.onSpawn})`);
     }
   }
 
@@ -1280,6 +1282,11 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     });
   }
 
+  /** Maximum retries for failed injections before giving up */
+  private static readonly MAX_INJECTION_RETRIES = 5;
+  /** Backoff delay multiplier (ms) for retries: delay = BASE * 2^retryCount */
+  private static readonly INJECTION_RETRY_BASE_MS = 2000;
+
   /**
    * Process queued messages
    */
@@ -1292,20 +1299,43 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       return;
     }
 
+    // Check if agent is in editor mode - delay injection if so
+    const idleResult = this.idleDetector.checkIdle();
+    if (idleResult.inEditorMode) {
+      this.log(` Agent in editor mode, delaying injection (queue: ${this.messageQueue.length})`);
+      // Check again in 2 seconds
+      setTimeout(() => this.processMessageQueue(), 2000);
+      return;
+    }
+
     this.isInjecting = true;
 
     const msg = this.messageQueue.shift()!;
+    const retryCount = (msg as any)._retryCount ?? 0;
     const bodyPreview = msg.body.substring(0, 50).replace(/\n/g, '\\n');
-    this.log(` Processing message from ${msg.from}: "${bodyPreview}..." (remaining=${this.messageQueue.length})`);
+    this.log(` Processing message from ${msg.from}: "${bodyPreview}..." (remaining=${this.messageQueue.length}, retry=${retryCount})`);
 
     try {
       const success = await this.injectMessage(msg);
 
       // Metrics are now tracked in handleInjectResult which knows about retries
       if (!success) {
-        this.logError(` Injection failed for message ${msg.messageId.substring(0, 8)}`);
-        this.config.onInjectionFailed?.(msg.messageId, 'Injection failed');
-        this.sendSyncAck(msg.messageId, msg.sync, false, { error: 'injection_failed' });
+        // Re-queue with backoff if under retry limit
+        if (retryCount < RelayPtyOrchestrator.MAX_INJECTION_RETRIES) {
+          const backoffMs = RelayPtyOrchestrator.INJECTION_RETRY_BASE_MS * Math.pow(2, retryCount);
+          this.log(` Re-queuing message ${msg.messageId.substring(0, 8)} for retry ${retryCount + 1} in ${backoffMs}ms`);
+          (msg as any)._retryCount = retryCount + 1;
+          // Add to front of queue for priority
+          this.messageQueue.unshift(msg);
+          // Wait before retrying
+          this.isInjecting = false;
+          setTimeout(() => this.processMessageQueue(), backoffMs);
+          return;
+        }
+
+        this.logError(` Injection failed for message ${msg.messageId.substring(0, 8)} after ${retryCount} retries`);
+        this.config.onInjectionFailed?.(msg.messageId, 'Injection failed after max retries');
+        this.sendSyncAck(msg.messageId, msg.sync, false, { error: 'injection_failed_max_retries' });
       } else {
         this.sendSyncAck(msg.messageId, msg.sync, true);
       }
