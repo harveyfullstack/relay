@@ -152,7 +152,6 @@ export class UserBridge {
 
     // Set up channel message handler to forward channel messages to WebSocket
     relayClient.onChannelMessage = (from, channel, body, envelope) => {
-      console.log(`[user-bridge] Channel message for ${username}: ${from} -> ${channel}`);
       this.handleIncomingChannelMessage(username, from, channel, body, envelope);
     };
 
@@ -309,25 +308,16 @@ export class UserBridge {
     body: string,
     options?: SendMessageOptions
   ): Promise<boolean> {
-    console.log(`[user-bridge] sendChannelMessage called: username=${username}, channel=${channel}`);
-
     const session = this.users.get(username);
     if (!session) {
       console.warn(`[user-bridge] Cannot send - user ${username} not registered`);
       return false;
     }
 
-    console.log(`[user-bridge] Session found, relayClient state: ${session.relayClient.state}`);
-    console.log(`[user-bridge] User channels: ${Array.from(session.channels).join(', ')}`);
-
-    // Use CHANNEL_MESSAGE protocol
-    const success = session.relayClient.sendChannelMessage(channel, body, {
+    return session.relayClient.sendChannelMessage(channel, body, {
       thread: options?.thread,
       data: options?.data,
     });
-    console.log(`[user-bridge] sendChannelMessage result: ${success}`);
-
-    return success;
   }
 
   /**
@@ -339,28 +329,19 @@ export class UserBridge {
     body: string,
     options?: SendMessageOptions
   ): Promise<boolean> {
-    // DEBUG: Trace direct message routing
-    console.log(`[user-bridge] === DM TRACE ===`);
-    console.log(`[user-bridge] sendDirectMessage: from=${fromUsername} to=${toName}`);
-    console.log(`[user-bridge] body length=${body?.length}, preview: ${body?.substring(0, 100)}...`);
-
     const session = this.users.get(fromUsername);
     if (!session) {
       console.warn(`[user-bridge] Cannot send DM - user ${fromUsername} not registered`);
-      console.log(`[user-bridge] Registered users: ${Array.from(this.users.keys()).join(', ')}`);
       return false;
     }
 
-    console.log(`[user-bridge] Sending via relay client for ${fromUsername}`);
-    const result = session.relayClient.sendMessage(
+    return session.relayClient.sendMessage(
       toName,
       body,
       'message',
       options?.data,
       options?.thread
     );
-    console.log(`[user-bridge] Send result: ${result}`);
-    return result;
   }
 
   /**
@@ -418,8 +399,6 @@ export class UserBridge {
 
     const ws = session.webSocket;
     if (ws.readyState !== 1) return; // Not OPEN
-
-    console.log(`[user-bridge] Forwarding channel message to ${username}: ${from} -> ${channel}`);
 
     // Look up sender's avatar if lookup function is available
     const senderInfo = this.lookupUserInfo?.(from);
