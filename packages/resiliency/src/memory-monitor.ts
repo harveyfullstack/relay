@@ -83,7 +83,7 @@ const DEFAULT_THRESHOLDS: MemoryThresholds = {
   warningBytes: 512 * 1024 * 1024, // 512MB
   criticalBytes: 1024 * 1024 * 1024, // 1GB
   oomImminentBytes: 1.5 * 1024 * 1024 * 1024, // 1.5GB
-  trendGrowthRateWarning: 10 * 1024 * 1024, // 10MB per minute
+  trendGrowthRateWarning: 100 * 1024 * 1024, // 100MB per minute (was 10MB - too sensitive)
   historyRetentionMinutes: 60, // Keep 1 hour of history
   historyMaxSamples: 360, // Max 360 samples (every 10s for 1 hour)
 };
@@ -468,8 +468,8 @@ export class AgentMemoryMonitor extends EventEmitter {
     const ratePerMinute = timeDeltaMs > 0 ? (memoryDelta / timeDeltaMs) * 60000 : 0;
     metrics.trendRatePerMinute = ratePerMinute;
 
-    // Determine trend (threshold: 1MB/min change)
-    const threshold = 1024 * 1024; // 1MB
+    // Determine trend (threshold: 10MB/min change - was 1MB which was too sensitive)
+    const threshold = 10 * 1024 * 1024; // 10MB
     if (ratePerMinute > threshold) {
       metrics.trend = 'growing';
     } else if (ratePerMinute < -threshold) {
@@ -548,10 +548,13 @@ export class AgentMemoryMonitor extends EventEmitter {
       }
     }
 
-    // Check for rapid growth trend
+    // Check for rapid growth trend (only if memory is already significant - 100MB+)
+    // Don't alert on rapid growth if total memory is still low
+    const minMemoryForTrendAlert = 100 * 1024 * 1024; // 100MB
     if (
       metrics.trend === 'growing' &&
       metrics.trendRatePerMinute > thresholds.trendGrowthRateWarning &&
+      metrics.current.rssBytes >= minMemoryForTrendAlert &&
       !alert
     ) {
       alert = {
