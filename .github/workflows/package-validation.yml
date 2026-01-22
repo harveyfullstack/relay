@@ -274,6 +274,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build all packages
+        run: npm run build
+
       - name: Run TypeScript with strict checks
         run: |
           echo "=== Running TypeScript strict validation ==="
