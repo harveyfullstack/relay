@@ -34,7 +34,20 @@ const DEFAULT_DASHBOARD_PORT = process.env.AGENT_RELAY_DASHBOARD_PORT || '3888';
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const packageJsonPath = path.resolve(__dirname, '../../package.json');
+// Find package.json by walking up from current directory
+// Works for both src/cli/ and dist/src/cli/ locations
+function findPackageJson(startDir: string): string {
+  let dir = startDir;
+  while (dir !== path.dirname(dir)) {
+    const candidate = path.join(dir, 'package.json');
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    dir = path.dirname(dir);
+  }
+  throw new Error('Could not find package.json');
+}
+const packageJsonPath = findPackageJson(__dirname);
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 const VERSION = packageJson.version;
 const execAsync = promisify(exec);
