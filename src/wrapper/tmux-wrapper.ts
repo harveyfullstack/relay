@@ -20,7 +20,7 @@ import { OutputParser, type ParsedCommand, type ParsedSummary, parseSummaryWithD
 import {
   hasContinuityCommand,
   parseContinuityCommand,
-} from '../continuity/index.js';
+} from '@relay/continuity/index.js';
 import { InboxManager } from './inbox.js';
 import type { SendPayload, SendMeta } from '@relay/protocol/types';
 import { SqliteStorageAdapter } from '@relay/storage/sqlite-adapter';
@@ -36,7 +36,7 @@ import {
   getCompactTrailInstructions,
   getTrailEnvVars,
   type PDEROPhase,
-} from '../trajectory/integration.js';
+} from '@agent-relay/wrapper';
 import { escapeForShell } from '@relay/config/bridge-utils';
 import { detectProviderAuthRevocation } from './auth-detection.js';
 import {
