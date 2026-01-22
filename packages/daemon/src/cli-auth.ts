@@ -102,6 +102,7 @@ interface AuthSession {
 const sessions = new Map<string, AuthSession>();
 
 // Clean up old sessions periodically
+// Use .unref() so this timer doesn't prevent the process from exiting
 setInterval(() => {
   const now = Date.now();
   for (const [id, session] of sessions) {
@@ -116,7 +117,7 @@ setInterval(() => {
       sessions.delete(id);
     }
   }
-}, 60000);
+}, 60000).unref();
 
 export interface StartCLIAuthOptions {
   /** Use device flow instead of standard OAuth (if provider supports it) */
