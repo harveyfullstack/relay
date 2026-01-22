@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest';
 describe('SDK Public API Contract', () => {
   describe('RelayClient exports', () => {
     it('exports RelayClient class', async () => {
-      const mod = await import('../wrapper/client.js');
+      const mod = await import('@agent-relay/wrapper');
       expect(mod.RelayClient).toBeDefined();
       expect(typeof mod.RelayClient).toBe('function');
     });
@@ -21,12 +21,12 @@ describe('SDK Public API Contract', () => {
     it('exports SpawnRequest type', async () => {
       // TypeScript will catch type export issues at compile time
       // This test verifies runtime that the module loads correctly
-      const mod = await import('../wrapper/client.js');
+      const mod = await import('@agent-relay/wrapper');
       expect(mod).toBeDefined();
     });
 
     it('exports SpawnResult type', async () => {
-      const mod = await import('../wrapper/client.js');
+      const mod = await import('@agent-relay/wrapper');
       expect(mod).toBeDefined();
     });
   });
@@ -70,7 +70,7 @@ describe('SDK Public API Contract', () => {
 
   describe('RelayClient API surface', () => {
     it('has all expected instance methods', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
+      const { RelayClient } = await import('@agent-relay/wrapper');
       const client = new RelayClient({});
 
       // Core lifecycle
@@ -94,7 +94,7 @@ describe('SDK Public API Contract', () => {
     });
 
     it('has all expected instance properties', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
+      const { RelayClient } = await import('@agent-relay/wrapper');
       const client = new RelayClient({ agentName: 'TestAgent' });
 
       // State
@@ -106,7 +106,7 @@ describe('SDK Public API Contract', () => {
     });
 
     it('has expected callback properties', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
+      const { RelayClient } = await import('@agent-relay/wrapper');
       const client = new RelayClient({});
 
       // These should be assignable
@@ -121,7 +121,7 @@ describe('SDK Public API Contract', () => {
     });
 
     it('accepts expected config options', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
+      const { RelayClient } = await import('@agent-relay/wrapper');
 
       // Should not throw with valid config
       const client = new RelayClient({
@@ -139,13 +139,13 @@ describe('SDK Public API Contract', () => {
 
   describe('RelayClient state machine', () => {
     it('starts in DISCONNECTED state', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
+      const { RelayClient } = await import('@agent-relay/wrapper');
       const client = new RelayClient({});
       expect(client.state).toBe('DISCONNECTED');
     });
 
     it('has valid state values', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
+      const { RelayClient } = await import('@agent-relay/wrapper');
       const client = new RelayClient({});
 
       // Valid states that SDK users might check
@@ -213,7 +213,7 @@ describe('SDK Public API Contract', () => {
 
   describe('Message sending contract', () => {
     it('sendMessage returns false when not connected', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
+      const { RelayClient } = await import('@agent-relay/wrapper');
       const client = new RelayClient({});
 
       const result = client.sendMessage('Alice', 'Hello');
@@ -221,7 +221,7 @@ describe('SDK Public API Contract', () => {
     });
 
     it('broadcast returns false when not connected', async () => {
-      const { RelayClient } = await import('../wrapper/client.js');
+      const { RelayClient } = await import('@agent-relay/wrapper');
       const client = new RelayClient({});
 
       const result = client.broadcast('Hello everyone');

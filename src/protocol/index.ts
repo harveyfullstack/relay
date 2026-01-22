@@ -1,3 +1,8 @@
-export * from './types.js';
-export * from './framing.js';
-export * from './channels.js';
+/**
+ * @deprecated Import from '@relay/protocol' instead.
+ *
+ * This file re-exports from the @relay/protocol package for backward compatibility.
+ * All protocol functionality has been moved to packages/protocol/.
+ */
+
+export * from '@relay/protocol';
