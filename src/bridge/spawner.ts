@@ -1117,7 +1117,7 @@ export class AgentSpawner {
           ? Object.values(raw.agents)
           : [];
       const lowerName = name.toLowerCase();
-      const agent = agents.find((entry) => typeof entry?.name === 'string' && entry.name.toLowerCase() === lowerName);
+      const agent = agents.find((entry: Record<string, unknown>) => typeof entry?.name === 'string' && (entry.name as string).toLowerCase() === lowerName);
       if (!agent?.lastSeen) return false;
       return Date.now() - new Date(agent.lastSeen).getTime() <= AgentSpawner.ONLINE_THRESHOLD_MS;
     } catch (err: any) {
