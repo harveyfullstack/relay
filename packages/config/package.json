@@ -83,7 +83,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agent-relay/protocol": "0.1.0",
+    "@agent-relay/protocol": "*",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.23.1"
   },

@@ -11,7 +11,10 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -19,17 +22,17 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agent-relay/protocol": "0.1.0",
-    "@agent-relay/config": "0.1.0",
-    "@agent-relay/storage": "0.1.0",
-    "@agent-relay/bridge": "0.1.0",
-    "@agent-relay/utils": "0.1.0",
-    "@agent-relay/resiliency": "0.1.0",
-    "@agent-relay/trajectory": "0.1.0",
-    "@agent-relay/cloud": "0.1.0",
-    "@agent-relay/daemon": "0.1.0",
-    "@agent-relay/user-directory": "0.1.0",
-    "@agent-relay/sdk": "0.1.0",
+    "@agent-relay/protocol": "*",
+    "@agent-relay/config": "*",
+    "@agent-relay/storage": "*",
+    "@agent-relay/bridge": "*",
+    "@agent-relay/utils": "*",
+    "@agent-relay/resiliency": "*",
+    "@agent-relay/trajectory": "*",
+    "@agent-relay/cloud": "*",
+    "@agent-relay/daemon": "*",
+    "@agent-relay/user-directory": "*",
+    "@agent-relay/sdk": "*",
     "express": "^4.21.2",
     "ws": "^8.18.3"
   },

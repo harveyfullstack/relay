@@ -22,7 +22,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agent-relay/hooks": "0.1.0"
+    "@agent-relay/hooks": "*"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",

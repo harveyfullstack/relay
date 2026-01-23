@@ -37,9 +37,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agent-relay/protocol": "0.1.0",
-    "@agent-relay/config": "0.1.0",
-    "@agent-relay/trajectory": "0.1.0"
+    "@agent-relay/protocol": "*",
+    "@agent-relay/config": "*",
+    "@agent-relay/trajectory": "*"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",

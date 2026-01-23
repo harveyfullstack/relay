@@ -31,10 +31,10 @@
   },
   "dependencies": {
     "@agent-relay/api-types": "*",
-    "@agent-relay/protocol": "0.1.0",
-    "@agent-relay/config": "0.1.0",
-    "@agent-relay/continuity": "0.1.0",
-    "@agent-relay/resiliency": "0.1.0"
+    "@agent-relay/protocol": "*",
+    "@agent-relay/config": "*",
+    "@agent-relay/continuity": "*",
+    "@agent-relay/resiliency": "*"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

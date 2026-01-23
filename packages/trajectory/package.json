@@ -22,7 +22,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agent-relay/config": "0.1.0"
+    "@agent-relay/config": "*"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",

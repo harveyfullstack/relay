@@ -56,7 +56,7 @@
     }
   },
   "dependencies": {
-    "@agent-relay/protocol": "0.1.0"
+    "@agent-relay/protocol": "*"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",

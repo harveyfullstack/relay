@@ -11,7 +11,10 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -19,16 +22,16 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agent-relay/protocol": "0.1.0",
-    "@agent-relay/config": "0.1.0",
-    "@agent-relay/storage": "0.1.0",
-    "@agent-relay/bridge": "0.1.0",
-    "@agent-relay/utils": "0.1.0",
-    "@agent-relay/policy": "0.1.0",
-    "@agent-relay/memory": "0.1.0",
-    "@agent-relay/resiliency": "0.1.0",
-    "@agent-relay/user-directory": "0.1.0",
-    "@agent-relay/wrapper": "0.1.0",
+    "@agent-relay/protocol": "*",
+    "@agent-relay/config": "*",
+    "@agent-relay/storage": "*",
+    "@agent-relay/bridge": "*",
+    "@agent-relay/utils": "*",
+    "@agent-relay/policy": "*",
+    "@agent-relay/memory": "*",
+    "@agent-relay/resiliency": "*",
+    "@agent-relay/user-directory": "*",
+    "@agent-relay/wrapper": "*",
     "ws": "^8.18.3",
     "better-sqlite3": "^12.6.2",
     "pg": "^8.16.3",

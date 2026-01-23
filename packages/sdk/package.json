@@ -55,13 +55,13 @@
     "access": "public"
   },
   "dependencies": {
-    "@agent-relay/protocol": "0.1.0"
+    "@agent-relay/protocol": "*"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "peerDependencies": {
-    "@agent-relay/daemon": ">=0.1.0"
+    "@agent-relay/daemon": "*"
   },
   "peerDependenciesMeta": {
     "@agent-relay/daemon": {
@@ -72,7 +72,7 @@
     "@msgpack/msgpack": "^3.0.0"
   },
   "devDependencies": {
-    "@agent-relay/daemon": "0.1.0",
+    "@agent-relay/daemon": "*",
     "@types/node": "^22.19.3",
     "typescript": "^5.9.3",
     "vitest": "^3.0.0"

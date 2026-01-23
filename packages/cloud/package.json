@@ -27,7 +27,10 @@
       "default": "./dist/server.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -35,16 +38,18 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agent-relay/wrapper": "0.1.0",
-    "@agent-relay/config": "0.1.0",
-    "@agent-relay/resiliency": "0.1.0",
-    "@agent-relay/storage": "0.1.0",
-    "@agent-relay/protocol": "0.1.0"
+    "@agent-relay/wrapper": "*",
+    "@agent-relay/config": "*",
+    "@agent-relay/resiliency": "*",
+    "@agent-relay/storage": "*",
+    "@agent-relay/protocol": "*"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   },
-  "publishConfig": { "access": "public" }
+  "publishConfig": {
+    "access": "public"
+  }
 }
