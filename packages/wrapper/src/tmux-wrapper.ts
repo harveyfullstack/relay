@@ -49,6 +49,7 @@ import {
   injectWithRetry as sharedInjectWithRetry,
   INJECTION_CONSTANTS,
   CLI_QUIRKS,
+  AdaptiveThrottle,
 } from './shared.js';
 import { getTmuxPanePid } from './idle-detector.js';
 import { DEFAULT_TMUX_WRAPPER_CONFIG } from '@agent-relay/config/relay-config';
@@ -142,6 +143,9 @@ export class TmuxWrapper extends BaseWrapper {
   private authRevoked = false; // Track if auth has been revoked
   private lastAuthCheck = 0; // Timestamp of last auth check (throttle)
   private readonly AUTH_CHECK_INTERVAL = 5000; // Check auth status every 5 seconds max
+
+  // Adaptive throttle for message queue - adjusts delay based on success/failure
+  private throttle = new AdaptiveThrottle();
 
   constructor(config: TmuxWrapperConfig) {
     // Merge defaults with config
@@ -1687,6 +1691,8 @@ export class TmuxWrapper extends BaseWrapper {
 
       if (result.success) {
         this.logStderr(`Injection complete (attempt ${result.attempts})`);
+        // Record success for adaptive throttling
+        this.throttle.recordSuccess();
         this.sendSyncAck(msg.messageId, msg.sync, true);
       } else {
         // All retries failed - log and optionally fall back to inbox
@@ -1694,6 +1700,8 @@ export class TmuxWrapper extends BaseWrapper {
           `Message delivery failed after ${result.attempts} attempts: from=${msg.from} id=${shortId}`,
           true
         );
+        // Record failure for adaptive throttling
+        this.throttle.recordFailure();
 
         // Write to inbox as fallback if enabled
         if (this.inbox) {
@@ -1705,12 +1713,16 @@ export class TmuxWrapper extends BaseWrapper {
 
     } catch (err: any) {
       this.logStderr(`Injection failed: ${err.message}`, true);
+      // Record failure for adaptive throttling
+      this.throttle.recordFailure();
       this.sendSyncAck(msg.messageId, msg.sync, false, { error: err.message });
     } finally {
       this.isInjecting = false;
 
+      // Process next message after adaptive delay (faster when healthy, slower under stress)
       if (this.messageQueue.length > 0) {
-        setTimeout(() => this.checkForInjectionOpportunity(), INJECTION_CONSTANTS.QUEUE_PROCESS_DELAY_MS);
+        const delay = this.throttle.getDelay();
+        setTimeout(() => this.checkForInjectionOpportunity(), delay);
       }
     }
   }

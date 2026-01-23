@@ -39,6 +39,7 @@ import {
   buildInjectionString,
   verifyInjection,
   INJECTION_CONSTANTS,
+  AdaptiveThrottle,
 } from './shared.js';
 import {
   getMemoryMonitor,
@@ -192,6 +193,9 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   }> = new Map();
   private backpressureActive = false;
   private readyForMessages = false;
+
+  // Adaptive throttle for message queue - adjusts delay based on success/failure
+  private throttle = new AdaptiveThrottle();
 
   // Unread message indicator state
   private lastUnreadIndicatorTime = 0;
@@ -1435,6 +1439,9 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
       // Metrics are now tracked in handleInjectResult which knows about retries
       if (!success) {
+        // Record failure for adaptive throttling
+        this.throttle.recordFailure();
+
         // Re-queue with backoff if under retry limit
         if (retryCount < RelayPtyOrchestrator.MAX_INJECTION_RETRIES) {
           const backoffMs = RelayPtyOrchestrator.INJECTION_RETRY_BASE_MS * Math.pow(2, retryCount);
@@ -1452,6 +1459,8 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         this.config.onInjectionFailed?.(msg.messageId, 'Injection failed after max retries');
         this.sendSyncAck(msg.messageId, msg.sync, false, { error: 'injection_failed_max_retries' });
       } else {
+        // Record success for adaptive throttling
+        this.throttle.recordSuccess();
         this.sendSyncAck(msg.messageId, msg.sync, true);
       }
     } catch (err: any) {
@@ -1459,13 +1468,16 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       // Track metrics for exceptions (not handled by handleInjectResult)
       this.injectionMetrics.failed++;
       this.injectionMetrics.total++;
+      // Record failure for adaptive throttling
+      this.throttle.recordFailure();
       this.sendSyncAck(msg.messageId, msg.sync, false, { error: err.message });
     } finally {
       this.isInjecting = false;
 
-      // Process next message after delay
+      // Process next message after adaptive delay (faster when healthy, slower under stress)
       if (this.messageQueue.length > 0 && !this.backpressureActive) {
-        setTimeout(() => this.processMessageQueue(), INJECTION_CONSTANTS.QUEUE_PROCESS_DELAY_MS);
+        const delay = this.throttle.getDelay();
+        setTimeout(() => this.processMessageQueue(), delay);
       }
     }
   }
