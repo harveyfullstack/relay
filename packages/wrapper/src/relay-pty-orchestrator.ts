@@ -279,8 +279,19 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     } else {
       // Local mode: use ~/.agent-relay paths directly (no symlinks needed)
       this._outboxPath = this._canonicalOutboxPath;
-      // Socket at ~/.agent-relay/{projectId}/sockets/{agentName}.sock
-      this.socketPath = join(projectPaths.dataDir, 'sockets', `${config.name}.sock`);
+      // Socket at {projectRoot}/.agent-relay/sockets/{agentName}.sock
+      let localSocketPath = join(projectPaths.dataDir, 'sockets', `${config.name}.sock`);
+
+      // If socket path is too long, fall back to /tmp/relay-local/{projectId}/sockets/
+      if (localSocketPath.length > MAX_SOCKET_PATH_LENGTH) {
+        const tmpSocketPath = `/tmp/relay-local/${projectPaths.projectId}/sockets/${config.name}.sock`;
+        console.warn(
+          `[relay-pty-orchestrator:${config.name}] Socket path too long (${localSocketPath.length} chars); using /tmp fallback`
+        );
+        localSocketPath = tmpSocketPath;
+      }
+
+      this.socketPath = localSocketPath;
       // No legacy path needed for local mode
       this._legacyOutboxPath = this._outboxPath;
     }
