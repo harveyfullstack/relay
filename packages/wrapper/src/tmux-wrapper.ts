@@ -1693,7 +1693,7 @@ export class TmuxWrapper extends BaseWrapper {
         this.logStderr(`Injection complete (attempt ${result.attempts})`);
         // Record success for adaptive throttling
         this.throttle.recordSuccess();
-        this.sendSyncAck(msg.messageId, msg.sync, true);
+        this.sendSyncAck(msg.messageId, msg.sync, 'OK');
       } else {
         // All retries failed - log and optionally fall back to inbox
         this.logStderr(
@@ -1708,14 +1708,14 @@ export class TmuxWrapper extends BaseWrapper {
           this.inbox.addMessage(msg.from, msg.body);
           this.logStderr('Wrote message to inbox as fallback');
         }
-        this.sendSyncAck(msg.messageId, msg.sync, false, { error: 'injection_failed' });
+        this.sendSyncAck(msg.messageId, msg.sync, 'ERROR', { error: 'injection_failed' });
       }
 
     } catch (err: any) {
       this.logStderr(`Injection failed: ${err.message}`, true);
       // Record failure for adaptive throttling
       this.throttle.recordFailure();
-      this.sendSyncAck(msg.messageId, msg.sync, false, { error: err.message });
+      this.sendSyncAck(msg.messageId, msg.sync, 'ERROR', { error: err.message });
     } finally {
       this.isInjecting = false;
 

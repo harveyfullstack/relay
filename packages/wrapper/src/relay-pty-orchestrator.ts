@@ -1457,11 +1457,11 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
         this.logError(` Injection failed for message ${msg.messageId.substring(0, 8)} after ${retryCount} retries`);
         this.config.onInjectionFailed?.(msg.messageId, 'Injection failed after max retries');
-        this.sendSyncAck(msg.messageId, msg.sync, false, { error: 'injection_failed_max_retries' });
+        this.sendSyncAck(msg.messageId, msg.sync, 'ERROR', { error: 'injection_failed_max_retries' });
       } else {
         // Record success for adaptive throttling
         this.throttle.recordSuccess();
-        this.sendSyncAck(msg.messageId, msg.sync, true);
+        this.sendSyncAck(msg.messageId, msg.sync, 'OK');
       }
     } catch (err: any) {
       this.logError(` Injection error: ${err.message}`);
@@ -1470,7 +1470,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       this.injectionMetrics.total++;
       // Record failure for adaptive throttling
       this.throttle.recordFailure();
-      this.sendSyncAck(msg.messageId, msg.sync, false, { error: err.message });
+      this.sendSyncAck(msg.messageId, msg.sync, 'ERROR', { error: err.message });
     } finally {
       this.isInjecting = false;
 
