@@ -4104,22 +4104,35 @@ export async function startDashboard(
       }
 
       // Also check agents.json for registered agents that may not be spawned
+      // Filter out internal clients and human users - only show real AI agents
+      const isInternalOrUser = (name: string, agent?: { cli?: string }) => {
+        // Internal system clients
+        if (name.startsWith('_') || name.startsWith('__')) return true;
+        if (name === 'Dashboard' || name === 'cli') return true;
+        // Agents without CLI info are likely SDK-connected humans/tools, not AI agents
+        // Real AI agents have cli field (claude, codex, gemini, etc.)
+        if (!agent?.cli) return true;
+        return false;
+      };
+
       const agentsPath = path.join(teamDir, 'agents.json');
       if (fs.existsSync(agentsPath)) {
         const data = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'));
         const registeredAgents = data.agents || [];
         for (const agent of registeredAgents) {
-          if (!agents.find(a => a.name === agent.name)) {
-            // Check if recently active (within 30 seconds)
-            const lastSeen = agent.lastSeen ? new Date(agent.lastSeen).getTime() : 0;
-            const isActive = Date.now() - lastSeen < 30000;
-            if (isActive) {
-              agents.push({
-                name: agent.name,
-                status: 'active',
-                alertLevel: 'normal',
-              });
-            }
+          // Skip if already in list or is internal/user
+          if (agents.find(a => a.name === agent.name)) continue;
+          if (isInternalOrUser(agent.name, agent)) continue;
+
+          // Check if recently active (within 30 seconds)
+          const lastSeen = agent.lastSeen ? new Date(agent.lastSeen).getTime() : 0;
+          const isActive = Date.now() - lastSeen < 30000;
+          if (isActive) {
+            agents.push({
+              name: agent.name,
+              status: 'active',
+              alertLevel: 'normal',
+            });
           }
         }
       }
