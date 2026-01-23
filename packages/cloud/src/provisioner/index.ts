@@ -798,6 +798,8 @@ class FlyProvisioner implements ComputeProvisioner {
               ENABLE_SSH: 'true',
               SSH_PASSWORD: deriveSshPassword(workspace.id),
               SSH_PORT: String(WORKSPACE_SSH_PORT),
+              // Enable cloud persistence for agent sessions/summaries via API
+              RELAY_CLOUD_ENABLED: 'true',
             },
             services: [
               {
@@ -1488,6 +1490,8 @@ class RailwayProvisioner implements ComputeProvisioner {
       // Daemon API key for cloud message sync
       // Auto-generated during provisioning, stored in linkedDaemons table
       AGENT_RELAY_API_KEY: railwayApiKey,
+      // Enable cloud persistence for agent sessions/summaries via API
+      RELAY_CLOUD_ENABLED: 'true',
     };
 
     for (const [provider, token] of credentials) {
@@ -1782,6 +1786,8 @@ class DockerProvisioner implements ComputeProvisioner {
       // Daemon API key for cloud message sync
       // Auto-generated during provisioning, stored in linkedDaemons table
       `-e AGENT_RELAY_API_KEY=${dockerApiKey}`,
+      // Enable cloud persistence for agent sessions/summaries via API
+      `-e RELAY_CLOUD_ENABLED=true`,
     ];
 
     for (const [provider, token] of credentials) {

@@ -45,6 +45,7 @@ import { webhooksRouter } from './api/webhooks.js';
 import { githubAppRouter } from './api/github-app.js';
 import { nangoAuthRouter } from './api/nango-auth.js';
 import { gitRouter } from './api/git.js';
+import { sessionsRouter } from './api/sessions.js';
 import { codexAuthHelperRouter } from './api/codex-auth-helper.js';
 import { adminRouter } from './api/admin.js';
 import { consensusRouter } from './api/consensus.js';
@@ -343,6 +344,7 @@ export async function createServer(): Promise<CloudServer> {
   app.use('/api/auth/nango', nangoAuthRouter);         // Nango webhook (signature verification)
   app.use('/api/auth/codex-helper', codexAuthHelperRouter);
   app.use('/api/git', gitRouter);                      // Workspace token auth
+  app.use('/api/sessions', sessionsRouter);            // Workspace token auth (agent session persistence)
   app.use('/api/webhooks', webhooksRouter);            // GitHub webhooks (signature verification)
   app.use('/api/monitoring', monitoringRouter);        // Daemon API key auth endpoints
   app.use('/api/daemons', daemonsRouter);              // Daemon API key auth endpoints

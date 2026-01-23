@@ -32,178 +32,183 @@ import {
 import { HealthWorkerManager, getHealthPort } from './health-worker-manager.js';
 
 /**
- * Initialize cloud persistence for session tracking.
+ * Initialize cloud persistence for session tracking via API.
+ *
+ * Uses the cloud API endpoints instead of direct database access for better
+ * security isolation. Workspaces authenticate using WORKSPACE_TOKEN.
  *
  * Activation modes:
- * 1. Local dev: Set RELAY_CLOUD_ENABLED=true and DATABASE_URL
- * 2. Cloud deployment: Plan-based - user must have Pro+ subscription
- *    (enforced at cloud API level when linking daemon or enabling workspace)
+ * 1. Local dev: Set RELAY_CLOUD_ENABLED=true, CLOUD_API_URL, and WORKSPACE_TOKEN
+ * 2. Cloud deployment: Provisioner sets these env vars automatically
  *
- * Session persistence (Pro+ feature) enables:
- * - [[SUMMARY]] blocks saved to PostgreSQL
+ * Session persistence enables:
+ * - [[SUMMARY]] blocks saved to PostgreSQL via API
  * - [[SESSION_END]] markers for session tracking
  * - Session recovery and agent handoff
- *
- * @see canUseSessionPersistence in services/planLimits.ts
  */
 async function initCloudPersistence(workspaceId: string): Promise<CloudPersistenceHandler | null> {
-  // Local dev mode: simple env var check
-  // Cloud mode: plan check happens at API level (daemon linking, workspace config)
   if (process.env.RELAY_CLOUD_ENABLED !== 'true') {
     return null;
   }
 
-  try {
-    // Dynamic import to avoid loading cloud dependencies unless enabled
-    const { getDb } = await import('@agent-relay/cloud/db/drizzle');
-    const { agentSessions, agentSummaries } = await import('@agent-relay/cloud/db/schema');
-    const { eq } = await import('drizzle-orm');
+  const cloudApiUrl = process.env.CLOUD_API_URL;
+  const workspaceToken = process.env.WORKSPACE_TOKEN;
 
-    const db = getDb();
-    console.log('[dashboard] Cloud persistence enabled');
-
-    // Track active sessions per agent with timestamps for TTL cleanup
-    const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-    const MAX_SESSIONS = 10000;
-    const agentSessionIds = new Map<string, { id: string; lastActivity: number }>();
-    // Track pending session creation to prevent race conditions
-    const pendingSessionCreation = new Map<string, Promise<string>>();
-
-    // Periodic cleanup of stale sessions (every 5 minutes)
-    const cleanupInterval = setInterval(() => {
-      const now = Date.now();
-      let evicted = 0;
-      for (const [name, { lastActivity }] of agentSessionIds.entries()) {
-        if (now - lastActivity > SESSION_TTL_MS) {
-          agentSessionIds.delete(name);
-          evicted++;
-        }
-      }
-      if (evicted > 0) {
-        console.log(`[cloud] Evicted ${evicted} stale session entries`);
-      }
-    }, 5 * 60 * 1000);
-
-    // Don't keep process alive just for cleanup
-    cleanupInterval.unref();
-
-    // Helper to get or create session with race protection
-    const getOrCreateSession = async (agentName: string): Promise<string> => {
-      // Check cache first
-      const cached = agentSessionIds.get(agentName);
-      if (cached) {
-        return cached.id;
-      }
-
-      // Check if creation is already in progress
-      const pending = pendingSessionCreation.get(agentName);
-      if (pending) {
-        return pending;
-      }
-
-      // Create session with mutex
-      const creationPromise = (async () => {
-        try {
-          // Double-check cache after acquiring "lock"
-          const rechecked = agentSessionIds.get(agentName);
-          if (rechecked) {
-            return rechecked.id;
-          }
-
-          // Enforce max size - evict oldest if needed
-          if (agentSessionIds.size >= MAX_SESSIONS) {
-            let oldest: { name: string; time: number } | null = null;
-            for (const [name, { lastActivity }] of agentSessionIds.entries()) {
-              if (!oldest || lastActivity < oldest.time) {
-                oldest = { name, time: lastActivity };
-              }
-            }
-            if (oldest) {
-              agentSessionIds.delete(oldest.name);
-              console.log(`[cloud] Evicted oldest session for ${oldest.name} (max sessions reached)`);
-            }
-          }
-
-          // Create a new session with null safety
-          const result = await db.insert(agentSessions).values({
-            workspaceId,
-            agentName,
-            status: 'active',
-            startedAt: new Date(),
-          }).returning();
-
-          const session = result[0];
-          if (!session) {
-            throw new Error(`Failed to create session for agent ${agentName}`);
-          }
-
-          // Update cache
-          agentSessionIds.set(agentName, { id: session.id, lastActivity: Date.now() });
-          return session.id;
-        } finally {
-          pendingSessionCreation.delete(agentName);
-        }
-      })();
-
-      pendingSessionCreation.set(agentName, creationPromise);
-      return creationPromise;
-    }
-
-    return {
-      onSummary: async (agentName, event) => {
-        try {
-          // Get or create session with race protection
-          const sessionId = await getOrCreateSession(agentName);
-
-          // Update activity timestamp
-          agentSessionIds.set(agentName, { id: sessionId, lastActivity: Date.now() });
-
-          // Insert summary
-          await db.insert(agentSummaries).values({
-            sessionId,
-            agentName,
-            summary: event.summary,
-            createdAt: new Date(),
-          });
-
-          console.log(`[cloud] Saved summary for ${agentName}: ${event.summary.currentTask || 'no task'}`);
-        } catch (err) {
-          console.error(`[cloud] Failed to save summary for ${agentName}:`, err);
-        }
-      },
-
-      onSessionEnd: async (agentName, event) => {
-        try {
-          const cached = agentSessionIds.get(agentName);
-          if (cached) {
-            // Update session as ended
-            await db.update(agentSessions)
-              .set({
-                status: 'ended',
-                endedAt: new Date(),
-                endMarker: event.marker,
-              })
-              .where(eq(agentSessions.id, cached.id));
-
-            agentSessionIds.delete(agentName);
-            console.log(`[cloud] Session ended for ${agentName}: ${event.marker.summary || 'no summary'}`);
-          }
-        } catch (err) {
-          console.error(`[cloud] Failed to end session for ${agentName}:`, err);
-        }
-      },
-
-      destroy: () => {
-        clearInterval(cleanupInterval);
-        agentSessionIds.clear();
-        pendingSessionCreation.clear();
-        console.log('[cloud] Cloud persistence handler destroyed');
-      },
-    };
-  } catch (err) {
-    console.warn('[dashboard] Cloud persistence not available:', err);
+  if (!cloudApiUrl || !workspaceToken) {
+    console.warn('[dashboard] Cloud persistence enabled but CLOUD_API_URL or WORKSPACE_TOKEN not set');
     return null;
   }
+
+  console.log('[dashboard] Cloud persistence enabled (API mode)');
+
+  // Track active sessions per agent with timestamps for TTL cleanup
+  const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+  const MAX_SESSIONS = 10000;
+  const agentSessionIds = new Map<string, { id: string; lastActivity: number }>();
+  // Track pending session creation to prevent race conditions
+  const pendingSessionCreation = new Map<string, Promise<string>>();
+
+  // Periodic cleanup of stale sessions (every 5 minutes)
+  const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    let evicted = 0;
+    for (const [name, { lastActivity }] of agentSessionIds.entries()) {
+      if (now - lastActivity > SESSION_TTL_MS) {
+        agentSessionIds.delete(name);
+        evicted++;
+      }
+    }
+    if (evicted > 0) {
+      console.log(`[cloud] Evicted ${evicted} stale session entries`);
+    }
+  }, 5 * 60 * 1000);
+
+  // Don't keep process alive just for cleanup
+  cleanupInterval.unref();
+
+  // Helper to call cloud API
+  const callCloudApi = async (endpoint: string, body: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const response = await fetch(`${cloudApiUrl}/api/sessions/${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${workspaceToken}`,
+      },
+      body: JSON.stringify({ workspaceId, ...body }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API call failed: ${response.status} ${errorText}`);
+    }
+
+    return response.json() as Promise<Record<string, unknown>>;
+  };
+
+  // Helper to get or create session with race protection
+  const getOrCreateSession = async (agentName: string): Promise<string> => {
+    // Check cache first
+    const cached = agentSessionIds.get(agentName);
+    if (cached) {
+      return cached.id;
+    }
+
+    // Check if creation is already in progress
+    const pending = pendingSessionCreation.get(agentName);
+    if (pending) {
+      return pending;
+    }
+
+    // Create session with mutex
+    const creationPromise = (async () => {
+      try {
+        // Double-check cache after acquiring "lock"
+        const rechecked = agentSessionIds.get(agentName);
+        if (rechecked) {
+          return rechecked.id;
+        }
+
+        // Enforce max size - evict oldest if needed
+        if (agentSessionIds.size >= MAX_SESSIONS) {
+          let oldest: { name: string; time: number } | null = null;
+          for (const [name, { lastActivity }] of agentSessionIds.entries()) {
+            if (!oldest || lastActivity < oldest.time) {
+              oldest = { name, time: lastActivity };
+            }
+          }
+          if (oldest) {
+            agentSessionIds.delete(oldest.name);
+            console.log(`[cloud] Evicted oldest session for ${oldest.name} (max sessions reached)`);
+          }
+        }
+
+        // Create a new session via API
+        const result = await callCloudApi('create', { agentName });
+        const sessionId = result.sessionId as string;
+
+        if (!sessionId) {
+          throw new Error(`Failed to create session for agent ${agentName}`);
+        }
+
+        // Update cache
+        agentSessionIds.set(agentName, { id: sessionId, lastActivity: Date.now() });
+        return sessionId;
+      } finally {
+        pendingSessionCreation.delete(agentName);
+      }
+    })();
+
+    pendingSessionCreation.set(agentName, creationPromise);
+    return creationPromise;
+  };
+
+  return {
+    onSummary: async (agentName, event) => {
+      try {
+        // Get or create session with race protection
+        const sessionId = await getOrCreateSession(agentName);
+
+        // Update activity timestamp
+        agentSessionIds.set(agentName, { id: sessionId, lastActivity: Date.now() });
+
+        // Save summary via API
+        await callCloudApi('summary', {
+          sessionId,
+          agentName,
+          summary: event.summary,
+        });
+
+        console.log(`[cloud] Saved summary for ${agentName}: ${event.summary.currentTask || 'no task'}`);
+      } catch (err) {
+        console.error(`[cloud] Failed to save summary for ${agentName}:`, err);
+      }
+    },
+
+    onSessionEnd: async (agentName, event) => {
+      try {
+        const cached = agentSessionIds.get(agentName);
+        if (cached) {
+          // End session via API
+          await callCloudApi('end', {
+            sessionId: cached.id,
+            endMarker: event.marker,
+          });
+
+          agentSessionIds.delete(agentName);
+          console.log(`[cloud] Session ended for ${agentName}: ${event.marker.summary || 'no summary'}`);
+        }
+      } catch (err) {
+        console.error(`[cloud] Failed to end session for ${agentName}:`, err);
+      }
+    },
+
+    destroy: () => {
+      clearInterval(cleanupInterval);
+      agentSessionIds.clear();
+      pendingSessionCreation.clear();
+      console.log('[cloud] Cloud persistence handler destroyed');
+    },
+  };
 }
 
 const __filename = fileURLToPath(import.meta.url);
