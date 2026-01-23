@@ -170,7 +170,16 @@ jobs:
         run: |
           if ! node -e "
             const fs = require('fs');
-            const results = JSON.parse(fs.readFileSync('integration-results.json', 'utf8'));
+            const content = fs.readFileSync('integration-results.json', 'utf8');
+            let results;
+            try {
+              results = JSON.parse(content);
+            } catch (e) {
+              console.error('Failed to parse JSON. File contents:');
+              console.error(content.slice(0, 500));
+              console.error('Parse error:', e.message);
+              process.exit(1);
+            }
             console.log('All tests passed:', results.passed);
             console.log('Passed:', results.summary.passed_tests, '/', results.summary.total_tests);
             process.exit(results.passed ? 0 : 1);
