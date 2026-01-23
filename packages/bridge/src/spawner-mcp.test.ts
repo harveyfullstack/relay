@@ -295,3 +295,211 @@ describe('MCP Socket Detection', () => {
  * And in getRelayInstructions() which conditionally adds:
  *   if (hasMcp) { parts.push(getMcpToolsReference()); }
  */
+
+/**
+ * Tests for ensureMcpPermissions function
+ *
+ * This function pre-configures MCP permissions for Claude Code to prevent
+ * approval prompts from blocking agent initialization.
+ *
+ * It creates/updates .claude/settings.local.json with:
+ * - enableAllProjectMcpServers: true
+ * - permissions.allow: ["mcp__agent-relay"]
+ */
+function ensureMcpPermissions(projectRoot: string, debug = false): void {
+  const settingsDir = path.join(projectRoot, '.claude');
+  const settingsPath = path.join(settingsDir, 'settings.local.json');
+
+  try {
+    // Ensure .claude directory exists
+    if (!fs.existsSync(settingsDir)) {
+      fs.mkdirSync(settingsDir, { recursive: true });
+    }
+
+    // Read existing settings or start fresh
+    let settings: Record<string, unknown> = {};
+    if (fs.existsSync(settingsPath)) {
+      try {
+        const content = fs.readFileSync(settingsPath, 'utf-8');
+        settings = JSON.parse(content);
+      } catch {
+        // Invalid JSON, start fresh
+        settings = {};
+      }
+    }
+
+    // Set enableAllProjectMcpServers to auto-approve MCP servers in .mcp.json
+    if (settings.enableAllProjectMcpServers !== true) {
+      settings.enableAllProjectMcpServers = true;
+    }
+
+    // Ensure permissions.allow includes agent-relay MCP
+    if (!settings.permissions || typeof settings.permissions !== 'object') {
+      settings.permissions = {};
+    }
+    const permissions = settings.permissions as Record<string, unknown>;
+    if (!Array.isArray(permissions.allow)) {
+      permissions.allow = [];
+    }
+    const allowList = permissions.allow as string[];
+
+    // Add agent-relay MCP permission if not already present
+    const agentRelayPermission = 'mcp__agent-relay';
+    if (!allowList.includes(agentRelayPermission)) {
+      allowList.push(agentRelayPermission);
+    }
+
+    // Write updated settings
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  } catch {
+    // Log but don't fail - this is a best-effort optimization
+  }
+}
+
+describe('MCP Permissions Pre-configuration', () => {
+  const mockProjectRoot = '/test/project';
+  const mockSettingsDir = '/test/project/.claude';
+  const mockSettingsPath = '/test/project/.claude/settings.local.json';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('Creating new settings file', () => {
+    it('should create .claude directory if it does not exist', () => {
+      // Arrange: neither directory nor file exists
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+
+      // Act
+      ensureMcpPermissions(mockProjectRoot);
+
+      // Assert
+      expect(fs.mkdirSync).toHaveBeenCalledWith(mockSettingsDir, { recursive: true });
+    });
+
+    it('should create settings.local.json with correct defaults', () => {
+      // Arrange: nothing exists
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+
+      // Act
+      ensureMcpPermissions(mockProjectRoot);
+
+      // Assert
+      expect(fs.writeFileSync).toHaveBeenCalled();
+      const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
+      expect(writeCall[0]).toBe(mockSettingsPath);
+
+      const writtenContent = JSON.parse((writeCall[1] as string).trim());
+      expect(writtenContent.enableAllProjectMcpServers).toBe(true);
+      expect(writtenContent.permissions.allow).toContain('mcp__agent-relay');
+    });
+  });
+
+  describe('Merging with existing settings', () => {
+    it('should preserve existing permissions while adding mcp__agent-relay', () => {
+      // Arrange: file exists with existing permissions
+      vi.mocked(fs.existsSync).mockImplementation((p) => {
+        if (p === mockSettingsDir) return true;
+        if (p === mockSettingsPath) return true;
+        return false;
+      });
+
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+        permissions: {
+          allow: ['Bash', 'Edit']
+        },
+        someOtherSetting: 'value'
+      }));
+
+      // Act
+      ensureMcpPermissions(mockProjectRoot);
+
+      // Assert
+      const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
+      const writtenContent = JSON.parse((writeCall[1] as string).trim());
+
+      // Should preserve existing permissions
+      expect(writtenContent.permissions.allow).toContain('Bash');
+      expect(writtenContent.permissions.allow).toContain('Edit');
+      // Should add new permission
+      expect(writtenContent.permissions.allow).toContain('mcp__agent-relay');
+      // Should preserve other settings
+      expect(writtenContent.someOtherSetting).toBe('value');
+      // Should add enableAllProjectMcpServers
+      expect(writtenContent.enableAllProjectMcpServers).toBe(true);
+    });
+
+    it('should not duplicate mcp__agent-relay if already present', () => {
+      // Arrange: file already has the permission
+      vi.mocked(fs.existsSync).mockImplementation((p) => {
+        if (p === mockSettingsDir) return true;
+        if (p === mockSettingsPath) return true;
+        return false;
+      });
+
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+        permissions: {
+          allow: ['mcp__agent-relay', 'Bash']
+        },
+        enableAllProjectMcpServers: true
+      }));
+
+      // Act
+      ensureMcpPermissions(mockProjectRoot);
+
+      // Assert
+      const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
+      const writtenContent = JSON.parse((writeCall[1] as string).trim());
+
+      // Should only have one instance of mcp__agent-relay
+      const count = writtenContent.permissions.allow.filter(
+        (p: string) => p === 'mcp__agent-relay'
+      ).length;
+      expect(count).toBe(1);
+    });
+
+    it('should handle corrupted JSON gracefully', () => {
+      // Arrange: file exists but contains invalid JSON
+      vi.mocked(fs.existsSync).mockImplementation((p) => {
+        if (p === mockSettingsDir) return true;
+        if (p === mockSettingsPath) return true;
+        return false;
+      });
+
+      vi.mocked(fs.readFileSync).mockReturnValue('{ invalid json }}}');
+
+      // Act - should not throw
+      expect(() => ensureMcpPermissions(mockProjectRoot)).not.toThrow();
+
+      // Assert - should create fresh settings
+      const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
+      const writtenContent = JSON.parse((writeCall[1] as string).trim());
+      expect(writtenContent.enableAllProjectMcpServers).toBe(true);
+      expect(writtenContent.permissions.allow).toContain('mcp__agent-relay');
+    });
+  });
+
+  describe('Error handling', () => {
+    it('should not throw when directory creation fails', () => {
+      // Arrange: existsSync returns false, mkdirSync throws
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.mkdirSync).mockImplementation(() => {
+        throw new Error('EACCES: permission denied');
+      });
+
+      // Act - should not throw
+      expect(() => ensureMcpPermissions(mockProjectRoot)).not.toThrow();
+    });
+
+    it('should not throw when write fails', () => {
+      // Arrange: everything works until writeFileSync
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.writeFileSync).mockImplementation(() => {
+        throw new Error('ENOSPC: no space left on device');
+      });
+
+      // Act - should not throw
+      expect(() => ensureMcpPermissions(mockProjectRoot)).not.toThrow();
+    });
+  });
+});

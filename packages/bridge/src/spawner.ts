@@ -129,6 +129,74 @@ export type OnAgentDeathCallback = (info: {
 }) => void;
 
 /**
+ * Ensure MCP permissions are pre-configured for Claude Code.
+ * This prevents MCP approval prompts from blocking agent initialization.
+ *
+ * Creates/updates .claude/settings.local.json with:
+ * - enableAllProjectMcpServers: true (auto-approve project MCP servers)
+ * - permissions.allow: ["mcp__agent-relay"] (pre-approve agent-relay MCP tools)
+ *
+ * @param projectRoot - The project root directory
+ * @param debug - Whether to log debug information
+ */
+function ensureMcpPermissions(projectRoot: string, debug = false): void {
+  const settingsDir = path.join(projectRoot, '.claude');
+  const settingsPath = path.join(settingsDir, 'settings.local.json');
+
+  try {
+    // Ensure .claude directory exists
+    if (!fs.existsSync(settingsDir)) {
+      fs.mkdirSync(settingsDir, { recursive: true });
+    }
+
+    // Read existing settings or start fresh
+    let settings: Record<string, unknown> = {};
+    if (fs.existsSync(settingsPath)) {
+      try {
+        const content = fs.readFileSync(settingsPath, 'utf-8');
+        settings = JSON.parse(content);
+      } catch {
+        // Invalid JSON, start fresh
+        settings = {};
+      }
+    }
+
+    // Set enableAllProjectMcpServers to auto-approve MCP servers in .mcp.json
+    if (settings.enableAllProjectMcpServers !== true) {
+      settings.enableAllProjectMcpServers = true;
+      if (debug) log.debug('Setting enableAllProjectMcpServers: true');
+    }
+
+    // Ensure permissions.allow includes agent-relay MCP
+    // Format: "mcp__serverName" approves all tools from that server
+    if (!settings.permissions || typeof settings.permissions !== 'object') {
+      settings.permissions = {};
+    }
+    const permissions = settings.permissions as Record<string, unknown>;
+    if (!Array.isArray(permissions.allow)) {
+      permissions.allow = [];
+    }
+    const allowList = permissions.allow as string[];
+
+    // Add agent-relay MCP permission if not already present
+    const agentRelayPermission = 'mcp__agent-relay';
+    if (!allowList.includes(agentRelayPermission)) {
+      allowList.push(agentRelayPermission);
+      if (debug) log.debug(`Added MCP permission: ${agentRelayPermission}`);
+    }
+
+    // Write updated settings
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+    if (debug) log.debug(`MCP permissions configured at ${settingsPath}`);
+  } catch (err) {
+    // Log but don't fail - this is a best-effort optimization
+    log.warn('Failed to pre-configure MCP permissions', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Get MCP tools reference for spawned agents.
  * Only included when MCP is configured for the project.
  */
@@ -670,8 +738,16 @@ export class AgentSpawner {
 
       // Add --dangerously-skip-permissions for Claude agents
       const isClaudeCli = commandName.startsWith('claude');
-      if (isClaudeCli && !args.includes('--dangerously-skip-permissions')) {
-        args.push('--dangerously-skip-permissions');
+      if (isClaudeCli) {
+        // Pre-configure MCP permissions to avoid approval prompts blocking initialization
+        // This creates/updates .claude/settings.local.json with:
+        // - enableAllProjectMcpServers: true
+        // - permissions.allow: ["mcp__agent-relay"]
+        ensureMcpPermissions(this.projectRoot, debug);
+
+        if (!args.includes('--dangerously-skip-permissions')) {
+          args.push('--dangerously-skip-permissions');
+        }
       }
 
       // Add --force for Cursor agents (CLI is 'agent', may be passed as 'cursor')
