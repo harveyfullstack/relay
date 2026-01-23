@@ -148,19 +148,14 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "New version: $NEW_VERSION"
 
-          # Sync all package versions
-          for pkg in packages/*/package.json; do
-            cd $(dirname $pkg)
-            npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version
-            cd - > /dev/null
-          done
-
-          # Update internal dependency versions
+          # Sync all package versions and internal dependencies using node script
+          # (avoids npm version which validates dependencies against registry)
           node -e "
             const fs = require('fs');
             const path = require('path');
             const version = '$NEW_VERSION';
 
+            // Update root package internal dependencies
             const rootPkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             for (const dep of Object.keys(rootPkg.dependencies || {})) {
               if (dep.startsWith('@agent-relay/')) {
@@ -169,11 +164,19 @@ jobs:
             }
             fs.writeFileSync('package.json', JSON.stringify(rootPkg, null, 2) + '\n');
 
+            // Update all sub-packages: version + internal dependencies
             const packagesDir = 'packages';
             for (const dir of fs.readdirSync(packagesDir)) {
               const pkgPath = path.join(packagesDir, dir, 'package.json');
               if (fs.existsSync(pkgPath)) {
                 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+
+                // Update package version
+                pkg.version = version;
+                console.log('@agent-relay/' + dir);
+                console.log('v' + version);
+
+                // Update internal dependencies
                 for (const dep of Object.keys(pkg.dependencies || {})) {
                   if (dep.startsWith('@agent-relay/')) {
                     pkg.dependencies[dep] = version;
@@ -184,8 +187,10 @@ jobs:
             }
           "
 
-      - name: Update package-lock.json
-        run: npm install --package-lock-only
+      - name: Clean reinstall after version bump
+        run: |
+          rm -rf node_modules packages/*/node_modules
+          npm install
 
       - name: Build all packages
         run: npm run build
@@ -202,6 +207,7 @@ jobs:
             package-lock.json
             packages/*/package.json
             packages/*/dist/
+            packages/dashboard/ui-dist/
             dist/
           retention-days: 1
 

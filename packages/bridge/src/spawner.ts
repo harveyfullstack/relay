@@ -800,7 +800,9 @@ export class AgentSpawner {
       // 2. Relay daemon socket is accessible (daemon must be running)
       // Without both, MCP context would be shown but tools wouldn't work
       const mcpConfigPath = path.join(this.projectRoot, '.mcp.json');
-      const relaySocket = process.env.RELAY_SOCKET || '/tmp/agent-relay.sock';
+      // Use the actual socket path from config (project-local .agent-relay/relay.sock)
+      // or fall back to environment variable
+      const relaySocket = this.socketPath || process.env.RELAY_SOCKET || path.join(this.projectRoot, '.agent-relay', 'relay.sock');
       let hasMcp = false;
       if (fs.existsSync(mcpConfigPath)) {
         try {

@@ -160,48 +160,164 @@ The MCP server provides:
 
 In cloud environments (with `WORKSPACE_ID` set), MCP is pre-configured and uses workspace-specific sockets automatically.
 
-## Programmatic Usage
+## Programmatic Usage (For Libraries & Integrations)
 
-Use relay tools directly in your code (no MCP protocol needed):
+The MCP package provides a simple programmatic API that's perfect for building agent orchestration libraries like AgentSwarm.
+
+### Simple Tools API (Recommended)
 
 ```typescript
 import { createTools } from '@agent-relay/mcp';
 
-const tools = createTools('MyAgent');
+// Create tools for your orchestrator agent
+const tools = createTools('Conductor');
 
-// Send messages
-await tools.send('OtherAgent', 'Hello!');
-await tools.send('#general', 'Channel message');
-await tools.send('*', 'Broadcast');
+// Send messages to agents
+await tools.send('Worker1', 'Run the test suite');
+await tools.send('#team', 'Starting task coordination');  // Channel
+await tools.send('*', 'System announcement');              // Broadcast
 
-// Check inbox
+// Spawn worker agents
+const result = await tools.spawn({
+  name: 'TestRunner',
+  cli: 'claude',           // 'claude' | 'codex' | 'gemini' | 'opencode'
+  task: 'Run all tests and report failures',
+  cwd: '/path/to/project', // Optional working directory
+});
+
+if (!result.success) {
+  console.error('Spawn failed:', result.error);
+}
+
+// Check your inbox
 const messages = await tools.inbox();
 for (const msg of messages) {
-  console.log(`${msg.from}: ${msg.content}`);
+  console.log(`From ${msg.from}: ${msg.content}`);
+  if (msg.channel) console.log(`  (in ${msg.channel})`);
 }
 
 // List online agents
 const agents = await tools.who();
+console.log('Online agents:', agents.map(a => a.name));
 
-// Spawn workers
-await tools.spawn({
-  name: 'Worker1',
-  cli: 'claude',
-  task: 'Run tests',
-});
+// Release workers when done
+await tools.release('TestRunner', 'Tests complete');
 
-// Release workers
-await tools.release('Worker1');
+// Get connection status
+const status = await tools.status();
+console.log(`Connected: ${status.connected}, Project: ${status.project}`);
 ```
 
-### One-liners
+### Full Integration Example
 
 ```typescript
-import { send, inbox, who } from '@agent-relay/mcp/simple';
+import { createTools, type RelayTools, type Message, type Agent } from '@agent-relay/mcp';
 
+class AgentOrchestrator {
+  private tools: RelayTools;
+  private workers: Map<string, { task: string; status: string }> = new Map();
+
+  constructor(name: string) {
+    this.tools = createTools(name);
+  }
+
+  async spawnWorker(name: string, task: string) {
+    const result = await this.tools.spawn({
+      name,
+      cli: 'claude',
+      task,
+    });
+
+    if (result.success) {
+      this.workers.set(name, { task, status: 'running' });
+    }
+    return result;
+  }
+
+  async sendTask(workerName: string, task: string) {
+    await this.tools.send(workerName, task);
+  }
+
+  async waitForCompletion(workerName: string, timeoutMs = 60000) {
+    // Use sendAndWait for synchronous request-response
+    const response = await this.tools.sendAndWait(
+      workerName,
+      'Report your status',
+      { timeoutMs }
+    );
+    return response;
+  }
+
+  async getMessages(): Promise<Message[]> {
+    return this.tools.inbox();
+  }
+
+  async getOnlineAgents(): Promise<Agent[]> {
+    return this.tools.who();
+  }
+
+  async releaseWorker(name: string) {
+    await this.tools.release(name);
+    this.workers.delete(name);
+  }
+
+  async releaseAll() {
+    for (const name of this.workers.keys()) {
+      await this.releaseWorker(name);
+    }
+  }
+}
+
+// Usage
+const conductor = new AgentOrchestrator('Conductor');
+
+await conductor.spawnWorker('Planner', 'Create implementation plan');
+await conductor.spawnWorker('Coder', 'Implement the plan');
+await conductor.spawnWorker('Tester', 'Write and run tests');
+
+// Coordinate work...
+await conductor.sendTask('Planner', 'Start planning the feature');
+
+// Check for responses
+const messages = await conductor.getMessages();
+
+// Clean up
+await conductor.releaseAll();
+```
+
+### One-liners (For Quick Scripts)
+
+```typescript
+import { send, inbox, who } from '@agent-relay/mcp';
+
+// Send a message
 await send('MyAgent', 'Bob', 'Hello!');
+
+// Check inbox
 const messages = await inbox('MyAgent');
+
+// List agents
 const agents = await who();
+```
+
+### Socket Discovery
+
+The MCP package auto-discovers the daemon socket:
+
+```typescript
+import { discoverSocket, getConnectionInfo } from '@agent-relay/mcp';
+
+// Get socket path and metadata
+const discovery = discoverSocket();
+if (discovery) {
+  console.log(`Socket: ${discovery.socketPath}`);
+  console.log(`Project: ${discovery.project}`);
+  console.log(`Source: ${discovery.source}`);  // 'env' | 'cloud' | 'cwd' | 'scan'
+  console.log(`Cloud: ${discovery.isCloud}`);
+}
+
+// Or get full connection info
+const info = getConnectionInfo();
 ```
 
 ## Requirements
