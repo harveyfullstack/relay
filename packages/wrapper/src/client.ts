@@ -102,6 +102,8 @@ export interface ClientConfig {
   maxReconnectAttempts: number;
   reconnectDelayMs: number;
   reconnectMaxDelayMs: number;
+  /** Internal flag to suppress deprecation warning (for wrapper internal use only) */
+  _internal?: boolean;
 }
 
 const DEFAULT_CLIENT_CONFIG: ClientConfig = {
@@ -205,8 +207,8 @@ export class RelayClient {
   onError?: (error: Error) => void;
 
   constructor(config: Partial<ClientConfig> = {}) {
-    // Show deprecation warning once per process
-    if (!RelayClient._deprecationWarningShown) {
+    // Show deprecation warning once per process (skip for internal wrapper usage)
+    if (!RelayClient._deprecationWarningShown && !config._internal) {
       RelayClient._deprecationWarningShown = true;
       console.warn(
         '\x1b[33m[DEPRECATION WARNING]\x1b[0m RelayClient from @agent-relay/wrapper is deprecated.\n' +

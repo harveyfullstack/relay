@@ -137,6 +137,7 @@ export abstract class BaseWrapper extends EventEmitter {
       task: config.task,
       workingDirectory: config.cwd,
       quiet: true,
+      _internal: true, // Suppress deprecation warning for internal wrapper usage
     });
 
     // Initialize continuity manager (skip for spawned agents that don't need session recovery)
