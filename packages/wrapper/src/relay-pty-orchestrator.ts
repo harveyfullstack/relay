@@ -206,7 +206,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
   // Queue monitor for stuck message detection
   private queueMonitorTimer?: NodeJS.Timeout;
-  private readonly QUEUE_MONITOR_INTERVAL_MS = 30000; // Check every 30 seconds
+  private readonly QUEUE_MONITOR_INTERVAL_MS = 5000; // Check every 5 seconds
   private injectionStartTime = 0; // Track when isInjecting was set to true
   private readonly MAX_INJECTION_STUCK_MS = 60000; // Force reset after 60 seconds
 
