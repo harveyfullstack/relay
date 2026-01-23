@@ -88,7 +88,7 @@ function getConfigPaths(): Record<string, EditorConfig> {
     },
     'claude-code': {
       name: 'Claude Code',
-      configPath: join(home, '.claude', 'settings.json'),
+      configPath: join(home, '.claude.json'),
       configKey: 'mcpServers',
       format: 'json',
       supportsLocal: true,

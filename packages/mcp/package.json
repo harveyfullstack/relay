@@ -26,11 +26,13 @@
     },
     "./simple": {
       "types": "./dist/simple.d.ts",
-      "import": "./dist/simple.js"
+      "import": "./dist/simple.js",
+      "default": "./dist/simple.js"
     },
     "./install": {
       "types": "./dist/install-cli.d.ts",
-      "import": "./dist/install-cli.js"
+      "import": "./dist/install-cli.js",
+      "default": "./dist/install-cli.js"
     }
   },
   "files": [

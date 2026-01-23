@@ -8,15 +8,18 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./id-generator": {
       "types": "./dist/id-generator.d.ts",
-      "import": "./dist/id-generator.js"
+      "import": "./dist/id-generator.js",
+      "default": "./dist/id-generator.js"
     },
     "./tmux-resolver": {
       "types": "./dist/tmux-resolver.d.ts",
-      "import": "./dist/tmux-resolver.js"
+      "import": "./dist/tmux-resolver.js",
+      "default": "./dist/tmux-resolver.js"
     }
   },
   "scripts": {

@@ -135,6 +135,8 @@ export interface RelayPtyOrchestratorConfig extends BaseWrapperConfig {
   onInjectionFailed?: (messageId: string, error: string) => void;
   /** Enable debug logging (default: false) */
   debug?: boolean;
+  /** Force headless mode (use pipes instead of inheriting TTY) */
+  headless?: boolean;
 }
 
 /**
@@ -284,7 +286,8 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     this._logPath = join(projectPaths.teamDir, 'worker-logs', `${config.name}.log`);
 
     // Check if we're running interactively (stdin is a TTY)
-    this.isInteractive = process.stdin.isTTY === true;
+    // If headless mode is forced via config, always use pipes
+    this.isInteractive = config.headless ? false : (process.stdin.isTTY === true);
 
     // Initialize memory monitor (shared singleton, 10s polling interval)
     this.memoryMonitor = getMemoryMonitor({ checkIntervalMs: 10_000 });
@@ -2178,6 +2181,72 @@ Then output: \`->relay-file:spawn\`
     }
     const buffer = typeof data === 'string' ? Buffer.from(data) : data;
     this.relayPtyProcess.stdin.write(buffer);
+  }
+
+  /**
+   * Inject a task using the socket-based injection system with verification.
+   * This is the preferred method for spawned agent task delivery.
+   *
+   * @param task The task text to inject
+   * @param from The sender name (default: "spawner")
+   * @returns Promise resolving to true if injection succeeded, false otherwise
+   */
+  async injectTask(task: string, from = 'spawner'): Promise<boolean> {
+    if (!this.socket || !this.socketConnected) {
+      this.log(` Socket not connected for task injection, falling back to stdin write`);
+      // Fallback to direct write if socket not available
+      try {
+        await this.write(task + '\n');
+        return true;
+      } catch (err: any) {
+        this.logError(` Stdin write fallback failed: ${err.message}`);
+        return false;
+      }
+    }
+
+    const messageId = `task-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const shortId = messageId.substring(0, 8);
+
+    this.log(` Injecting task via socket: ${shortId}`);
+
+    // Create request
+    const request: InjectRequest = {
+      type: 'inject',
+      id: messageId,
+      from,
+      body: task,
+      priority: 0, // High priority for initial task
+    };
+
+    // Send with timeout and verification
+    return new Promise<boolean>((resolve) => {
+      const timeout = setTimeout(() => {
+        this.logError(` Task inject timeout for ${shortId} after 30s`);
+        this.pendingInjections.delete(messageId);
+        resolve(false);
+      }, 30000);
+
+      this.pendingInjections.set(messageId, {
+        resolve,
+        reject: () => resolve(false),
+        timeout,
+        from,
+        shortId,
+        retryCount: 0,
+        originalBody: task,
+      });
+
+      this.sendSocketRequest(request)
+        .then(() => {
+          this.log(` Task inject request sent: ${shortId}`);
+        })
+        .catch((err) => {
+          this.logError(` Task inject socket request failed: ${err.message}`);
+          clearTimeout(timeout);
+          this.pendingInjections.delete(messageId);
+          resolve(false);
+        });
+    });
   }
 
   /**

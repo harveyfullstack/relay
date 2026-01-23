@@ -8,27 +8,33 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./adapter": {
       "types": "./dist/adapter.d.ts",
-      "import": "./dist/adapter.js"
+      "import": "./dist/adapter.js",
+      "default": "./dist/adapter.js"
     },
     "./sqlite-adapter": {
       "types": "./dist/sqlite-adapter.d.ts",
-      "import": "./dist/sqlite-adapter.js"
+      "import": "./dist/sqlite-adapter.js",
+      "default": "./dist/sqlite-adapter.js"
     },
     "./batched-sqlite-adapter": {
       "types": "./dist/batched-sqlite-adapter.d.ts",
-      "import": "./dist/batched-sqlite-adapter.js"
+      "import": "./dist/batched-sqlite-adapter.js",
+      "default": "./dist/batched-sqlite-adapter.js"
     },
     "./dlq-adapter": {
       "types": "./dist/dlq-adapter.d.ts",
-      "import": "./dist/dlq-adapter.js"
+      "import": "./dist/dlq-adapter.js",
+      "default": "./dist/dlq-adapter.js"
     },
     "./dead-letter-queue": {
       "types": "./dist/dead-letter-queue.d.ts",
-      "import": "./dist/dead-letter-queue.js"
+      "import": "./dist/dead-letter-queue.js",
+      "default": "./dist/dead-letter-queue.js"
     }
   },
   "files": [

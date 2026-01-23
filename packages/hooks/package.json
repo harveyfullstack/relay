@@ -12,15 +12,18 @@
     },
     "./inbox-check": {
       "types": "./dist/inbox-check/index.d.ts",
-      "import": "./dist/inbox-check/index.js"
+      "import": "./dist/inbox-check/index.js",
+      "default": "./dist/inbox-check/index.js"
     },
     "./types": {
       "types": "./dist/types.d.ts",
-      "import": "./dist/types.js"
+      "import": "./dist/types.js",
+      "default": "./dist/types.js"
     },
     "./browser": {
       "types": "./dist/browser.d.ts",
-      "import": "./dist/browser.js"
+      "import": "./dist/browser.js",
+      "default": "./dist/browser.js"
     }
   },
   "files": [

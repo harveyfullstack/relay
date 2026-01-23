@@ -51,13 +51,17 @@ export function resolveCommand(command: string): string {
 function resolveSymlinks(filePath: string): string {
   try {
     const resolved = fs.realpathSync(filePath);
-    if (resolved !== filePath) {
+    // Debug log only - symlink resolution is noisy
+    if (resolved !== filePath && process.env.DEBUG_SPAWN === '1') {
       console.log(`[command-resolver] Resolved symlink: ${filePath} -> ${resolved}`);
     }
     return resolved;
   } catch (err: any) {
     // If realpath fails, return original (spawn will give clearer error)
-    console.warn(`[command-resolver] realpath failed for ${filePath}:`, err.message);
+    // Only warn in debug mode - this is common and not actionable
+    if (process.env.DEBUG_SPAWN === '1') {
+      console.warn(`[command-resolver] realpath failed for ${filePath}:`, err.message);
+    }
     return filePath;
   }
 }

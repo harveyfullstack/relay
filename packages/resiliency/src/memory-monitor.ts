@@ -697,7 +697,10 @@ export class AgentMemoryMonitor extends EventEmitter {
     const prefix = `[memory-monitor]`;
     switch (level) {
       case 'info':
-        console.log(prefix, message, context ? JSON.stringify(context) : '');
+        // Only log info messages in debug mode to reduce noise
+        if (process.env.DEBUG_SPAWN === '1') {
+          console.log(prefix, message, context ? JSON.stringify(context) : '');
+        }
         break;
       case 'warn':
         console.warn(prefix, message, context ? JSON.stringify(context) : '');
