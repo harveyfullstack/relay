@@ -61,10 +61,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 # Install npm-based CLIs globally as root with pinned versions for stability
 # Combined into single RUN for faster builds (single npm transaction)
 RUN npm install -g \
-    @anthropic-ai/claude-code@2.0.67 \
-    @openai/codex@0.78.0 \
-    @google/gemini-cli@0.22.5 \
-    opencode-ai@1.1.3
+    @anthropic-ai/claude-code@2.1.17 \
+    @openai/codex@0.88.0 \
+    @google/gemini-cli@0.25.1 \
+    opencode-ai@1.1.34
 
 # Create workspace directory structure
 RUN mkdir -p /workspace /data
