@@ -52,6 +52,8 @@ export interface DaemonConfig extends ConnectionConfig {
   cloudUrl?: string;
   /** Consensus mechanism for multi-agent decisions (enabled by default, set to false to disable) */
   consensus?: boolean | Partial<ConsensusIntegrationConfig>;
+  /** Enable protocol-based spawning via SPAWN/RELEASE messages */
+  spawnManager?: boolean | Partial<SpawnManagerConfig>;
 }
 
 export const DEFAULT_SOCKET_PATH = '/tmp/agent-relay.sock';
@@ -85,6 +87,7 @@ export class Daemon {
   private remoteUsers: RemoteAgent[] = [];
   private consensus?: ConsensusIntegration;
   private cloudSyncDebounceTimer?: NodeJS.Timeout;
+  private spawnManager?: SpawnManager;
 
   /** Callback for log output from agents (used by dashboard for streaming) */
   onLogOutput?: (agentName: string, data: string, timestamp: number) => void;
@@ -104,6 +107,19 @@ export class Daemon {
     }
     if (this.config.teamDir) {
       this.registry = new AgentRegistry(this.config.teamDir);
+    }
+    // Initialize SpawnManager if enabled
+    if (this.config.spawnManager) {
+      const spawnConfig = typeof this.config.spawnManager === 'object'
+        ? this.config.spawnManager
+        : {};
+      // Derive projectRoot from teamDir (teamDir is typically {projectRoot}/.agent-relay/)
+      const projectRoot = spawnConfig.projectRoot || path.dirname(this.config.teamDir || this.config.socketPath);
+      this.spawnManager = new SpawnManager({
+        projectRoot,
+        socketPath: this.config.socketPath,
+        ...spawnConfig,
+      });
     }
     // Storage is initialized lazily in start() to support async createStorageAdapter
     this.server = net.createServer(this.handleConnection.bind(this));
@@ -989,6 +1005,29 @@ export class Daemon {
         const channelEnvelope = envelope as Envelope<ChannelMessagePayload>;
         log.info(`CHANNEL_MESSAGE received: from=${connection.agentName} channel=${channelEnvelope.payload.channel}`);
         this.router.routeChannelMessage(connection, channelEnvelope);
+        break;
+      }
+
+      // Spawn/release handlers (protocol-based agent spawning)
+      case 'SPAWN': {
+        if (!this.spawnManager) {
+          this.sendErrorEnvelope(connection, 'SpawnManager not enabled. Configure spawnManager: true in daemon config.');
+          break;
+        }
+        const spawnEnvelope = envelope as Envelope<SpawnPayload>;
+        log.info(`SPAWN request: from=${connection.agentName} agent=${spawnEnvelope.payload.name} cli=${spawnEnvelope.payload.cli}`);
+        this.spawnManager.handleSpawn(connection, spawnEnvelope);
+        break;
+      }
+
+      case 'RELEASE': {
+        if (!this.spawnManager) {
+          this.sendErrorEnvelope(connection, 'SpawnManager not enabled. Configure spawnManager: true in daemon config.');
+          break;
+        }
+        const releaseEnvelope = envelope as Envelope<ReleasePayload>;
+        log.info(`RELEASE request: from=${connection.agentName} agent=${releaseEnvelope.payload.name}`);
+        this.spawnManager.handleRelease(connection, releaseEnvelope);
         break;
       }
     }
