@@ -1842,8 +1842,18 @@ export const channelMemberQueries: ChannelMemberQueries = {
 
 export async function runMigrations() {
   const { migrate } = await import('drizzle-orm/node-postgres/migrator');
+  const { fileURLToPath } = await import('node:url');
+  const { dirname, join } = await import('node:path');
+
+  // Get migrations folder relative to this file (works in both dev and Docker)
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  // In dist: packages/cloud/dist/db/drizzle.js -> need to go to packages/cloud/src/db/migrations
+  // The migrations are in src/db/migrations, not dist/db/migrations
+  const migrationsFolder = join(__dirname, '..', '..', 'src', 'db', 'migrations');
+
   const db = getDb();
-  await migrate(db, { migrationsFolder: './src/cloud/db/migrations' });
+  await migrate(db, { migrationsFolder });
   console.log('Migrations complete');
 }
 
