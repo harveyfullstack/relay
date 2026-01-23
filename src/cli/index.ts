@@ -73,10 +73,11 @@ program
   .description('Agent-to-agent messaging')
   .version(VERSION, '-V, --version', 'Output the version number');
 
-// create-agent - Wrap agent with real-time messaging
+// create-agent - Wrap agent with real-time messaging (requires TTY)
+// For programmatic spawning from scripts, use 'agent-relay spawn' instead (no TTY required)
 program
   .command('create-agent')
-  .description('Wrap an agent with real-time messaging')
+  .description('Wrap an agent with real-time messaging (requires TTY, use "spawn" for scripts)')
   .option('-n, --name <name>', 'Agent name (auto-generated if not set)')
   .option('-d, --debug', 'Enable debug output')
   .option('--prefix <pattern>', 'Relay prefix pattern (default: ->relay:)')
@@ -1817,10 +1818,11 @@ program
     }
   });
 
-// spawn - Spawn an agent via API (works from any context, no tmux required)
+// spawn - Spawn an agent via API (works from any context, no TTY required)
+// Use this for programmatic spawning from scripts, detached processes, or containers
 program
-  .command('spawn', { hidden: true })
-  .description('Spawn an agent via dashboard API (no tmux required, works in containers)')
+  .command('spawn')
+  .description('Spawn an agent via dashboard API (recommended for programmatic use, no TTY required)')
   .argument('<name>', 'Agent name')
   .argument('<cli>', 'CLI to use (claude, codex, gemini, etc.)')
   .argument('[task]', 'Task description (can also be piped via stdin)')

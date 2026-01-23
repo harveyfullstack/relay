@@ -76,3 +76,10 @@ export {
   FrameParser,
   MAX_FRAME_BYTES,
 } from './protocol/index.js';
+
+// Socket discovery utilities
+export {
+  discoverSocket,
+  getDefaultSocketPath,
+  type DiscoveryResult,
+} from './discovery.js';
