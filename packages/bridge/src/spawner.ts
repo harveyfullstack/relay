@@ -360,6 +360,8 @@ function hasRelayPtyBinary(): boolean {
 /** Options for AgentSpawner constructor */
 export interface AgentSpawnerOptions {
   projectRoot: string;
+  /** Explicit socket path for daemon connection (if not provided, derived from projectRoot) */
+  socketPath?: string;
   tmuxSession?: string;
   dashboardPort?: number;
   /**
@@ -405,7 +407,9 @@ export class AgentSpawner {
     // This ensures spawned agents have actual daemon connections for channel message delivery
     this.agentsPath = path.join(paths.teamDir, 'connected-agents.json');
     this.registryPath = path.join(paths.teamDir, 'agents.json');
-    this.socketPath = paths.socketPath;
+    // Use explicit socketPath if provided (ensures spawned agents connect to same daemon)
+    // Otherwise derive from project paths
+    this.socketPath = options.socketPath ?? paths.socketPath;
     this.logsDir = path.join(paths.teamDir, 'worker-logs');
     this.workersPath = path.join(paths.teamDir, 'workers.json');
     this.dashboardPort = options.dashboardPort;

@@ -45,7 +45,10 @@ export class SpawnManager {
   private onAgentSpawn?: () => void;
 
   constructor(config: SpawnManagerConfig) {
-    this.spawner = new AgentSpawner(config.projectRoot);
+    this.spawner = new AgentSpawner({
+      projectRoot: config.projectRoot,
+      socketPath: config.socketPath,
+    });
     this.onAgentSpawn = config.onAgentSpawn;
 
     if (config.cloudPersistence) {
