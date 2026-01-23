@@ -47,7 +47,7 @@
     "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "dependencies": {
-    "@agent-relay/config": "2.0.0",
+    "@agent-relay/config": "2.0.4",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.23.8"
   },
