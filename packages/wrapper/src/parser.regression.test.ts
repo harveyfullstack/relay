@@ -192,6 +192,7 @@ describe('Parser Regression Tests', () => {
 
     it('filters instructional text in thinking blocks correctly', () => {
       // Regression: relay commands in thinking blocks were being parsed
+      // Thinking block content is now stripped from output entirely
       const input = `<thinking>
 ->relay:Test This should be ignored
 </thinking>
@@ -201,7 +202,8 @@ describe('Parser Regression Tests', () => {
 
       expect(result.commands.length).toBe(1);
       expect(result.commands[0].to).toBe('Lead');
-      expect(result.output).toContain('->relay:Test');
+      // Thinking content is stripped from output - verify it's NOT there
+      expect(result.output).not.toContain('->relay:Test');
     });
 
     it('handles spawn/release commands as passthrough', () => {

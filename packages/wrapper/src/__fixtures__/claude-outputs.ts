@@ -65,11 +65,11 @@ export const claudeOutputFixtures: OutputFixture[] = [
     name: 'relay-in-bold-output',
     description: 'Relay command in bold text block',
     input: `${ANSI.BOLD}Processing request...${ANSI.RESET}
-${ANSI.BOLD}->relay:Worker${ANSI.RESET} Please analyze the data
+${ANSI.BOLD}->relay:DataAnalyzer${ANSI.RESET} Please analyze the data
 ${ANSI.DIM}Done.${ANSI.RESET}
 `,
     expectedCommands: [
-      { to: 'Worker', body: 'Please analyze the data' },
+      { to: 'DataAnalyzer', body: 'Please analyze the data' },
     ],
   },
 
@@ -89,7 +89,8 @@ Let me think about this...
     expectedCommands: [
       { to: 'Lead', body: 'This SHOULD be parsed' },
     ],
-    expectedOutputContains: ['->relay:Agent This should NOT be parsed'],
+    // Thinking block content is intentionally stripped from output by the parser
+    expectedOutputNotContains: ['->relay:Agent This should NOT be parsed'],
   },
   {
     name: 'nested-thinking-context',

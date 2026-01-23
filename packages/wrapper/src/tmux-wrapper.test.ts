@@ -187,7 +187,7 @@ describe('Injection retry logic', () => {
     });
 
     it('has correct RETRY_BACKOFF_MS', () => {
-      expect(INJECTION_CONSTANTS.RETRY_BACKOFF_MS).toBe(300);
+      expect(INJECTION_CONSTANTS.RETRY_BACKOFF_MS).toBe(200);
     });
   });
 
@@ -286,15 +286,15 @@ describe('Injection retry logic', () => {
 
       // Backoff for attempt 0 (first retry)
       const backoff0 = backoffMs * 1;
-      expect(backoff0).toBe(300);
+      expect(backoff0).toBe(200);
 
       // Backoff for attempt 1 (second retry)
       const backoff1 = backoffMs * 2;
-      expect(backoff1).toBe(600);
+      expect(backoff1).toBe(400);
 
       // Backoff for attempt 2 (third retry - but no backoff needed after last attempt)
       const backoff2 = backoffMs * 3;
-      expect(backoff2).toBe(900);
+      expect(backoff2).toBe(600);
     });
   });
 
