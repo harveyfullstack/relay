@@ -25,10 +25,11 @@ fi
 # Count messages
 MSG_COUNT=$(echo "$CONTENT" | grep -c "## Message from")
 
-# Check if MCP is available (.mcp.json in project root)
+# Check if MCP is available (requires BOTH .mcp.json AND daemon socket accessible)
 # Note: Only check PROJECT_ROOT, not cwd, to avoid false positives when hook runs from different dir
+RELAY_SOCKET="${RELAY_SOCKET:-/tmp/agent-relay.sock}"
 MCP_AVAILABLE=0
-if [ -f "$PROJECT_ROOT/.mcp.json" ]; then
+if [ -f "$PROJECT_ROOT/.mcp.json" ] && [ -S "$RELAY_SOCKET" ]; then
     MCP_AVAILABLE=1
 fi
 
@@ -46,13 +47,18 @@ EOF
 if [ "$MCP_AVAILABLE" -eq 1 ]; then
     cat << 'EOF'
 --- MCP TOOLS AVAILABLE ---
-Use these for agent communication (recommended over file protocol):
-  relay_send(to, message)      - Send message to agent/channel
-  relay_spawn(name, cli, task) - Create worker agent
-  relay_inbox()                - Check your messages
-  relay_who()                  - List online agents
-  relay_release(name)          - Stop a worker agent
-  relay_status()               - Check connection status
+Primary API for agent coordination. Use instead of file protocol.
+
+Quick Reference:
+  relay_send(to, message)      → Send message to agent/channel
+  relay_spawn(name, cli, task) → Create worker agent
+  relay_inbox()                → Check your messages
+  relay_who()                  → List online agents
+  relay_release(name)          → Stop a worker agent
+  relay_status()               → Check connection status
+
+When in doubt: prefer MCP tools over file protocol.
+Fallback: use ->relay-file: if MCP unavailable or daemon not running.
 
 EOF
 fi
