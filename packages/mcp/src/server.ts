@@ -28,6 +28,15 @@ import {
   relayStatusTool,
   relayStatusSchema,
   handleRelayStatus,
+  relayLogsTool,
+  relayLogsSchema,
+  handleRelayLogs,
+  relayMetricsTool,
+  relayMetricsSchema,
+  handleRelayMetrics,
+  relayHealthTool,
+  relayHealthSchema,
+  handleRelayHealth,
 } from './tools/index.js';
 import { protocolPrompt, getProtocolPrompt } from './prompts/index.js';
 import {
@@ -49,6 +58,9 @@ const TOOLS = [
   relaySpawnTool,
   relayReleaseTool,
   relayStatusTool,
+  relayLogsTool,
+  relayMetricsTool,
+  relayHealthTool,
 ];
 
 /**
@@ -136,6 +148,24 @@ export function createMCPServer(client: RelayClient, config?: MCPServerConfig): 
         case 'relay_status': {
           const input = relayStatusSchema.parse(args);
           result = await handleRelayStatus(client, input);
+          break;
+        }
+
+        case 'relay_logs': {
+          const input = relayLogsSchema.parse(args);
+          result = await handleRelayLogs(client, input);
+          break;
+        }
+
+        case 'relay_metrics': {
+          const input = relayMetricsSchema.parse(args);
+          result = await handleRelayMetrics(client, input);
+          break;
+        }
+
+        case 'relay_health': {
+          const input = relayHealthSchema.parse(args);
+          result = await handleRelayHealth(client, input);
           break;
         }
 

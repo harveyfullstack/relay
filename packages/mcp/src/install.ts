@@ -238,7 +238,7 @@ function getLocalConfigPath(
   // Most editors use .vscode/mcp.json or similar in project root
   switch (editor.name) {
     case 'Claude Code':
-      return join(projectDir, '.claude', 'settings.local.json');
+      return join(projectDir, '.mcp.json');
     case 'Cursor':
       return join(projectDir, '.cursor', 'mcp.json');
     case 'VS Code':
@@ -284,12 +284,9 @@ export function installForEditor(
     args: options.args || ['@agent-relay/mcp', 'serve'],
   };
 
-  // Add RELAY_PROJECT env var for project-specific installs
-  if (options.projectDir) {
-    serverConfig.env = {
-      RELAY_PROJECT: options.projectDir,
-    };
-  }
+  // Note: We don't set RELAY_PROJECT for local installs because the MCP server
+  // will auto-discover the socket from the current working directory.
+  // This makes the config portable across machines.
 
   if (options.dryRun) {
     return {

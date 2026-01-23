@@ -34,3 +34,24 @@ export {
   handleRelayStatus,
   type RelayStatusInput,
 } from './relay-status.js';
+
+export {
+  relayLogsTool,
+  relayLogsSchema,
+  handleRelayLogs,
+  type RelayLogsInput,
+} from './relay-logs.js';
+
+export {
+  relayMetricsTool,
+  relayMetricsSchema,
+  handleRelayMetrics,
+  type RelayMetricsInput,
+} from './relay-metrics.js';
+
+export {
+  relayHealthTool,
+  relayHealthSchema,
+  handleRelayHealth,
+  type RelayHealthInput,
+} from './relay-health.js';
