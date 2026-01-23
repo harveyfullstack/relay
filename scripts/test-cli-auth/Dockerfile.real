@@ -96,9 +96,12 @@ RUN cd /app/node_modules/@agent-relay/protocol && \
 
 # Build config package
 # Config needs zod (runtime dep) but @agent-relay/protocol is already in node_modules
-# Install only external dependencies, not internal @agent-relay/* packages
+# Remove @agent-relay/* deps from package.json before npm install, then restore
 RUN cd /app/node_modules/@agent-relay/config && \
+    cp package.json package.json.bak && \
+    node -e "const p=require('./package.json'); delete p.dependencies['@agent-relay/protocol']; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2))" && \
     npm install --ignore-scripts zod zod-to-json-schema && \
+    mv package.json.bak package.json && \
     tsc
 
 # Install test dependencies (from scripts/test-cli-auth directory)
