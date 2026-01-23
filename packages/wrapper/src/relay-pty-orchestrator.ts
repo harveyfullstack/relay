@@ -1819,10 +1819,10 @@ EOF
 \`\`\`
 Then output: \`->relay-file:spawn\`
 
-**Protocol Tips:**
-- Always ACK when you receive a task: "ACK: Brief description"
-- Send DONE when complete: "DONE: What was accomplished"
-- Keep your lead informed of progress
+**Message Format:**
+- \`TO: AgentName\` for direct messages
+- \`TO: *\` to broadcast to all agents
+- \`TO: #channel\` for channel messages
 
 📖 See **AGENTS.md** in the project root for full protocol documentation.`;
 

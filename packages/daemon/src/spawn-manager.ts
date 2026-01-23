@@ -88,6 +88,7 @@ export class SpawnManager {
         shadowOf: payload.shadowOf,
         shadowSpeakOn: payload.shadowSpeakOn,
         userId: payload.userId,
+        includeWorkflowConventions: payload.includeWorkflowConventions,
       });
 
       this.sendResult(connection, 'SPAWN_RESULT', envelope.id, {

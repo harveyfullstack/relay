@@ -223,9 +223,12 @@ function getMcpToolsReference(): string {
  * This keeps agent instructions simple while supporting workspace isolation.
  *
  * @param agentName - Name of the agent
- * @param hasMcp - Whether MCP tools are available (based on .mcp.json existence)
+ * @param options - Configuration options
+ * @param options.hasMcp - Whether MCP tools are available (based on .mcp.json existence)
+ * @param options.includeWorkflowConventions - Include ACK/DONE workflow conventions (default: false)
  */
-function getRelayInstructions(agentName: string, hasMcp = false): string {
+function getRelayInstructions(agentName: string, options: { hasMcp?: boolean; includeWorkflowConventions?: boolean } = {}): string {
+  const { hasMcp = false, includeWorkflowConventions = false } = options;
   // Get the outbox path template and replace variable with actual agent name
   const outboxBase = getAgentOutboxTemplate(agentName);
 
@@ -255,28 +258,37 @@ function getRelayInstructions(agentName: string, hasMcp = false): string {
     '```',
     '',
     'Then output: `->relay-file:msg`',
-    '',
-    '## Communication Rules',
-    '',
-    '1. **ACK immediately** - When you receive a task:',
-    '```bash',
-    `cat > ${outboxBase}/ack << 'EOF'`,
-    'TO: Sender',
-    '',
-    'ACK: Brief description of task received',
-    'EOF',
-    '```',
-    'Then: `->relay-file:ack`',
-    '',
-    '2. **Report completion** - When done:',
-    '```bash',
-    `cat > ${outboxBase}/done << 'EOF'`,
-    'TO: Sender',
-    '',
-    'DONE: Brief summary of what was completed',
-    'EOF',
-    '```',
-    'Then: `->relay-file:done`',
+  );
+
+  // Only include ACK/DONE workflow conventions if explicitly requested
+  if (includeWorkflowConventions) {
+    parts.push(
+      '',
+      '## Communication Rules',
+      '',
+      '1. **ACK immediately** - When you receive a task:',
+      '```bash',
+      `cat > ${outboxBase}/ack << 'EOF'`,
+      'TO: Sender',
+      '',
+      'ACK: Brief description of task received',
+      'EOF',
+      '```',
+      'Then: `->relay-file:ack`',
+      '',
+      '2. **Report completion** - When done:',
+      '```bash',
+      `cat > ${outboxBase}/done << 'EOF'`,
+      'TO: Sender',
+      '',
+      'DONE: Brief summary of what was completed',
+      'EOF',
+      '```',
+      'Then: `->relay-file:done`',
+    );
+  }
+
+  parts.push(
     '',
     '## Message Format',
     '',
@@ -671,7 +683,7 @@ export class AgentSpawner {
    * Spawn a new worker agent using relay-pty
    */
   async spawn(request: SpawnRequest): Promise<SpawnResult> {
-    const { name, cli, task, team, spawnerName, userId } = request;
+    const { name, cli, task, team, spawnerName, userId, includeWorkflowConventions } = request;
     const debug = process.env.DEBUG_SPAWN === '1';
 
     // Validate agent name to prevent path traversal attacks
@@ -828,7 +840,7 @@ export class AgentSpawner {
       if (debug && hasMcp) log.debug(`MCP tools available for ${name} (found ${mcpConfigPath} and socket ${relaySocket})`);
 
       // Inject relay protocol instructions via CLI-specific system prompt
-      let relayInstructions = getRelayInstructions(name, hasMcp);
+      let relayInstructions = getRelayInstructions(name, { hasMcp, includeWorkflowConventions });
 
       // Compose role-specific prompts if agent has a role defined in .claude/agents/
       const agentConfigForRole = isClaudeCli ? findAgentConfig(name, this.projectRoot) : null;
