@@ -98,6 +98,27 @@ export function getCloudOutboxPath(workspaceId: string, agentName: string): stri
 }
 
 /**
+ * Find project root by looking for common markers.
+ * Scans up from startDir until it finds a marker or hits the filesystem root.
+ */
+function findProjectRoot(startDir: string = process.cwd()): string | null {
+  let current = startDir;
+  const root = current.split('/')[0] || '/';
+  const markers = ['.git', 'package.json', 'Cargo.toml', 'go.mod', 'pyproject.toml', '.agent-relay'];
+
+  while (current !== root && current !== '/') {
+    for (const marker of markers) {
+      if (existsSync(join(current, marker))) {
+        return current;
+      }
+    }
+    current = join(current, '..');
+  }
+
+  return null;
+}
+
+/**
  * Get platform-specific data directory.
  */
 function getDataDir(): string {
@@ -190,7 +211,39 @@ export function discoverSocket(options: CloudConnectionOptions = {}): DiscoveryR
     }
   }
 
-  // 4. Current working directory config
+  // 4. Project-local socket (created by daemon in project's .agent-relay directory)
+  // This is the primary path for local development
+  // First try cwd, then scan up to find project root
+  const projectRoot = findProjectRoot(process.cwd());
+  const searchDirs = [process.cwd()];
+  if (projectRoot && projectRoot !== process.cwd()) {
+    searchDirs.push(projectRoot);
+  }
+
+  for (const dir of searchDirs) {
+    const projectLocalSocket = join(dir, '.agent-relay', 'relay.sock');
+    if (existsSync(projectLocalSocket)) {
+      // Read project ID from marker file if available
+      let projectId = 'local';
+      const markerPath = join(dir, '.agent-relay', '.project');
+      if (existsSync(markerPath)) {
+        try {
+          const marker = JSON.parse(readFileSync(markerPath, 'utf-8'));
+          projectId = marker.projectId || 'local';
+        } catch {
+          // Ignore marker read errors
+        }
+      }
+      return {
+        socketPath: projectLocalSocket,
+        project: projectId,
+        source: 'cwd',
+        isCloud: false,
+      };
+    }
+  }
+
+  // 4b. Legacy .relay/config.json support
   const cwdConfig = join(process.cwd(), '.relay', 'config.json');
   if (existsSync(cwdConfig)) {
     try {

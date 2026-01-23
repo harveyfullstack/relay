@@ -7,6 +7,7 @@
 
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
+import { getDefaultSocketPath } from './discovery.js';
 import {
   type Envelope,
   type HelloPayload,
@@ -72,10 +73,17 @@ export interface ClientConfig {
   reconnectMaxDelayMs: number;
 }
 
-const DEFAULT_SOCKET_PATH = '/tmp/agent-relay.sock';
+// Socket path is discovered lazily to allow environment to be set up first
+let _discoveredSocketPath: string | null = null;
+function getDiscoveredSocketPath(): string {
+  if (_discoveredSocketPath === null) {
+    _discoveredSocketPath = getDefaultSocketPath();
+  }
+  return _discoveredSocketPath;
+}
 
 const DEFAULT_CLIENT_CONFIG: ClientConfig = {
-  socketPath: DEFAULT_SOCKET_PATH,
+  socketPath: '', // Will be set in constructor if not provided
   agentName: 'agent',
   cli: undefined,
   quiet: false,
@@ -128,7 +136,39 @@ class CircularDedupeCache {
 }
 
 /**
- * RelayClient for agent-to-agent communication.
+ * RelayClient - Agent-to-agent communication client for Agent Relay.
+ *
+ * The client automatically discovers the daemon socket path. You only need to provide
+ * your agent name. Use `connect()` to establish a connection, then send/receive messages.
+ *
+ * @example Basic Usage
+ * ```typescript
+ * import { RelayClient } from '@agent-relay/sdk';
+ *
+ * const client = new RelayClient({ agentName: 'MyAgent' });
+ * await client.connect();
+ *
+ * // Send messages
+ * client.sendMessage('OtherAgent', 'Hello!');
+ * client.sendMessage('#general', 'Channel message');
+ * client.sendMessage('*', 'Broadcast');
+ *
+ * // Receive messages
+ * client.onMessage = (from, payload) => {
+ *   console.log(`${from}: ${payload.body}`);
+ * };
+ *
+ * // Disconnect when done
+ * client.disconnect();
+ * ```
+ *
+ * @example Wait for Response
+ * ```typescript
+ * const response = await client.sendAndWait('Worker', 'Do this task', {
+ *   timeoutMs: 30000,
+ * });
+ * console.log(`Worker replied: ${response.content}`);
+ * ```
  */
 export class RelayClient {
   private config: ClientConfig;
@@ -153,17 +193,43 @@ export class RelayClient {
     timeoutHandle: NodeJS.Timeout;
   }> = new Map();
 
-  // Event handlers
+  /**
+   * Callback for receiving direct messages.
+   * @param from - Name of the sending agent
+   * @param payload - Message payload containing body, kind, and optional data
+   * @param messageId - Unique message identifier
+   * @param meta - Optional metadata (sync info, etc.)
+   * @param originalTo - Original recipient (useful for detecting broadcasts when originalTo='*')
+   */
   onMessage?: (from: string, payload: SendPayload, messageId: string, meta?: SendMeta, originalTo?: string) => void;
+
   /**
    * Callback for channel messages.
+   * @param from - Name of the sending agent
+   * @param channel - Channel name (e.g., '#general')
+   * @param body - Message body text
+   * @param envelope - Full message envelope with metadata
    */
   onChannelMessage?: (from: string, channel: string, body: string, envelope: Envelope<ChannelMessagePayload>) => void;
+
+  /**
+   * Callback for connection state changes.
+   * @param state - New connection state: 'DISCONNECTED' | 'CONNECTING' | 'HANDSHAKING' | 'READY' | 'BACKOFF'
+   */
   onStateChange?: (state: ClientState) => void;
+
+  /**
+   * Callback for errors.
+   * @param error - The error that occurred
+   */
   onError?: (error: Error) => void;
 
   constructor(config: Partial<ClientConfig> = {}) {
     this.config = { ...DEFAULT_CLIENT_CONFIG, ...config };
+    // Use discovered socket path if not explicitly provided
+    if (!this.config.socketPath) {
+      this.config.socketPath = getDiscoveredSocketPath();
+    }
     this.parser = new FrameParser();
     this.parser.setLegacyMode(true);
     this.reconnectDelay = this.config.reconnectDelayMs;
@@ -273,7 +339,30 @@ export class RelayClient {
   }
 
   /**
-   * Send a message to another agent.
+   * Send a message to another agent, channel, or broadcast.
+   *
+   * @param to - Recipient: agent name, '#channel', or '*' for broadcast
+   * @param body - Message content
+   * @param kind - Message type (default: 'message')
+   * @param data - Optional structured data to include
+   * @param thread - Optional thread ID for conversation threading
+   * @param meta - Optional metadata (sync info, etc.)
+   * @returns true if message was queued, false if not connected
+   *
+   * @example
+   * ```typescript
+   * // Direct message
+   * client.sendMessage('Worker1', 'Start the task');
+   *
+   * // Channel message
+   * client.sendMessage('#general', 'Team update');
+   *
+   * // Broadcast to all agents
+   * client.sendMessage('*', 'System announcement');
+   *
+   * // With structured data
+   * client.sendMessage('Worker1', 'Process this', 'task', { priority: 'high' });
+   * ```
    */
   sendMessage(
     to: string,
@@ -325,7 +414,28 @@ export class RelayClient {
   }
 
   /**
-   * Send a message and wait for ACK response.
+   * Send a message and wait for acknowledgment response.
+   *
+   * This is useful for request-response patterns where you need to wait for
+   * the recipient to process your message and reply.
+   *
+   * @param to - Recipient agent name
+   * @param body - Message content
+   * @param options - Options including timeout, thread, etc.
+   * @returns Promise that resolves with the ACK payload when recipient responds
+   * @throws Error if client not ready or timeout exceeded
+   *
+   * @example
+   * ```typescript
+   * try {
+   *   const response = await client.sendAndWait('Worker', 'Process this task', {
+   *     timeoutMs: 30000,  // 30 second timeout
+   *   });
+   *   console.log('Worker responded:', response);
+   * } catch (err) {
+   *   console.error('Worker did not respond in time');
+   * }
+   * ```
    */
   async sendAndWait(to: string, body: string, options: SyncOptions = {}): Promise<AckPayload> {
     if (this._state !== 'READY') {
