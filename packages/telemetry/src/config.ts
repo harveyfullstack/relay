@@ -1,6 +1,5 @@
 /**
- * Telemetry configuration and preference storage.
- * Stores preferences in ~/.agent-relay/telemetry.json
+ * Telemetry preference storage (~/.agent-relay/telemetry.json)
  */
 
 import fs from 'node:fs';
@@ -17,19 +16,12 @@ export interface TelemetryPrefs {
   anonymousId: string;
 }
 
-/**
- * Get the path to the telemetry preferences file.
- */
 export function getPrefsPath(): string {
   const configDir = process.env.AGENT_RELAY_DATA_DIR ||
     path.join(os.homedir(), '.agent-relay');
   return path.join(configDir, 'telemetry.json');
 }
 
-/**
- * Load telemetry preferences from disk.
- * Returns default preferences if file doesn't exist.
- */
 export function loadPrefs(): TelemetryPrefs {
   const prefsPath = getPrefsPath();
 
@@ -38,7 +30,6 @@ export function loadPrefs(): TelemetryPrefs {
       const content = fs.readFileSync(prefsPath, 'utf-8');
       const prefs = JSON.parse(content) as Partial<TelemetryPrefs>;
 
-      // Ensure anonymousId exists (migration for old configs)
       if (!prefs.anonymousId) {
         prefs.anonymousId = createAnonymousId();
         savePrefs(prefs as TelemetryPrefs);
@@ -54,16 +45,12 @@ export function loadPrefs(): TelemetryPrefs {
     // Fall through to defaults
   }
 
-  // Default: enabled, generate anonymousId
   return {
     enabled: true,
     anonymousId: createAnonymousId(),
   };
 }
 
-/**
- * Save telemetry preferences to disk.
- */
 export function savePrefs(prefs: TelemetryPrefs): void {
   const prefsPath = getPrefsPath();
   const configDir = path.dirname(prefsPath);
@@ -77,9 +64,6 @@ export function savePrefs(prefs: TelemetryPrefs): void {
   }
 }
 
-/**
- * Check if telemetry is disabled via environment variable.
- */
 export function isDisabledByEnv(): boolean {
   const envValue = process.env.AGENT_RELAY_TELEMETRY_DISABLED;
   return envValue === '1' || envValue === 'true';
@@ -99,43 +83,28 @@ export function isTelemetryEnabled(): boolean {
   return loadPrefs().enabled;
 }
 
-/**
- * Enable telemetry and save preference.
- */
 export function enableTelemetry(): void {
   const prefs = loadPrefs();
   prefs.enabled = true;
   savePrefs(prefs);
 }
 
-/**
- * Disable telemetry and save preference.
- */
 export function disableTelemetry(): void {
   const prefs = loadPrefs();
   prefs.enabled = false;
   savePrefs(prefs);
 }
 
-/**
- * Mark that the user has been shown the first-run notice.
- */
 export function markNotified(): void {
   const prefs = loadPrefs();
   prefs.notifiedAt = new Date().toISOString();
   savePrefs(prefs);
 }
 
-/**
- * Check if the user has been shown the first-run notice.
- */
 export function wasNotified(): boolean {
   return loadPrefs().notifiedAt !== undefined;
 }
 
-/**
- * Get the anonymous ID for the current machine.
- */
 export function getAnonymousId(): string {
   return loadPrefs().anonymousId;
 }

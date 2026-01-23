@@ -1,11 +1,7 @@
 /**
- * @agent-relay/telemetry
- *
- * Anonymous telemetry for Agent Relay usage analytics.
- * Enabled by default with opt-out via environment variable or CLI.
+ * @agent-relay/telemetry - Anonymous usage analytics (opt-out via env or CLI)
  */
 
-// Client exports
 export {
   initTelemetry,
   track,
@@ -15,7 +11,6 @@ export {
   getStatus,
 } from './client.js';
 
-// Config exports
 export {
   isTelemetryEnabled,
   enableTelemetry,
@@ -29,7 +24,6 @@ export {
   type TelemetryPrefs,
 } from './config.js';
 
-// Event types
 export type {
   CommonProperties,
   ActionSource,
@@ -45,7 +39,6 @@ export type {
   TelemetryEventMap,
 } from './events.js';
 
-// Machine ID utilities
 export {
   loadMachineId,
   createAnonymousId,

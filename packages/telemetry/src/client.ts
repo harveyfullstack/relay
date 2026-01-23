@@ -1,6 +1,5 @@
 /**
- * PostHog telemetry client.
- * Singleton pattern - initialized once, used throughout the application.
+ * PostHog telemetry client singleton.
  */
 
 import { PostHog } from 'posthog-node';
@@ -28,9 +27,6 @@ let commonProps: CommonProperties | null = null;
 let anonymousId: string | null = null;
 let initialized = false;
 
-/**
- * Find package.json by walking up from the given directory.
- */
 function findPackageJson(startDir: string): string | null {
   let dir = startDir;
   while (dir !== path.dirname(dir)) {
@@ -43,9 +39,6 @@ function findPackageJson(startDir: string): string | null {
   return null;
 }
 
-/**
- * Get the Agent Relay version from package.json.
- */
 function getVersion(): string {
   try {
     const __filename = fileURLToPath(import.meta.url);
@@ -61,28 +54,19 @@ function getVersion(): string {
   return 'unknown';
 }
 
-/**
- * Build common properties that are attached to every event.
- */
 function buildCommonProperties(): CommonProperties {
   return {
     agent_relay_version: getVersion(),
     os: process.platform,
     os_version: os.release(),
-    node_version: process.version.slice(1), // Remove 'v' prefix
+    node_version: process.version.slice(1),
     arch: process.arch,
   };
 }
 
-/**
- * Show the first-run notice if the user hasn't been notified yet.
- */
 function showFirstRunNotice(): void {
-  if (wasNotified()) {
-    return;
-  }
+  if (wasNotified()) return;
 
-  // Don't show notice if disabled by env
   if (isDisabledByEnv()) {
     markNotified();
     return;
@@ -97,66 +81,34 @@ function showFirstRunNotice(): void {
   markNotified();
 }
 
-/**
- * Initialize the telemetry client.
- * Should be called once at application startup.
- *
- * @param options.showNotice - Whether to show the first-run notice (default: true)
- */
 export function initTelemetry(options: { showNotice?: boolean } = {}): void {
-  if (initialized) {
-    return;
-  }
-
+  if (initialized) return;
   initialized = true;
 
-  // Show first-run notice if requested
   if (options.showNotice !== false) {
     showFirstRunNotice();
   }
 
-  // Skip initialization if disabled
-  if (!isTelemetryEnabled()) {
-    return;
-  }
+  if (!isTelemetryEnabled()) return;
 
-  // Get PostHog configuration
   const posthogConfig = getPostHogConfig();
-  if (!posthogConfig) {
-    // No API key configured
-    return;
-  }
+  if (!posthogConfig) return;
 
-  // Initialize PostHog client
   client = new PostHog(posthogConfig.apiKey, {
     host: posthogConfig.host,
-    // Flush events in batches for efficiency
     flushAt: 10,
-    flushInterval: 10000, // 10 seconds
+    flushInterval: 10000,
   });
 
-  // Build common properties once
   commonProps = buildCommonProperties();
-
-  // Get anonymous ID
   anonymousId = getAnonymousId();
 }
 
-/**
- * Track a telemetry event.
- * Type-safe: event name must match one of the defined events,
- * and properties must match the event's schema.
- *
- * @param event - The event name
- * @param properties - Event-specific properties
- */
 export function track<E extends TelemetryEventName>(
   event: E,
   properties?: TelemetryEventMap[E]
 ): void {
-  if (!client || !commonProps || !anonymousId) {
-    return;
-  }
+  if (!client || !commonProps || !anonymousId) return;
 
   client.capture({
     distinctId: anonymousId,
@@ -168,19 +120,13 @@ export function track<E extends TelemetryEventName>(
   });
 }
 
-/**
- * Flush pending events and shutdown the telemetry client.
- * Should be called before application exit.
- */
 export async function shutdown(): Promise<void> {
-  if (!client) {
-    return;
-  }
+  if (!client) return;
 
   try {
     await client.shutdown();
   } catch {
-    // Silently fail - telemetry shouldn't break the app
+    // Ignore
   } finally {
     client = null;
     commonProps = null;
@@ -189,21 +135,12 @@ export async function shutdown(): Promise<void> {
   }
 }
 
-/**
- * Check if telemetry is currently enabled.
- */
 export function isEnabled(): boolean {
   return isTelemetryEnabled();
 }
 
-/**
- * Get the current anonymous ID.
- */
 export { getAnonymousId };
 
-/**
- * Get the current telemetry status for display.
- */
 export function getStatus(): {
   enabled: boolean;
   disabledByEnv: boolean;

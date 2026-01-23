@@ -1,6 +1,6 @@
 /**
  * Machine ID utilities for anonymous user identification.
- * Uses the existing machine-id file at ~/.local/share/agent-relay/machine-id
+ * Uses existing machine-id file at ~/.local/share/agent-relay/machine-id
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -8,9 +8,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-/**
- * Get the path to the machine-id file.
- */
 export function getMachineIdPath(): string {
   const dataDir = process.env.AGENT_RELAY_DATA_DIR ||
     path.join(os.homedir(), '.local', 'share', 'agent-relay');
@@ -18,37 +15,45 @@ export function getMachineIdPath(): string {
 }
 
 /**
- * Load or generate the machine ID.
- * This matches the existing behavior in cloud-sync.ts
+ * Load or generate machine ID using atomic file creation to avoid race conditions.
  */
 export function loadMachineId(): string {
   const machineIdPath = getMachineIdPath();
 
   try {
-    if (fs.existsSync(machineIdPath)) {
-      return fs.readFileSync(machineIdPath, 'utf-8').trim();
+    return fs.readFileSync(machineIdPath, 'utf-8').trim();
+  } catch (readErr: unknown) {
+    if ((readErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return `${os.hostname()}-${Date.now().toString(36)}`;
     }
 
-    // Generate new machine ID
-    const machineId = `${os.hostname()}-${randomBytes(8).toString('hex')}`;
-    const dataDir = path.dirname(machineIdPath);
+    try {
+      const dataDir = path.dirname(machineIdPath);
+      fs.mkdirSync(dataDir, { recursive: true });
 
-    fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(machineIdPath, machineId);
+      const machineId = `${os.hostname()}-${randomBytes(8).toString('hex')}`;
 
-    return machineId;
-  } catch {
-    // Fallback: generate ephemeral ID
-    return `${os.hostname()}-${Date.now().toString(36)}`;
+      // O_CREAT | O_EXCL fails if file exists - prevents race condition
+      const fd = fs.openSync(machineIdPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+      fs.writeSync(fd, machineId);
+      fs.closeSync(fd);
+
+      return machineId;
+    } catch (writeErr: unknown) {
+      // Another process created the file first
+      if ((writeErr as NodeJS.ErrnoException).code === 'EEXIST') {
+        try {
+          return fs.readFileSync(machineIdPath, 'utf-8').trim();
+        } catch {
+          // Fall through
+        }
+      }
+      return `${os.hostname()}-${Date.now().toString(36)}`;
+    }
   }
 }
 
-/**
- * Create an anonymous ID from the machine ID using SHA256 hash.
- * The hash is truncated to 16 characters for brevity while maintaining uniqueness.
- *
- * @returns A 16-character hex string derived from the machine ID
- */
+/** SHA256 hash of machine ID, truncated to 16 chars */
 export function createAnonymousId(): string {
   const machineId = loadMachineId();
   return createHash('sha256')
