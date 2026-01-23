@@ -695,10 +695,23 @@ export class AgentSpawner {
         args.push('--yolo');
       }
 
-      // Check if MCP tools are available (based on .mcp.json existence in project)
+      // Check if MCP tools are available
+      // Must verify BOTH conditions (matching inbox hook behavior from commit 18bab59):
+      // 1. .mcp.json config exists in project
+      // 2. Relay daemon socket is accessible (daemon must be running)
+      // Without both, MCP context would be shown but tools wouldn't work
       const mcpConfigPath = path.join(this.projectRoot, '.mcp.json');
-      const hasMcp = fs.existsSync(mcpConfigPath);
-      if (debug && hasMcp) log.debug(`MCP tools available for ${name} (found ${mcpConfigPath})`);
+      const relaySocket = process.env.RELAY_SOCKET || '/tmp/agent-relay.sock';
+      let hasMcp = false;
+      if (fs.existsSync(mcpConfigPath)) {
+        try {
+          hasMcp = fs.statSync(relaySocket).isSocket();
+        } catch {
+          // Socket doesn't exist or isn't accessible - daemon not running
+          hasMcp = false;
+        }
+      }
+      if (debug && hasMcp) log.debug(`MCP tools available for ${name} (found ${mcpConfigPath} and socket ${relaySocket})`);
 
       // Inject relay protocol instructions via CLI-specific system prompt
       let relayInstructions = getRelayInstructions(name, hasMcp);
