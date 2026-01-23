@@ -592,7 +592,7 @@ async function startDashboardCoordinator(operator: string): Promise<void> {
     console.log(`Daemon already running at port ${detectedPort}, reusing...`);
   } else {
     console.log('Starting daemon...');
-    const daemonProc = spawn(process.execPath, [process.argv[1], 'up'], {
+    const daemonProc = spawn(process.execPath, [process.argv[1], 'up', '--dashboard'], {
       stdio: 'ignore',
       detached: true,
     });
