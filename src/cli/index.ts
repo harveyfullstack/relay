@@ -431,29 +431,54 @@ program
       let dashboardPort: number | undefined;
 
       // Dashboard is disabled by default (use --dashboard to enable)
+      // Dashboard is an optional separate package: @agent-relay/dashboard
       if (options.dashboard === true) {
         const port = parseInt(options.port, 10);
-        const { startDashboard } = await import('@agent-relay/dashboard-server');
-        dashboardPort = await startDashboard({
-          port,
-          dataDir: paths.dataDir,
-          teamDir: paths.teamDir,
-          dbPath,
-          enableSpawner: true,
-          projectRoot: paths.projectRoot,
-          // Pass spawn tracking callbacks so messages can be queued before HELLO completes
-          onMarkSpawning: (name) => daemon.markSpawning(name),
-          onClearSpawning: (name) => daemon.clearSpawning(name),
-        });
-        console.log(`Dashboard: http://localhost:${dashboardPort}`);
+        try {
+          const { startDashboard } = await import('@agent-relay/dashboard');
+          dashboardPort = await startDashboard({
+            port,
+            dataDir: paths.dataDir,
+            teamDir: paths.teamDir,
+            dbPath,
+            enableSpawner: true,
+            projectRoot: paths.projectRoot,
+            // Pass spawn tracking callbacks so messages can be queued before HELLO completes
+            onMarkSpawning: (name) => daemon.markSpawning(name),
+            onClearSpawning: (name) => daemon.clearSpawning(name),
+          });
+          console.log(`Dashboard: http://localhost:${dashboardPort}`);
 
-        // Hook daemon log output to dashboard WebSocket
-        daemon.onLogOutput = (agentName, data, _timestamp) => {
-          const broadcast = (global as any).__broadcastLogOutput;
-          if (broadcast) {
-            broadcast(agentName, data);
+          // Hook daemon log output to dashboard WebSocket
+          daemon.onLogOutput = (agentName, data, _timestamp) => {
+            const broadcast = (global as any).__broadcastLogOutput;
+            if (broadcast) {
+              broadcast(agentName, data);
+            }
+          };
+        } catch (err: unknown) {
+          const error = err as NodeJS.ErrnoException;
+          if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'MODULE_NOT_FOUND') {
+            console.error(`
+Dashboard package not installed.
+
+The dashboard has moved to a separate optional package.
+To use the web dashboard, install it:
+
+  npm install -g @agent-relay/dashboard
+
+Then try again:
+
+  agent-relay up --dashboard
+
+Or run without dashboard:
+
+  agent-relay up
+`);
+            process.exit(1);
           }
-        };
+          throw err;
+        }
       }
 
       // Determine if we should auto-spawn agents

@@ -18,8 +18,11 @@ import {
   type SendEnvelope,
   type AckPayload,
   type ErrorPayload,
+  type SpawnPayload,
+  type ReleasePayload,
 } from '@agent-relay/protocol/types';
 import type { ChannelJoinPayload, ChannelLeavePayload, ChannelMessagePayload } from '@agent-relay/protocol/channels';
+import { SpawnManager, type SpawnManagerConfig } from './spawn-manager.js';
 import { createStorageAdapter, type StorageAdapter, type StorageConfig } from '@agent-relay/storage/adapter';
 import { SqliteStorageAdapter } from '@agent-relay/storage/sqlite-adapter';
 import { getProjectPaths } from '@agent-relay/config';
