@@ -16,6 +16,10 @@ on:
   # Allow manual trigger
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   migrations:
     name: Run Migrations
