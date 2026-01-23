@@ -54,7 +54,7 @@ jobs:
         id: relay-pty-stress
         run: |
           chmod +x scripts/stress-test-relay-pty.sh
-          ./scripts/stress-test-relay-pty.sh > relay-pty-results.json 2>&1 || echo "exit_code=$?" >> $GITHUB_OUTPUT
+          ./scripts/stress-test-relay-pty.sh > relay-pty-results.json || echo "exit_code=$?" >> $GITHUB_OUTPUT
           cat relay-pty-results.json
         continue-on-error: true
 
@@ -103,7 +103,7 @@ jobs:
       - name: Run orchestrator stress tests
         id: orchestrator-stress
         run: |
-          node scripts/stress-test-orchestrator.mjs --json > orchestrator-results.json 2>&1 || echo "exit_code=$?" >> $GITHUB_OUTPUT
+          node scripts/stress-test-orchestrator.mjs --json > orchestrator-results.json || echo "exit_code=$?" >> $GITHUB_OUTPUT
           cat orchestrator-results.json
         continue-on-error: true
 
@@ -155,7 +155,7 @@ jobs:
       - name: Run orchestrator integration stress tests
         id: integration-stress
         run: |
-          npx tsx scripts/stress-test-orchestrator-integration.mts --json > integration-results.json 2>&1 || echo "exit_code=$?" >> $GITHUB_OUTPUT
+          npx tsx scripts/stress-test-orchestrator-integration.mts --json > integration-results.json || echo "exit_code=$?" >> $GITHUB_OUTPUT
           cat integration-results.json
         continue-on-error: true
 
