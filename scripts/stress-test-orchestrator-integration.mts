@@ -1037,25 +1037,32 @@ class IntegrationStressTest {
       }
       coordinator.close();
 
-      const ledgerPath = path.resolve(process.cwd(), 'packages/daemon/dist/relay-ledger.js');
+      // Use file:// URL for dynamic import in worker
+      const ledgerPath = 'file://' + path.resolve(process.cwd(), 'packages/daemon/dist/relay-ledger.js');
+      // Worker code uses dynamic import() since relay-ledger.js is an ES module
       const workerCode = `
         const { parentPort, workerData } = require('worker_threads');
-        const { RelayLedger } = require(workerData.ledgerPath);
 
-        const ledger = new RelayLedger({ dbPath: workerData.dbPath });
-        const claimed = [];
+        (async () => {
+          const { RelayLedger } = await import(workerData.ledgerPath);
 
-        for (const id of workerData.fileIds) {
-          // small jitter to increase contention
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.floor(Math.random() * 5));
-          const res = ledger.claimFile(id);
-          if (res.success) {
-            claimed.push(res.record.fileId);
+          const ledger = new RelayLedger({ dbPath: workerData.dbPath });
+          const claimed = [];
+
+          for (const id of workerData.fileIds) {
+            // small jitter to increase contention
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.floor(Math.random() * 5));
+            const res = ledger.claimFile(id);
+            if (res.success) {
+              claimed.push(res.record.fileId);
+            }
           }
-        }
 
-        ledger.close();
-        parentPort.postMessage({ claimed });
+          ledger.close();
+          parentPort.postMessage({ claimed });
+        })().catch(err => {
+          parentPort.postMessage({ claimed: [], error: err.message });
+        });
       `;
 
       const workerPromises: Array<Promise<{ claimed: string[] }>> = [];
@@ -1079,6 +1086,14 @@ class IntegrationStressTest {
       }
 
       const workerResults = await Promise.all(workerPromises);
+
+      // Check for worker errors
+      for (const result of workerResults) {
+        if ((result as any).error) {
+          throw new Error(`Worker error: ${(result as any).error}`);
+        }
+      }
+
       const allClaims = workerResults.flatMap((r) => r.claimed);
       const uniqueClaims = new Set(allClaims);
       operations.claimed = uniqueClaims.size;
