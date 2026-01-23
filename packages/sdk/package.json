@@ -69,6 +69,7 @@
     "@msgpack/msgpack": "^3.0.0"
   },
   "devDependencies": {
+    "@agent-relay/daemon": "0.1.0",
     "@types/node": "^22.19.3",
     "typescript": "^5.9.3",
     "vitest": "^3.0.0"

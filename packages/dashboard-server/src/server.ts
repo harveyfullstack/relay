@@ -9,7 +9,7 @@ import { exec } from 'child_process';
 import { fileURLToPath } from 'url';
 import { SqliteStorageAdapter } from '@agent-relay/storage/sqlite-adapter';
 import type { StorageAdapter, StoredMessage } from '@agent-relay/storage/adapter';
-import { RelayClient } from '@agent-relay/sdk';
+import { RelayClient, type ClientState, type Envelope, type ChannelMessagePayload } from '@agent-relay/sdk';
 import { UserBridge } from './user-bridge.js';
 import { computeNeedsAttention } from './needs-attention.js';
 import { computeSystemMetrics, formatPrometheusMetrics } from './metrics.js';
@@ -1010,11 +1010,11 @@ export async function startDashboard(
         maxReconnectAttempts: 5,
       });
 
-      client.onError = (err) => {
+      client.onError = (err: Error) => {
         console.error(`[dashboard] Relay client error for ${senderName}:`, err.message);
       };
 
-      client.onStateChange = (state) => {
+      client.onStateChange = (state: ClientState) => {
         console.log(`[dashboard] Relay client for ${senderName} state: ${state}`);
         // Clean up disconnected clients
         if (state === 'DISCONNECTED') {
@@ -1024,7 +1024,7 @@ export async function startDashboard(
 
       // Set up channel message handler to forward messages to presence WebSocket
       // This enables cloud users to receive channel messages via the presence bridge
-      client.onChannelMessage = (from, channel, body, envelope) => {
+      client.onChannelMessage = (from: string, channel: string, body: string, envelope: Envelope<ChannelMessagePayload>) => {
         console.log(`[dashboard] *** CHANNEL MESSAGE RECEIVED *** for ${senderName}: ${from} -> ${channel}`);
 
         // Look up sender's avatar from presence (if they're an online user)
@@ -1087,7 +1087,7 @@ export async function startDashboard(
         maxReconnectAttempts: 5,
       });
 
-      client.onError = (err) => {
+      client.onError = (err: Error) => {
         console.error(`[user-bridge] Relay client error for ${options.agentName}:`, err.message);
       };
 

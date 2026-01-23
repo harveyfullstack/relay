@@ -133,7 +133,23 @@ export {
   type ComposedPrompt,
 } from './prompt-composer.js';
 
-// Relay client (internal)
+/**
+ * Relay client (internal use only)
+ *
+ * @deprecated **MIGRATION REQUIRED** - Use `@agent-relay/sdk` instead.
+ *
+ * ```typescript
+ * // BEFORE (deprecated)
+ * import { RelayClient } from '@agent-relay/wrapper';
+ *
+ * // AFTER (recommended)
+ * import { RelayClient } from '@agent-relay/sdk';
+ * ```
+ *
+ * This export is retained only for internal daemon/wrapper integration.
+ * External consumers should migrate to `@agent-relay/sdk`.
+ * This export will be removed in a future major version.
+ */
 export {
   RelayClient,
   type ClientState,

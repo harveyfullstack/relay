@@ -2,14 +2,35 @@
  * Relay Client
  * Connects to the daemon and handles message sending/receiving.
  *
- * @deprecated For external use, import from '@agent-relay/sdk' instead.
- * This module is for internal daemon integration.
+ * @deprecated **MIGRATION REQUIRED** - This module will be removed in a future version.
  *
- * @example
- * // External consumers should use:
+ * ## Migration Path
+ *
+ * Replace imports from `@agent-relay/wrapper` with `@agent-relay/sdk`:
+ *
+ * ```typescript
+ * // BEFORE (deprecated)
+ * import { RelayClient } from '@agent-relay/wrapper';
+ *
+ * // AFTER (recommended)
  * import { RelayClient } from '@agent-relay/sdk';
+ * ```
  *
- * // Internal daemon code uses this module directly.
+ * The `@agent-relay/sdk` provides the same API with:
+ * - Identical method signatures
+ * - Same configuration options
+ * - Compatible event handlers
+ *
+ * ## Timeline
+ *
+ * - Current: Deprecation warning on first use
+ * - Next minor: TypeScript deprecation errors
+ * - Next major: This module will be removed
+ *
+ * ## Internal Use Only
+ *
+ * This client is retained only for internal daemon/wrapper integration.
+ * External consumers should always use `@agent-relay/sdk`.
  *
  * Optimizations:
  * - Monotonic ID generation (faster than UUID)
@@ -133,7 +154,14 @@ class CircularDedupeCache {
   }
 }
 
+/**
+ * @deprecated Use `RelayClient` from `@agent-relay/sdk` instead.
+ * This class will be removed in a future major version.
+ */
 export class RelayClient {
+  /** Track if deprecation warning has been shown (warn once per process) */
+  private static _deprecationWarningShown = false;
+
   private config: ClientConfig;
   private socket?: net.Socket;
   private parser: FrameParser;
@@ -177,6 +205,17 @@ export class RelayClient {
   onError?: (error: Error) => void;
 
   constructor(config: Partial<ClientConfig> = {}) {
+    // Show deprecation warning once per process
+    if (!RelayClient._deprecationWarningShown) {
+      RelayClient._deprecationWarningShown = true;
+      console.warn(
+        '\x1b[33m[DEPRECATION WARNING]\x1b[0m RelayClient from @agent-relay/wrapper is deprecated.\n' +
+        '  Migrate to @agent-relay/sdk:\n' +
+        '    import { RelayClient } from \'@agent-relay/sdk\';\n' +
+        '  This module will be removed in a future major version.'
+      );
+    }
+
     this.config = { ...DEFAULT_CLIENT_CONFIG, ...config };
     this.parser = new FrameParser();
     this.parser.setLegacyMode(true); // Use 4-byte header for backwards compatibility

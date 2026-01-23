@@ -63,6 +63,10 @@ export {
   type SpawnResultPayload,
   type ReleasePayload,
   type ReleaseResultPayload,
+  // Channel types
+  type ChannelMessagePayload,
+  type ChannelJoinPayload,
+  type ChannelLeavePayload,
 } from './protocol/index.js';
 
 // Framing utilities
