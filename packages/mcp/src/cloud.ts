@@ -8,6 +8,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { findProjectRoot } from '@agent-relay/config';
 
 // ============================================================================
 // Types
@@ -95,27 +96,6 @@ export function getCloudSocketPath(workspaceId: string): string {
  */
 export function getCloudOutboxPath(workspaceId: string, agentName: string): string {
   return `/tmp/relay/${workspaceId}/outbox/${agentName}`;
-}
-
-/**
- * Find project root by looking for common markers.
- * Scans up from startDir until it finds a marker or hits the filesystem root.
- */
-function findProjectRoot(startDir: string = process.cwd()): string | null {
-  let current = startDir;
-  const root = current.split('/')[0] || '/';
-  const markers = ['.git', 'package.json', 'Cargo.toml', 'go.mod', 'pyproject.toml', '.agent-relay'];
-
-  while (current !== root && current !== '/') {
-    for (const marker of markers) {
-      if (existsSync(join(current, marker))) {
-        return current;
-      }
-    }
-    current = join(current, '..');
-  }
-
-  return null;
 }
 
 /**

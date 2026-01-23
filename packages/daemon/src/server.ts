@@ -307,10 +307,17 @@ export class Daemon {
       fs.unlinkSync(this.config.socketPath);
     }
 
-    // Ensure directory exists
+    // Ensure socket directory exists
     const socketDir = path.dirname(this.config.socketPath);
     if (!fs.existsSync(socketDir)) {
       fs.mkdirSync(socketDir, { recursive: true });
+    }
+
+    // Ensure team directory exists for state files (agents.json, processing-state.json, etc.)
+    // Always check and create, even if same as socketDir, to handle edge cases
+    const teamDir = this.config.teamDir ?? socketDir;
+    if (!fs.existsSync(teamDir)) {
+      fs.mkdirSync(teamDir, { recursive: true });
     }
 
     // Set up inbox symlink for workspace namespacing
