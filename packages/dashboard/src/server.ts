@@ -4053,6 +4053,34 @@ export async function startDashboard(
         startedAt?: string;
       }> = [];
 
+      // Helper to get the actual agent process PID (child of relay-pty wrapper)
+      const getActualAgentPid = async (wrapperPid: number): Promise<number | null> => {
+        try {
+          const { execSync } = await import('child_process');
+          if (process.platform === 'darwin') {
+            // macOS: pgrep -P gets children of a parent process
+            const children = execSync(`pgrep -P ${wrapperPid}`, { encoding: 'utf8' }).trim();
+            const childPids = children.split('\n').filter(p => p).map(p => parseInt(p, 10));
+            // Return the first child (the actual claude/codex/gemini process)
+            return childPids[0] || null;
+          } else {
+            // Linux: Use /proc/<pid>/children or pgrep
+            const childrenPath = `/proc/${wrapperPid}/task/${wrapperPid}/children`;
+            if (fs.existsSync(childrenPath)) {
+              const children = fs.readFileSync(childrenPath, 'utf8').trim();
+              const childPids = children.split(/\s+/).filter(p => p).map(p => parseInt(p, 10));
+              return childPids[0] || null;
+            }
+            // Fallback to pgrep
+            const children = execSync(`pgrep -P ${wrapperPid}`, { encoding: 'utf8' }).trim();
+            const childPids = children.split('\n').filter(p => p).map(p => parseInt(p, 10));
+            return childPids[0] || null;
+          }
+        } catch {
+          return null;
+        }
+      };
+
       // Get metrics from spawner's active workers
       if (spawner) {
         const activeWorkers = spawner.getActiveWorkers();
@@ -4060,11 +4088,19 @@ export async function startDashboard(
           // Get memory and CPU usage
           let rssBytes = 0;
           let cpuPercent = 0;
+          let actualPid: number | undefined = worker.pid;
 
           if (worker.pid) {
             try {
+              // The worker.pid is relay-pty wrapper - get the actual agent process (child)
+              const childPid = await getActualAgentPid(worker.pid);
+              const targetPid = childPid || worker.pid;
+              if (childPid) {
+                actualPid = childPid;
+              }
+
               // Try /proc filesystem first (Linux)
-              const statusPath = `/proc/${worker.pid}/status`;
+              const statusPath = `/proc/${targetPid}/status`;
               if (fs.existsSync(statusPath)) {
                 const status = fs.readFileSync(statusPath, 'utf8');
                 // Parse VmRSS (Resident Set Size) from /proc/[pid]/status
@@ -4075,7 +4111,7 @@ export async function startDashboard(
               } else if (process.platform === 'darwin') {
                 // macOS: Use ps command to get RSS and CPU
                 const { execSync } = await import('child_process');
-                const psOutput = execSync(`ps -o rss=,pcpu= -p ${worker.pid}`, { encoding: 'utf8' }).trim();
+                const psOutput = execSync(`ps -o rss=,pcpu= -p ${targetPid}`, { encoding: 'utf8' }).trim();
                 if (psOutput) {
                   const [rssStr, cpuStr] = psOutput.split(/\s+/);
                   if (rssStr) rssBytes = parseInt(rssStr, 10) * 1024; // ps reports RSS in KB
@@ -4089,7 +4125,7 @@ export async function startDashboard(
 
           agents.push({
             name: worker.name,
-            pid: worker.pid,
+            pid: actualPid,
             status: worker.pid ? 'running' : 'unknown',
             rssBytes,
             cpuPercent,
