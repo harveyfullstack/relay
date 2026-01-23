@@ -65,7 +65,7 @@ stop_services() {
     pkill -f "daemon-simulator" 2>/dev/null || true
 
     # Stop cloud server
-    pkill -f "node dist/cloud/index.js" 2>/dev/null || true
+    pkill -f "node packages/cloud/dist/index.js" 2>/dev/null || true
 
     # Stop Docker services
     docker compose -f docker-compose.dev.yml down 2>/dev/null || true
@@ -201,7 +201,7 @@ export RELAY_CLOUD_ENABLED=true
 export RELAY_MEMORY_MONITORING=true
 
 # Start cloud server in background
-node dist/cloud/index.js &
+node packages/cloud/dist/index.js &
 CLOUD_PID=$!
 echo $CLOUD_PID > /tmp/cloud-server.pid
 

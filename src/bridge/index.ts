@@ -1,10 +1,8 @@
 /**
- * Bridge Module
- * Multi-project orchestration for agent-relay
+ * @deprecated Import from '@agent-relay/bridge' instead.
+ *
+ * This file re-exports from the @relay/bridge package for backward compatibility.
+ * All bridge functionality has been moved to packages/bridge/.
  */
 
-export * from './types.js';
-export * from './config.js';
-export * from './multi-project-client.js';
-export * from './spawner.js';
-export * from './utils.js';
+export * from '@agent-relay/bridge';

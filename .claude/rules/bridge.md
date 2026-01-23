@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/bridge/**/*.ts"
+  - "packages/bridge/src/**/*.ts"
 ---
 
 # Bridge Conventions

@@ -1,8 +1,4 @@
 /**
- * Trajectory Module
- *
- * Integrates agent-relay with the agent-trajectories package
- * for PDERO paradigm tracking (Plan, Design, Execute, Review, Observe)
+ * @deprecated Import from '@agent-relay/trajectory' instead.
  */
-
-export * from './integration.js';
+export * from '@agent-relay/trajectory';

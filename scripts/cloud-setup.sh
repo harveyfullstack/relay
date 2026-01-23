@@ -59,7 +59,7 @@ if [ "$SKIP_DATA" = false ]; then
   # Check if cloud server is running, if not start it temporarily
   if ! curl -s http://localhost:4567/api/health > /dev/null 2>&1; then
     echo "   Starting cloud server temporarily for setup..."
-    node dist/cloud/index.js &
+    node packages/cloud/dist/index.js &
     SERVER_PID=$!
     sleep 3
     STARTED_SERVER=true

@@ -5,7 +5,14 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     setupFiles: ['./test/vitest.setup.ts'],
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'test/**/*.test.ts', 'test/**/*.test.tsx'],
+    include: [
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+      'test/**/*.test.ts',
+      'test/**/*.test.tsx',
+      'packages/**/src/**/*.test.ts',
+      'packages/**/tests/**/*.test.ts',
+    ],
     // Use jsdom environment for frontend tests
     environmentMatchGlobs: [
       ['src/dashboard/frontend/**/*.test.ts', 'jsdom'],

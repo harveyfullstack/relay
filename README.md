@@ -38,8 +38,8 @@ agent-relay codex
 Agents communicate via file-based messaging:
 
 ```bash
-# Write message to outbox
-cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/msg << 'EOF'
+# Write message to outbox (AGENT_RELAY_OUTBOX is set automatically)
+cat > $AGENT_RELAY_OUTBOX/msg << 'EOF'
 TO: Bob
 
 Hey, can you help with this task?
@@ -57,13 +57,15 @@ Synchronous messaging (wait for ACK):
 
 Or broadcast to all:
 ```bash
-cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/broadcast << 'EOF'
+cat > $AGENT_RELAY_OUTBOX/broadcast << 'EOF'
 TO: *
 
 Message to all agents
 EOF
 echo "->relay-file:broadcast"
 ```
+
+> **Note**: `$AGENT_RELAY_OUTBOX` is automatically set when agents are spawned via agent-relay. Data is stored in `.agent-relay/` within your project directory (auto-added to `.gitignore`).
 
 ## CLI Reference
 
@@ -176,13 +178,43 @@ agent-relay bridge ~/auth ~/frontend ~/api
 
 Cross-project messaging uses `project:agent` format in the TO header:
 ```bash
-cat > /tmp/relay-outbox/$AGENT_RELAY_NAME/msg << 'EOF'
+cat > $AGENT_RELAY_OUTBOX/msg << 'EOF'
 TO: auth:Lead
 
 Please review the token refresh logic
 EOF
 echo "->relay-file:msg"
 ```
+
+## MCP Server (Model Context Protocol)
+
+Give AI agents native tools for inter-agent communication via MCP:
+
+```bash
+# One-time setup: Configure your editor
+npx @agent-relay/mcp install
+
+# Or configure specific editor
+npx @agent-relay/mcp install --editor claude
+```
+
+Supported editors:
+- Claude Desktop
+- Claude Code
+- Cursor
+- VS Code (with Continue extension)
+- Windsurf
+- Zed
+
+Once configured, AI agents automatically get access to relay tools:
+- `relay_send` - Send messages to agents/channels
+- `relay_inbox` - Check pending messages
+- `relay_who` - List online agents
+- `relay_spawn` - Spawn worker agents
+- `relay_release` - Release workers
+- `relay_status` - Check connection status
+
+The MCP server auto-discovers your relay daemon and provides a seamless integration. Start your daemon first (`agent-relay up`), then use your AI editor normally - the relay tools will be available automatically.
 
 ## Teaching Agents
 

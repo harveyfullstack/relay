@@ -3,12 +3,12 @@ name: CLI OAuth Flow Tests
 on:
   push:
     paths:
-      - 'src/cloud/api/onboarding.ts'
+      - 'packages/cloud/src/api/onboarding.ts'
       - 'scripts/test-cli-auth/**'
       - '.github/workflows/cli-oauth-test.yml'
   pull_request:
     paths:
-      - 'src/cloud/api/onboarding.ts'
+      - 'packages/cloud/src/api/onboarding.ts'
       - 'scripts/test-cli-auth/**'
   # Allow manual trigger
   workflow_dispatch:
@@ -32,8 +32,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build packages
+        run: npm run build
+
       - name: Run onboarding unit tests
-        run: npx vitest run src/cloud/api/onboarding.test.ts
+        run: npx vitest run packages/cloud/src/api/onboarding.test.ts
 
   real-cli-tests:
     name: Real CLI Integration Tests

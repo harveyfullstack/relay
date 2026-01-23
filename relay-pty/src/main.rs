@@ -10,6 +10,7 @@
 #![allow(dead_code)]
 
 mod inject;
+mod outbox_monitor;
 mod parser;
 mod protocol;
 mod pty;
@@ -19,6 +20,7 @@ mod socket;
 use anyhow::{Context, Result};
 use clap::Parser;
 use inject::Injector;
+use outbox_monitor::OutboxMonitor;
 use parser::OutputParser;
 use protocol::Config;
 use pty::{AsyncPty, Pty};
@@ -27,7 +29,9 @@ use socket::{SocketServer, StatusInfo, StatusQuery};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write as IoWrite};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
@@ -92,6 +96,12 @@ struct Args {
     /// Outbox directory for file-based relay messages (default: /tmp/relay/{WORKSPACE_ID}/outbox/{name} when set)
     #[arg(long)]
     outbox: Option<String>,
+
+    /// Timeout in seconds before an outbox file is considered stale (default: 60)
+    /// A stale file indicates the agent wrote a message but forgot to trigger it.
+    /// Set to 0 to disable stale file detection.
+    #[arg(long, default_value = "60")]
+    stale_outbox_timeout: u64,
 
     /// Command to run (after --)
     #[arg(last = true, required = true)]
@@ -213,6 +223,38 @@ async fn main() -> Result<()> {
         OutputParser::new(config.name.clone(), &config.prompt_pattern)
     };
 
+    // Create outbox monitor for stale file detection
+    let mut outbox_monitor: Option<OutboxMonitor> = if let Some(ref outbox) = outbox_path {
+        if args.stale_outbox_timeout > 0 {
+            let outbox_pathbuf = std::path::PathBuf::from(outbox);
+            let mut monitor = outbox_monitor::create_outbox_monitor(
+                args.name.clone(),
+                &outbox_pathbuf,
+                args.stale_outbox_timeout,
+            );
+            if let Err(e) = monitor.start() {
+                warn!("Failed to start outbox monitor: {}", e);
+                None
+            } else {
+                // Initialize tracking for existing files
+                monitor.init().await;
+                info!(
+                    "Stale outbox detection enabled (timeout: {}s)",
+                    args.stale_outbox_timeout
+                );
+                Some(monitor)
+            }
+        } else {
+            info!("Stale outbox detection disabled (timeout set to 0)");
+            None
+        }
+    } else {
+        None
+    };
+
+    // Interval for checking stale outbox files
+    let mut stale_check_interval = tokio::time::interval(std::time::Duration::from_secs(10));
+
     // Start socket server
     let socket_server = SocketServer::new(
         socket_path.clone(),
@@ -261,6 +303,11 @@ async fn main() -> Result<()> {
     // Main event loop
     let json_output = config.json_output;
     let mut stdout = tokio::io::stdout();
+
+    // Track MCP approval state to prevent duplicate approvals
+    let mcp_approved = AtomicBool::new(false);
+    // Buffer recent output to handle fragmented prompt detection
+    let mut mcp_detection_buffer = String::new();
 
     loop {
         select! {
@@ -322,6 +369,34 @@ async fn main() -> Result<()> {
                         }
                     }
 
+                    // Auto-approve MCP servers for Cursor CLI
+                    // Cursor shows approval prompt on first run - auto-send 'a' to approve all
+                    // Uses buffer + flag to handle fragmented output and prevent duplicate approvals
+                    if !mcp_approved.load(Ordering::SeqCst) {
+                        // Accumulate recent output for fragment handling
+                        mcp_detection_buffer.push_str(&text);
+                        // Keep buffer bounded (prompt is ~200 chars max)
+                        if mcp_detection_buffer.len() > 1000 {
+                            mcp_detection_buffer = mcp_detection_buffer[mcp_detection_buffer.len() - 500..].to_string();
+                        }
+
+                        // Require BOTH patterns to reduce false positives
+                        // The prompt always shows both the header and the approve option
+                        if mcp_detection_buffer.contains("MCP Server Approval Required")
+                            && mcp_detection_buffer.contains("[a] Approve all servers")
+                        {
+                            info!("Detected MCP approval prompt, auto-approving");
+                            mcp_approved.store(true, Ordering::SeqCst);
+                            // Small delay to ensure prompt is fully rendered
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            if let Err(e) = async_pty.send(b"a".to_vec()).await {
+                                warn!("Failed to send MCP approval: {}", e);
+                            }
+                            // Clear buffer after approval
+                            mcp_detection_buffer.clear();
+                        }
+                    }
+
                     // Write to stdout
                     stdout.write_all(&data).await?;
                     stdout.flush().await?;
@@ -367,6 +442,20 @@ async fn main() -> Result<()> {
                     last_output_ms: injector.silence_ms(),
                 };
                 let _ = query.response_tx.send(info);
+            }
+
+            // Check for stale outbox files periodically
+            _ = stale_check_interval.tick() => {
+                if let Some(ref mut monitor) = outbox_monitor {
+                    let stale_files = monitor.check_stale().await;
+                    for stale in stale_files {
+                        // Always emit stale file events to stderr as JSON
+                        // (regardless of --json-output flag since this is important)
+                        if let Ok(json) = serde_json::to_string(&stale) {
+                            eprintln!("{}", json);
+                        }
+                    }
+                }
             }
 
             // Note: Response notifications are handled by the socket server

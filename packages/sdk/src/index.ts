@@ -1,0 +1,78 @@
+/**
+ * @agent-relay/sdk
+ *
+ * Lightweight SDK for agent-to-agent communication via Agent Relay.
+ *
+ * ## Quick Start (Standalone - No Setup Required)
+ *
+ * ```typescript
+ * import { createRelay } from '@agent-relay/sdk';
+ *
+ * const relay = await createRelay();
+ * const alice = await relay.client('Alice');
+ * const bob = await relay.client('Bob');
+ *
+ * bob.onMessage = (from, { body }) => console.log(`${from}: ${body}`);
+ * alice.sendMessage('Bob', 'Hello!');
+ * ```
+ *
+ * ## With External Daemon
+ *
+ * ```typescript
+ * import { RelayClient } from '@agent-relay/sdk';
+ *
+ * const client = new RelayClient({ agentName: 'MyAgent' });
+ * await client.connect();
+ * ```
+ */
+
+// Main client
+export {
+  RelayClient,
+  type ClientState,
+  type ClientConfig,
+  type SyncOptions,
+} from './client.js';
+
+// Standalone relay (in-process daemon for simple use cases)
+export {
+  createRelay,
+  createPair,
+  type Relay,
+  type RelayConfig,
+} from './standalone.js';
+
+// Protocol types (re-export for convenience)
+export {
+  PROTOCOL_VERSION,
+  type MessageType,
+  type PayloadKind,
+  type Envelope,
+  type EntityType,
+  type SendPayload,
+  type SendMeta,
+  type SyncMeta,
+  type DeliveryInfo,
+  type AckPayload,
+  type ErrorCode,
+  type ErrorPayload,
+  type SpeakOnTrigger,
+  type ShadowConfig,
+  // Spawn/release types
+  type SpawnPayload,
+  type SpawnResultPayload,
+  type ReleasePayload,
+  type ReleaseResultPayload,
+  // Channel types
+  type ChannelMessagePayload,
+  type ChannelJoinPayload,
+  type ChannelLeavePayload,
+} from './protocol/index.js';
+
+// Framing utilities
+export {
+  encodeFrame,
+  encodeFrameLegacy,
+  FrameParser,
+  MAX_FRAME_BYTES,
+} from './protocol/index.js';

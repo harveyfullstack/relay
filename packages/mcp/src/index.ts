@@ -1,0 +1,84 @@
+// Client interface
+export type { RelayClient } from './client.js';
+export { createRelayClient } from './client.js';
+
+// Simple programmatic API (no MCP protocol overhead)
+export {
+  createTools,
+  send,
+  inbox,
+  who,
+  type RelayTools,
+  type ToolsConfig,
+  type Message,
+  type Agent,
+  type Status,
+  type SpawnResult,
+} from './simple.js';
+
+// Server
+export { createMCPServer, runMCPServer, type MCPServerConfig } from './server.js';
+
+// Tools (for direct usage or custom server implementations)
+export {
+  relaySendTool,
+  relaySendSchema,
+  handleRelaySend,
+  type RelaySendInput,
+  relayInboxTool,
+  relayInboxSchema,
+  handleRelayInbox,
+  type RelayInboxInput,
+  relayWhoTool,
+  relayWhoSchema,
+  handleRelayWho,
+  type RelayWhoInput,
+  relaySpawnTool,
+  relaySpawnSchema,
+  handleRelaySpawn,
+  type RelaySpawnInput,
+  relayReleaseTool,
+  relayReleaseSchema,
+  handleRelayRelease,
+  type RelayReleaseInput,
+  relayStatusTool,
+  relayStatusSchema,
+  handleRelayStatus,
+  type RelayStatusInput,
+} from './tools/index.js';
+
+// Prompts
+export { protocolPrompt, getProtocolPrompt, PROTOCOL_DOCUMENTATION } from './prompts/index.js';
+
+// Resources
+export {
+  agentsResource,
+  getAgentsResource,
+  inboxResource,
+  getInboxResource,
+  projectResource,
+  getProjectResource,
+} from './resources/index.js';
+
+// Errors
+export {
+  RelayError,
+  DaemonNotRunningError,
+  AgentNotFoundError,
+  TimeoutError,
+  ConnectionError,
+  ChannelNotFoundError,
+  SpawnError,
+} from './errors.js';
+
+// Cloud/Discovery
+export {
+  discoverSocket,
+  detectCloudWorkspace,
+  isCloudWorkspace,
+  getCloudSocketPath,
+  getConnectionInfo,
+  type DiscoveryResult,
+  type CloudWorkspace,
+  type CloudConnectionInfo,
+} from './cloud.js';

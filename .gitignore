@@ -3,9 +3,14 @@ node_modules/
 
 # Build output
 dist/
+ui-dist/
 
-# Bundled tmux binary (downloaded at install time)
+# Bundled binaries (downloaded/built at install time)
 bin/tmux
+bin/relay-pty
+
+# Rust build artifacts (relay-pty)
+relay-pty/target/
 
 # Platform-specific relay-pty binary (created by postinstall)
 bin/relay-pty
@@ -41,7 +46,8 @@ coverage/
 
 .next
 
-src/dashboard/out
+# Next.js build output
+**/out/
 
 .env.local
 .env

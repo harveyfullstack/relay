@@ -24,6 +24,7 @@ RUN npm ci
 # Copy source files for build
 COPY tsconfig*.json ./
 COPY src ./src
+COPY packages ./packages
 
 # Build the TypeScript (skip dashboard build for workspace image)
 RUN npx tsc
@@ -39,6 +40,7 @@ WORKDIR /app
 
 # Copy from builder
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
 
@@ -53,17 +55,51 @@ COPY deploy/workspace/gh-relay /usr/local/bin/gh
 RUN chmod +x /entrypoint.sh /usr/local/bin/git-credential-relay /usr/local/bin/gh
 
 # Create symlink for agent-relay CLI
-RUN ln -sf /app/dist/cli/index.js /usr/local/bin/agent-relay && \
-    chmod +x /app/dist/cli/index.js 2>/dev/null || true
+RUN ln -sf /app/dist/src/cli/index.js /usr/local/bin/agent-relay && \
+    chmod +x /app/dist/src/cli/index.js 2>/dev/null || true
 
 # Fix ownership
 RUN chown -R workspace:workspace /app
+
+# === MCP Server for Agent Relay ===
+# Pre-configure MCP so all CLI tools have relay tools available
+
+# Configure Claude Code MCP settings (global config is ~/.claude.json)
+RUN echo '{"mcpServers":{"agent-relay":{"command":"node","args":["/app/dist/src/cli/index.js","mcp","serve"]}}}' \
+    > /home/workspace/.claude.json && \
+    chown workspace:workspace /home/workspace/.claude.json
+
+# Configure Cursor MCP settings
+RUN mkdir -p /home/workspace/.cursor && \
+    echo '{"mcpServers":{"agent-relay":{"command":"node","args":["/app/dist/src/cli/index.js","mcp","serve"]}}}' \
+    > /home/workspace/.cursor/mcp.json && \
+    chown -R workspace:workspace /home/workspace/.cursor
+
+# Configure Gemini CLI MCP settings
+RUN mkdir -p /home/workspace/.gemini && \
+    echo '{"mcpServers":{"agent-relay":{"command":"node","args":["/app/dist/src/cli/index.js","mcp","serve"]}}}' \
+    > /home/workspace/.gemini/settings.json && \
+    chown -R workspace:workspace /home/workspace/.gemini
+
+# Configure OpenCode MCP settings (uses "mcp" key, not "mcpServers")
+RUN mkdir -p /home/workspace/.config/opencode && \
+    echo '{"mcp":{"agent-relay":{"command":"node","args":["/app/dist/src/cli/index.js","mcp","serve"]}}}' \
+    > /home/workspace/.config/opencode/opencode.json && \
+    chown -R workspace:workspace /home/workspace/.config/opencode
+
+# Configure Droid (Factory) MCP settings
+RUN mkdir -p /home/workspace/.factory && \
+    echo '{"mcpServers":{"agent-relay":{"command":"node","args":["/app/dist/src/cli/index.js","mcp","serve"]}}}' \
+    > /home/workspace/.factory/mcp.json && \
+    chown -R workspace:workspace /home/workspace/.factory
 
 # Run entrypoint as root so it can start sshd; entrypoint drops to workspace via gosu
 USER root
 
 # Environment
 ENV NODE_ENV=production
+# MCP socket discovery uses RELAY_PROJECT to find the daemon socket
+ENV RELAY_PROJECT=${WORKSPACE_ID:-default}
 ENV PORT=3888
 ENV AGENT_RELAY_DATA_DIR=/data
 ENV AGENT_RELAY_DASHBOARD_PORT=3888

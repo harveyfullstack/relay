@@ -70,6 +70,12 @@ export HOME="${_USER_HOME}"
 export AGENT_RELAY_USER_ID="${WORKSPACE_OWNER_USER_ID:-}"
 export AGENT_RELAY_DATA_DIR="${_DATA_DIR}"
 export AGENT_RELAY_API_KEY="${AGENT_RELAY_API_KEY:-}"
+
+# Source GH_TOKEN from user-writable file if available (written after startup)
+# This enables SSH sessions to use the token fetched during container init
+if [[ -f "${_USER_HOME}/.gh_token" ]]; then
+  source "${_USER_HOME}/.gh_token"
+fi
 ENVEOF
     chmod 644 /etc/profile.d/workspace-env.sh
   fi
@@ -140,6 +146,40 @@ if [[ -n "${CLOUD_API_URL:-}" && -n "${WORKSPACE_ID:-}" && -n "${WORKSPACE_TOKEN
   git config --global credential.useHttpPath true
   export GIT_TERMINAL_PROMPT=0
 
+  # ============================================================================
+  # PRE-FETCH GitHub token at startup and export to environment
+  # This ensures GH_TOKEN is available for git operations and spawned agents
+  # even if cloud API becomes unreachable later. The credential helper's
+  # fallback chain will use this token (env > hosts.yml > gh CLI > cloud API).
+  # ============================================================================
+  if [[ -z "${GH_TOKEN:-}" ]]; then
+    log "Fetching GitHub token from cloud API..."
+    GH_TOKEN_RESPONSE=$(curl -sf --max-time 10 \
+      -H "Authorization: Bearer ${WORKSPACE_TOKEN}" \
+      "${CLOUD_API_URL}/api/git/token?workspaceId=${WORKSPACE_ID}" 2>/dev/null) || true
+
+    if [[ -n "${GH_TOKEN_RESPONSE}" ]]; then
+      # Extract userToken (preferred) or token from JSON response
+      FETCHED_TOKEN=$(echo "${GH_TOKEN_RESPONSE}" | jq -r '.userToken // .token // empty' 2>/dev/null)
+      if [[ -n "${FETCHED_TOKEN}" && "${FETCHED_TOKEN}" != "null" ]]; then
+        export GH_TOKEN="${FETCHED_TOKEN}"
+        export GITHUB_TOKEN="${FETCHED_TOKEN}"
+        # Persist token for SSH sessions (sourced by /etc/profile.d/workspace-env.sh)
+        echo "export GH_TOKEN=\"${FETCHED_TOKEN}\"" > "${HOME}/.gh_token"
+        echo "export GITHUB_TOKEN=\"${FETCHED_TOKEN}\"" >> "${HOME}/.gh_token"
+        chmod 600 "${HOME}/.gh_token"
+        log "GH_TOKEN set from cloud API (token available for git operations and SSH sessions)"
+      else
+        log "WARN: Cloud API returned no token; git may require manual auth"
+      fi
+    else
+      log "WARN: Failed to fetch GitHub token from cloud API; git may require manual auth"
+      log "      Fallback: run 'gh auth login' or set GH_TOKEN manually"
+    fi
+  else
+    log "GH_TOKEN already set in environment"
+  fi
+
   # Configure git identity for commits
   # Use env vars if set, otherwise default to "Agent Relay" / "agent@agent-relay.com"
   DEFAULT_GIT_EMAIL="${AGENT_NAME:-agent}@agent-relay.com"
@@ -206,16 +246,19 @@ clone_or_update_repo() {
     git -C "${target}" pull --ff-only >/dev/null 2>&1 || true
   else
     log "Cloning ${repo}..."
-    git clone "${url}" "${target}" >/dev/null 2>&1 || {
-      log "WARN: Failed to clone ${repo}"
-    }
+    # Use shallow clone for faster initial setup (full history not needed for most agent work)
+    # SHALLOW_CLONE env var can be set to "false" to disable this optimization
+    if [[ "${SHALLOW_CLONE:-true}" == "true" ]]; then
+      git clone --depth=1 "${url}" "${target}" >/dev/null 2>&1 || {
+        log "WARN: Failed to clone ${repo}"
+      }
+    else
+      git clone "${url}" "${target}" >/dev/null 2>&1 || {
+        log "WARN: Failed to clone ${repo}"
+      }
+    fi
   fi
-
-  # Mark directory as safe to prevent "dubious ownership" errors
-  # This is needed when git runs as a different user (e.g., root via SSH)
-  if [[ -d "${target}/.git" ]]; then
-    git config --global --add safe.directory "${target}" 2>/dev/null || true
-  fi
+  # Note: safe.directory config is done after all clones complete (batched)
 }
 
 if [[ -n "${REPO_LIST}" ]]; then
@@ -225,8 +268,29 @@ if [[ -n "${REPO_LIST}" ]]; then
   fi
 
   IFS=',' read -ra repos <<< "${REPO_LIST}"
+
+  # Clone repositories in PARALLEL for faster startup
+  # Each clone runs in background, then we wait for all to complete
+  log "Cloning ${#repos[@]} repositories in parallel..."
   for repo in "${repos[@]}"; do
-    clone_or_update_repo "${repo}"
+    clone_or_update_repo "${repo}" &
+  done
+
+  # Wait for all background clone jobs to complete
+  wait
+  log "All repository clones complete"
+
+  # Batch configure safe.directory for all cloned repos (runs once, not per-repo)
+  # This prevents "dubious ownership" errors when git runs as different user
+  for repo in "${repos[@]}"; do
+    repo="${repo// /}"
+    if [[ -n "${repo}" ]]; then
+      repo_name="$(basename "${repo}")"
+      target="${WORKSPACE_DIR}/${repo_name}"
+      if [[ -d "${target}/.git" ]]; then
+        git config --global --add safe.directory "${target}" 2>/dev/null || true
+      fi
+    fi
   done
 fi
 
@@ -450,7 +514,7 @@ log "Detected workspace path: ${ACTUAL_WORKSPACE}"
 cd "${ACTUAL_WORKSPACE}"
 
 log "Starting agent-relay daemon on port ${PORT} from ${ACTUAL_WORKSPACE}"
-args=(/app/dist/cli/index.js up --port "${PORT}")
+args=(/app/dist/cli/index.js up --dashboard --port "${PORT}")
 
 if [[ "${SUPERVISOR_ENABLED:-true}" == "true" ]]; then
   args+=("--watch")

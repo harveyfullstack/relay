@@ -15,17 +15,13 @@
 
 import { Command } from 'commander';
 import { config as dotenvConfig } from 'dotenv';
-import { Daemon } from '../daemon/server.js';
-import { RelayClient } from '../wrapper/client.js';
-import { RelayPtyOrchestrator } from '../wrapper/relay-pty-orchestrator.js';
-import { AgentSpawner } from '../bridge/spawner.js';
-import { generateAgentName } from '../utils/name-generator.js';
-import { getTmuxPath } from '../utils/tmux-resolver.js';
-import { readWorkersMetadata, getWorkerLogsDir } from '../bridge/spawner.js';
-import type { SpawnRequest, SpawnResult } from '../bridge/types.js';
-import { getShadowForAgent } from '../bridge/shadow-config.js';
-import { selectShadowCli } from '../bridge/shadow-cli.js';
-import { checkForUpdatesInBackground, checkForUpdates } from '../utils/update-checker.js';
+import { Daemon } from '@agent-relay/daemon';
+import { RelayClient } from '@agent-relay/sdk';
+import { RelayPtyOrchestrator, getTmuxPath } from '@agent-relay/wrapper';
+import { AgentSpawner, readWorkersMetadata, getWorkerLogsDir, selectShadowCli } from '@agent-relay/bridge';
+import type { SpawnRequest, SpawnResult } from '@agent-relay/bridge';
+import { generateAgentName, checkForUpdatesInBackground, checkForUpdates } from '@agent-relay/utils';
+import { getShadowForAgent } from '@agent-relay/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -39,7 +35,20 @@ const DEFAULT_DASHBOARD_PORT = process.env.AGENT_RELAY_DASHBOARD_PORT || '3888';
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const packageJsonPath = path.resolve(__dirname, '../../package.json');
+// Find package.json by walking up from current directory
+// Works for both src/cli/ and dist/src/cli/ locations
+function findPackageJson(startDir: string): string {
+  let dir = startDir;
+  while (dir !== path.dirname(dir)) {
+    const candidate = path.join(dir, 'package.json');
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    dir = path.dirname(dir);
+  }
+  throw new Error('Could not find package.json');
+}
+const packageJsonPath = findPackageJson(__dirname);
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 const VERSION = packageJson.version;
 const execAsync = promisify(exec);
@@ -78,9 +87,10 @@ program
   .argument('<command...>', 'Command to wrap (e.g., claude)')
   .action(async (commandParts, options) => {
 
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
-    const { findAgentConfig, isClaudeCli, buildClaudeArgs } = await import('../utils/agent-config.js');
-    const paths = getProjectPaths();
+    const { ensureProjectDir } = await import('@agent-relay/config');
+    const { findAgentConfig, isClaudeCli, buildClaudeArgs } = await import('@agent-relay/config');
+    // ensureProjectDir creates .agent-relay/ and adds to .gitignore on first run
+    const paths = ensureProjectDir();
 
     const [mainCommand, ...commandArgs] = commandParts;
     const agentName = options.name ?? generateAgentName();
@@ -264,12 +274,12 @@ program
     }
   });
 
-// up - Start daemon + dashboard
+// up - Start daemon (dashboard disabled by default)
 program
   .command('up')
-  .description('Start daemon + dashboard')
-  .option('--no-dashboard', 'Disable web dashboard')
-  .option('--port <port>', 'Dashboard port', DEFAULT_DASHBOARD_PORT)
+  .description('Start daemon (use --dashboard to enable web dashboard)')
+  .option('--dashboard', 'Enable web dashboard (disabled by default)')
+  .option('--port <port>', 'Dashboard port (requires --dashboard)', DEFAULT_DASHBOARD_PORT)
   .option('--spawn', 'Force spawn all agents from teams.json')
   .option('--no-spawn', 'Do not auto-spawn agents (just start daemon)')
   .option('--watch', 'Auto-restart daemon on crash (supervisor mode)')
@@ -287,8 +297,10 @@ program
       const startDaemon = (): void => {
         // Build args without --watch to prevent infinite recursion
         const args = ['up'];
-        if (options.dashboard === false) args.push('--no-dashboard');
-        if (options.port) args.push('--port', options.port);
+        if (options.dashboard === true) {
+          args.push('--dashboard');
+          if (options.port) args.push('--port', options.port);
+        }
         if (options.spawn === true) args.push('--spawn');
         if (options.spawn === false) args.push('--no-spawn');
 
@@ -337,9 +349,9 @@ program
       startDaemon();
       return;
     }
-    const { ensureProjectDir } = await import('../utils/project-namespace.js');
-    const { loadTeamsConfig } = await import('../bridge/teams-config.js');
-    const { AgentSpawner } = await import('../bridge/spawner.js');
+    const { ensureProjectDir } = await import('@agent-relay/config');
+    const { loadTeamsConfig } = await import('@agent-relay/config');
+    const { AgentSpawner } = await import('@agent-relay/bridge');
 
     const paths = ensureProjectDir();
     const socketPath = paths.socketPath;
@@ -360,6 +372,8 @@ program
       pidFilePath,
       storagePath: dbPath,
       teamDir: paths.teamDir,
+      // TODO: Add daemon-based spawning support when SDK extraction is complete
+      // See: docs/SDK-MIGRATION-PLAN.md
     });
 
     // Create spawner for auto-spawn (will be initialized after dashboard starts)
@@ -417,30 +431,55 @@ program
 
       let dashboardPort: number | undefined;
 
-      // Dashboard starts by default (use --no-dashboard to disable)
-      if (options.dashboard !== false) {
+      // Dashboard is disabled by default (use --dashboard to enable)
+      // Dashboard is an optional separate package: @agent-relay/dashboard
+      if (options.dashboard === true) {
         const port = parseInt(options.port, 10);
-        const { startDashboard } = await import('../dashboard-server/server.js');
-        dashboardPort = await startDashboard({
-          port,
-          dataDir: paths.dataDir,
-          teamDir: paths.teamDir,
-          dbPath,
-          enableSpawner: true,
-          projectRoot: paths.projectRoot,
-          // Pass spawn tracking callbacks so messages can be queued before HELLO completes
-          onMarkSpawning: (name) => daemon.markSpawning(name),
-          onClearSpawning: (name) => daemon.clearSpawning(name),
-        });
-        console.log(`Dashboard: http://localhost:${dashboardPort}`);
+        try {
+          const { startDashboard } = await import('@agent-relay/dashboard');
+          dashboardPort = await startDashboard({
+            port,
+            dataDir: paths.dataDir,
+            teamDir: paths.teamDir,
+            dbPath,
+            enableSpawner: true,
+            projectRoot: paths.projectRoot,
+            // Pass spawn tracking callbacks so messages can be queued before HELLO completes
+            onMarkSpawning: (name) => daemon.markSpawning(name),
+            onClearSpawning: (name) => daemon.clearSpawning(name),
+          });
+          console.log(`Dashboard: http://localhost:${dashboardPort}`);
 
-        // Hook daemon log output to dashboard WebSocket
-        daemon.onLogOutput = (agentName, data, _timestamp) => {
-          const broadcast = (global as any).__broadcastLogOutput;
-          if (broadcast) {
-            broadcast(agentName, data);
+          // Hook daemon log output to dashboard WebSocket
+          daemon.onLogOutput = (agentName, data, _timestamp) => {
+            const broadcast = (global as any).__broadcastLogOutput;
+            if (broadcast) {
+              broadcast(agentName, data);
+            }
+          };
+        } catch (err: unknown) {
+          const error = err as NodeJS.ErrnoException;
+          if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'MODULE_NOT_FOUND') {
+            console.error(`
+Dashboard package not installed.
+
+The dashboard has moved to a separate optional package.
+To use the web dashboard, install it:
+
+  npm install -g @agent-relay/dashboard
+
+Then try again:
+
+  agent-relay up --dashboard
+
+Or run without dashboard:
+
+  agent-relay up
+`);
+            process.exit(1);
           }
-        };
+          throw err;
+        }
       }
 
       // Determine if we should auto-spawn agents
@@ -497,7 +536,7 @@ program
   .command('down')
   .description('Stop daemon')
   .action(async () => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
     const paths = getProjectPaths();
     const pidPath = pidFilePathForSocket(paths.socketPath);
 
@@ -526,7 +565,7 @@ const MEGA_SYSTEM_PROMPT = [
 // Helper function for starting Dashboard coordinator with a specific provider
 async function startDashboardCoordinator(operator: string): Promise<void> {
   const { spawn } = await import('node:child_process');
-  const { getProjectPaths } = await import('../utils/project-namespace.js');
+  const { getProjectPaths } = await import('@agent-relay/config');
 
   const paths = getProjectPaths();
 
@@ -579,7 +618,7 @@ async function startDashboardCoordinator(operator: string): Promise<void> {
     console.log(`Daemon already running at port ${detectedPort}, reusing...`);
   } else {
     console.log('Starting daemon...');
-    const daemonProc = spawn(process.execPath, [process.argv[1], 'up'], {
+    const daemonProc = spawn(process.execPath, [process.argv[1], 'up', '--dashboard'], {
       stdio: 'ignore',
       detached: true,
     });
@@ -691,7 +730,7 @@ program
   .command('status')
   .description('Check daemon status')
   .action(async () => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
     const paths = getProjectPaths();
     const relaySessions = await discoverRelaySessions();
 
@@ -727,7 +766,7 @@ program
   .option('--remote', 'Include agents from other linked machines (requires cloud link)')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
     const os = await import('node:os');
     const paths = getProjectPaths();
     const agentsPath = path.join(paths.teamDir, 'agents.json');
@@ -917,7 +956,7 @@ program
   .option('--all', 'Include internal/CLI agents')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
     const paths = getProjectPaths();
     const agentsPath = path.join(paths.teamDir, 'agents.json');
 
@@ -956,8 +995,8 @@ program
   .description('Read full message by ID (for truncated messages)')
   .argument('<id>', 'Message ID')
   .action(async (messageId) => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
-    const { createStorageAdapter } = await import('../storage/adapter.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
+    const { createStorageAdapter } = await import('@agent-relay/storage/adapter');
 
     const paths = getProjectPaths();
     const adapter = await createStorageAdapter(paths.dbPath);
@@ -995,8 +1034,8 @@ program
   .option('--since <time>', 'Since time (e.g., "1h", "2024-01-01")')
   .option('--json', 'Output as JSON')
   .action(async (options: { limit?: string; from?: string; to?: string; since?: string; json?: boolean }) => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
-    const { createStorageAdapter } = await import('../storage/adapter.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
+    const { createStorageAdapter } = await import('@agent-relay/storage/adapter');
 
     const paths = getProjectPaths();
     const adapter = await createStorageAdapter(paths.dbPath);
@@ -1097,7 +1136,7 @@ program
   .command('check-tmux', { hidden: true })
   .description('Check tmux availability and version')
   .action(async () => {
-    const { resolveTmux, checkTmuxVersion } = await import('../utils/tmux-resolver.js');
+    const { resolveTmux, checkTmuxVersion } = await import('@agent-relay/wrapper');
 
     const info = resolveTmux();
     if (!info) {
@@ -1128,9 +1167,9 @@ program
   .option('--cli <tool>', 'CLI tool override for all projects')
   .option('--architect [cli]', 'Spawn an architect agent to coordinate all projects (default: claude)')
   .action(async (projectPaths: string[], options) => {
-    const { resolveProjects, validateDaemons } = await import('../bridge/config.js');
-    const { MultiProjectClient } = await import('../bridge/multi-project-client.js');
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { resolveProjects, validateDaemons, getAgentOutboxTemplate } = await import('@agent-relay/config');
+    const { MultiProjectClient } = await import('@agent-relay/bridge');
+    const { getProjectPaths } = await import('@agent-relay/config');
     const fs = await import('node:fs');
     const pathModule = await import('node:path');
 
@@ -1290,6 +1329,9 @@ program
       // Build project context for the architect
       const projectContext = valid.map(p => `- ${p.id}: ${p.path} (Lead: ${p.leadName})`).join('\n');
 
+      // Get outbox path template for agent instructions (escaped for template literal)
+      const outboxPath = getAgentOutboxTemplate().replace(/\$/g, '\\$');
+
       // Create architect system prompt
       const architectPrompt = `You are the Architect, a cross-project coordinator overseeing multiple codebases.
 
@@ -1308,7 +1350,7 @@ Write a file to your outbox, then output the trigger. Use project:AgentName synt
 
 \`\`\`bash
 # Message specific project lead
-cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/msg << 'EOF'
+cat > ${outboxPath}/msg << 'EOF'
 TO: ${valid[0].id}:${valid[0].leadName}
 
 Your message to this project's lead.
@@ -1318,7 +1360,7 @@ Then output: \`->relay-file:msg\`
 
 \`\`\`bash
 # Broadcast to all agents in a project
-cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/broadcast << 'EOF'
+cat > ${outboxPath}/broadcast << 'EOF'
 TO: ${valid.length > 1 ? valid[1].id : valid[0].id}:*
 
 Broadcast to all agents in a project.
@@ -1328,7 +1370,7 @@ Then output: \`->relay-file:broadcast\`
 
 \`\`\`bash
 # Broadcast to ALL agents in ALL projects
-cat > /tmp/relay-outbox/\$AGENT_RELAY_NAME/all << 'EOF'
+cat > ${outboxPath}/all << 'EOF'
 TO: *:*
 
 Broadcast to ALL agents in ALL projects.
@@ -1488,7 +1530,7 @@ program
   .option('--dry-run', 'Show what would be cleaned without actually doing it')
   .option('--force', 'Kill all relay sessions regardless of connection status')
   .action(async (options: { dryRun?: boolean; force?: boolean }) => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
     const paths = getProjectPaths();
     const agentsPath = path.join(paths.teamDir, 'agents.json');
 
@@ -1731,7 +1773,7 @@ program
   .option('-n, --lines <n>', 'Number of lines to show', '50')
   .option('-f, --follow', 'Follow output (like tail -f)')
   .action(async (name: string, options: { lines?: string; follow?: boolean }) => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
     const paths = getProjectPaths();
     const logsDir = getWorkerLogsDir(paths.projectRoot);
     const logFile = path.join(logsDir, `${name}.log`);
@@ -1841,23 +1883,38 @@ program
       return triggers as Array<'SESSION_END' | 'CODE_WRITTEN' | 'REVIEW_REQUEST' | 'EXPLICIT_ASK' | 'ALL_MESSAGES'>;
     };
 
-    try {
-      // Build spawn request using the SpawnRequest type for consistency
-      const spawnRequest: SpawnRequest = {
-        name,
-        cli,
-        task: finalTask,
-        team: options.team,
-        spawnerName: options.spawner,
-        interactive: options.interactive,
-        cwd: options.cwd,
-        shadowMode: options.shadowMode as 'subagent' | 'process' | undefined,
-        shadowOf: options.shadowOf,
-        shadowAgent: options.shadowAgent,
-        shadowTriggers: parseTriggers(options.shadowTriggers),
-        shadowSpeakOn: parseTriggers(options.shadowSpeakOn),
-      };
+    // Build spawn request using the SpawnRequest type for consistency
+    const spawnRequest: SpawnRequest = {
+      name,
+      cli,
+      task: finalTask,
+      team: options.team,
+      spawnerName: options.spawner,
+      interactive: options.interactive,
+      cwd: options.cwd,
+      shadowMode: options.shadowMode as 'subagent' | 'process' | undefined,
+      shadowOf: options.shadowOf,
+      shadowAgent: options.shadowAgent,
+      shadowTriggers: parseTriggers(options.shadowTriggers),
+      shadowSpeakOn: parseTriggers(options.shadowSpeakOn),
+    };
 
+    // Try daemon socket first (preferred path)
+    try {
+      const { getProjectPaths } = await import('@agent-relay/config');
+      const paths = getProjectPaths();
+
+      // TODO: Re-enable daemon-based spawning when client.spawn() is implemented
+      // See: docs/SDK-MIGRATION-PLAN.md for planned implementation
+      // For now, fall through to HTTP API
+      throw new Error('Daemon-based spawn not yet implemented');
+    } catch (daemonErr) {
+      // Fall through to HTTP API
+      // console.log('Daemon not available, trying HTTP API...');
+    }
+
+    // Fall back to HTTP API
+    try {
       const response = await fetch(`http://localhost:${port}/api/spawn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1898,6 +1955,31 @@ program
   .action(async (name: string, options: { port?: string }) => {
     const port = options.port || DEFAULT_DASHBOARD_PORT;
 
+    // Try daemon socket first (preferred path)
+    try {
+      const { getProjectPaths } = await import('@agent-relay/config');
+      const paths = getProjectPaths();
+
+      const client = new RelayClient({
+        socketPath: paths.socketPath,
+        agentName: '__cli_releaser__',
+        quiet: true,
+        reconnect: false,
+        maxReconnectAttempts: 0,
+        reconnectDelayMs: 0,
+        reconnectMaxDelayMs: 0,
+      });
+
+      // TODO: Re-enable daemon-based release when client.release() is implemented
+      // See: docs/SDK-MIGRATION-PLAN.md for planned implementation
+      // For now, fall through to HTTP API
+      throw new Error('Daemon-based release not yet implemented');
+    } catch (daemonErr) {
+      // Fall through to HTTP API
+      // console.log('Daemon not available, trying HTTP API...');
+    }
+
+    // Fall back to HTTP API
     try {
       const response = await fetch(`http://localhost:${port}/api/spawned/${encodeURIComponent(name)}`, {
         method: 'DELETE',
@@ -1931,7 +2013,7 @@ program
   .argument('<name>', 'Agent name')
   .option('--force', 'Skip graceful shutdown, kill immediately')
   .action(async (name: string, options: { force?: boolean }) => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
     const paths = getProjectPaths();
     const workers = readWorkersMetadata(paths.projectRoot);
     const worker = workers.find(w => w.name === name);
@@ -2183,7 +2265,7 @@ cloudCommand
     console.log('');
 
     // Check if daemon is running and connected
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
     const paths = getProjectPaths();
 
     if (fs.existsSync(paths.socketPath)) {
@@ -2282,8 +2364,8 @@ program
   .allowUnknownOption()
   .action(async (args: string[]) => {
     const { spawn } = await import('node:child_process');
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
-    const { getPrimaryTrajectoriesDir, ensureTrajectoriesDir } = await import('../trajectory/config.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
+    const { getPrimaryTrajectoriesDir, ensureTrajectoriesDir } = await import('@agent-relay/config/trajectory-config');
 
     const paths = getProjectPaths();
 
@@ -2856,7 +2938,7 @@ program
     outputDir?: string;
     exposeGc?: boolean;
   }) => {
-    const { getProjectPaths } = await import('../utils/project-namespace.js');
+    const { getProjectPaths } = await import('@agent-relay/config');
 
     if (!commandParts || commandParts.length === 0) {
       console.error('No command specified');
@@ -3250,6 +3332,238 @@ program
       console.log('');
       console.log('If you completed sign-in, the workspace may not have received');
       console.log('the callback. Check if the SSH tunnel was working correctly.');
+      process.exit(1);
+    }
+  });
+
+// init - First-time setup wizard for Agent Relay
+async function runInit(options: { yes?: boolean; skipDaemon?: boolean; skipMcp?: boolean }) {
+  const readline = await import('node:readline');
+  const { existsSync } = await import('node:fs');
+  const { spawn } = await import('node:child_process');
+
+  // Helper to prompt user
+  const prompt = async (question: string, defaultYes = true): Promise<boolean> => {
+    if (options.yes) return true;
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const suffix = defaultYes ? '[Y/n]' : '[y/N]';
+    const answer = await new Promise<string>((resolve) => {
+      rl.question(`${question} ${suffix} `, resolve);
+    });
+    rl.close();
+    const normalized = answer.toLowerCase().trim();
+    if (!normalized) return defaultYes;
+    return normalized === 'y' || normalized === 'yes';
+  };
+
+  // Banner
+  console.log('');
+  console.log('  ╭─────────────────────────────────────╮');
+  console.log('  │                                     │');
+  console.log('  │   🚀 Agent Relay - First Time Setup │');
+  console.log('  │                                     │');
+  console.log('  │   Real-time AI agent communication  │');
+  console.log('  │                                     │');
+  console.log('  ╰─────────────────────────────────────╯');
+  console.log('');
+
+  // Step 1: Detect environment
+  const isCloud = !!process.env.WORKSPACE_ID;
+  if (isCloud) {
+    console.log('  ℹ  Detected: Cloud workspace');
+    console.log('     MCP tools are pre-configured in cloud environments.');
+    console.log('');
+    return;
+  }
+
+  console.log('  ℹ  Detected: Local environment');
+  console.log('');
+
+  // Step 2: Check daemon status
+  let daemonRunning = false;
+  const socketPath = process.env.RELAY_SOCKET;
+  if (socketPath && existsSync(socketPath)) {
+    daemonRunning = true;
+  } else {
+    // Check default locations
+    const { homedir } = await import('node:os');
+    const { join } = await import('node:path');
+    const platform = process.platform;
+    let dataDir: string;
+    if (platform === 'darwin') {
+      dataDir = join(homedir(), 'Library', 'Application Support', 'agent-relay');
+    } else if (platform === 'win32') {
+      dataDir = join(process.env.APPDATA || homedir(), 'agent-relay');
+    } else {
+      dataDir = join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'agent-relay');
+    }
+    const defaultSocket = join(dataDir, 'projects', 'default', 'daemon.sock');
+    if (existsSync(defaultSocket)) {
+      daemonRunning = true;
+    }
+  }
+
+  if (daemonRunning) {
+    console.log('  ✓  Daemon is already running');
+  } else {
+    console.log('  ○  Daemon is not running');
+  }
+  console.log('');
+
+  // Step 3: Install MCP for editors
+  let mcpInstalled = false;
+  if (!options.skipMcp) {
+    console.log('  ┌─ Step 1: MCP Server for AI Editors ─────────────────────┐');
+    console.log('  │                                                          │');
+    console.log('  │  MCP (Model Context Protocol) gives AI editors native    │');
+    console.log('  │  tools for agent communication:                          │');
+    console.log('  │                                                          │');
+    console.log('  │    • relay_send    - Send messages to agents/channels    │');
+    console.log('  │    • relay_spawn   - Create worker agents                │');
+    console.log('  │    • relay_inbox   - Check for messages                  │');
+    console.log('  │    • relay_who     - List online agents                  │');
+    console.log('  │                                                          │');
+    console.log('  │  Supported editors: Claude Code, Cursor, VS Code         │');
+    console.log('  │                                                          │');
+    console.log('  └──────────────────────────────────────────────────────────┘');
+    console.log('');
+
+    const shouldInstallMcp = await prompt('  Install MCP server for your AI editors?');
+
+    if (shouldInstallMcp) {
+      console.log('');
+      console.log('  Installing MCP server...');
+      try {
+        const { runInstall } = await import('@agent-relay/mcp/install');
+        runInstall({ editor: undefined });
+        mcpInstalled = true;
+      } catch (err: any) {
+        if (err.code === 'ERR_MODULE_NOT_FOUND') {
+          console.log('  ⚠  MCP package not bundled. Install separately:');
+          console.log('     npm install -g @agent-relay/mcp');
+        } else {
+          console.error('  ✗  Error:', err.message);
+        }
+      }
+      console.log('');
+    }
+  }
+
+  // Step 4: Start daemon
+  if (!daemonRunning && !options.skipDaemon) {
+    console.log('  ┌─ Step 2: Start the Relay Daemon ─────────────────────────┐');
+    console.log('  │                                                          │');
+    console.log('  │  The daemon manages agent connections and message        │');
+    console.log('  │  routing. It runs in the background.                     │');
+    console.log('  │                                                          │');
+    console.log('  └──────────────────────────────────────────────────────────┘');
+    console.log('');
+
+    const shouldStartDaemon = await prompt('  Start the relay daemon now?');
+
+    if (shouldStartDaemon) {
+      console.log('');
+      console.log('  Starting daemon...');
+
+      // Start daemon in background
+      const daemonProcess = spawn(process.execPath, [process.argv[1], 'up', '--background'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      daemonProcess.unref();
+
+      // Wait a moment for it to start
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      console.log('  ✓  Daemon started in background');
+      console.log('');
+      daemonRunning = true;
+    }
+  }
+
+  // Summary
+  console.log('  ╭─────────────────────────────────────────────────────────╮');
+  console.log('  │                    Setup Complete!                      │');
+  console.log('  ╰─────────────────────────────────────────────────────────╯');
+  console.log('');
+
+  if (mcpInstalled || daemonRunning) {
+    console.log('  Status:');
+    if (mcpInstalled) console.log('    ✓  MCP server configured for editors');
+    if (daemonRunning) console.log('    ✓  Daemon running');
+    console.log('');
+  }
+
+  console.log('  Quick Start:');
+  console.log('');
+  console.log('    1. Open Claude Code (or Cursor)');
+  console.log('');
+  console.log('    2. The relay tools are ready! Try asking Claude:');
+  console.log('       "Use relay_who to see online agents"');
+  console.log('');
+  console.log('    3. Spawn a worker agent:');
+  console.log('       "Spawn a worker named TestRunner to run the tests"');
+  console.log('');
+
+  console.log('  Commands:');
+  console.log('    agent-relay up        Start daemon with dashboard');
+  console.log('    agent-relay status    Check daemon status');
+  console.log('    agent-relay who       List online agents');
+  console.log('');
+
+  console.log('  Dashboard: http://localhost:3888 (when daemon is running)');
+  console.log('');
+}
+
+program
+  .command('init')
+  .description('First-time setup wizard - install MCP and start daemon')
+  .option('-y, --yes', 'Accept all defaults (non-interactive)')
+  .option('--skip-daemon', 'Skip daemon startup prompt')
+  .option('--skip-mcp', 'Skip MCP installation prompt')
+  .action(runInit);
+
+// setup - Alias for init (backwards compatibility)
+program
+  .command('setup')
+  .description('Alias for "init" - first-time setup wizard')
+  .option('-y, --yes', 'Accept all defaults')
+  .option('--skip-daemon', 'Skip daemon startup')
+  .option('--skip-mcp', 'Skip MCP installation')
+  .action(runInit);
+
+// mcp - MCP server management
+program
+  .command('mcp')
+  .description('Manage MCP server for AI editors')
+  .argument('<command>', 'Command to run (install, serve)')
+  .option('-e, --editor <name>', 'Editor to configure')
+  .option('-g, --global', 'Install globally')
+  .action(async (cmd, options) => {
+    try {
+      if (cmd === 'install') {
+        const { runInstall } = await import('@agent-relay/mcp/install');
+        runInstall(options);
+      } else if (cmd === 'serve') {
+        const { createRelayClient, runMCPServer, discoverSocket } = await import('@agent-relay/mcp');
+        const discovery = discoverSocket();
+        const client = createRelayClient({
+          agentName: process.env.RELAY_AGENT_NAME || `mcp-${process.pid}`,
+          socketPath: discovery?.socketPath,
+          project: discovery?.project,
+        });
+        await runMCPServer(client);
+      } else {
+        console.error(`Unknown mcp command: ${cmd}`);
+        process.exit(1);
+      }
+    } catch (err: any) {
+      if (err.code === 'ERR_MODULE_NOT_FOUND') {
+        console.error('Error: @agent-relay/mcp package not found.');
+        console.error('This command requires the MCP package to be installed.');
+      } else {
+        console.error('Error running MCP command:', err);
+      }
       process.exit(1);
     }
   });

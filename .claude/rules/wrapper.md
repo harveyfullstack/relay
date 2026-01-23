@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/wrapper/**/*.ts"
+  - "packages/wrapper/src/**/*.ts"
 ---
 
 # Wrapper Conventions
