@@ -386,30 +386,30 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       }
       this.log(` Created outbox directory: ${this._outboxPath}`);
 
+      // Helper to create a symlink, cleaning up existing path first
+      const createSymlinkSafe = (linkPath: string, targetPath: string) => {
+        const linkParent = dirname(linkPath);
+        if (!existsSync(linkParent)) {
+          mkdirSync(linkParent, { recursive: true });
+        }
+        if (existsSync(linkPath)) {
+          try {
+            const stats = lstatSync(linkPath);
+            if (stats.isSymbolicLink() || stats.isFile()) {
+              unlinkSync(linkPath);
+            } else if (stats.isDirectory()) {
+              rmSync(linkPath, { recursive: true, force: true });
+            }
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+        symlinkSync(targetPath, linkPath);
+        this.log(` Created symlink: ${linkPath} -> ${targetPath}`);
+      };
+
       // In workspace mode, create symlinks so agents can use canonical path
       if (this._workspaceId) {
-        // Helper to create a symlink, cleaning up existing path first
-        const createSymlinkSafe = (linkPath: string, targetPath: string) => {
-          const linkParent = dirname(linkPath);
-          if (!existsSync(linkParent)) {
-            mkdirSync(linkParent, { recursive: true });
-          }
-          if (existsSync(linkPath)) {
-            try {
-              const stats = lstatSync(linkPath);
-              if (stats.isSymbolicLink() || stats.isFile()) {
-                unlinkSync(linkPath);
-              } else if (stats.isDirectory()) {
-                rmSync(linkPath, { recursive: true, force: true });
-              }
-            } catch {
-              // Ignore cleanup errors
-            }
-          }
-          symlinkSync(targetPath, linkPath);
-          this.log(` Created symlink: ${linkPath} -> ${targetPath}`);
-        };
-
         // Symlink canonical path (~/.agent-relay/outbox/{name}) -> workspace path
         // This is the PRIMARY symlink - agents write to canonical path, relay-pty watches workspace path
         if (this._canonicalOutboxPath !== this._outboxPath) {
@@ -420,6 +420,11 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         if (this._legacyOutboxPath !== this._outboxPath && this._legacyOutboxPath !== this._canonicalOutboxPath) {
           createSymlinkSafe(this._legacyOutboxPath, this._outboxPath);
         }
+      }
+
+      // In local mode, also create legacy symlink for backwards compat with stale instructions
+      if (!this._workspaceId && this._legacyOutboxPath !== this._outboxPath) {
+        createSymlinkSafe(this._legacyOutboxPath, this._outboxPath);
       }
     } catch (err: any) {
       this.logError(` Failed to set up outbox: ${err.message}`);
