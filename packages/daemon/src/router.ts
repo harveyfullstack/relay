@@ -253,12 +253,9 @@ export class Router {
       const isUser = connection.entityType === 'user';
 
       if (isUser) {
-        // Handle existing user connection with same name (disconnect old)
-        const existingUser = this.users.get(connection.agentName);
-        if (existingUser && existingUser.id !== connection.id) {
-          existingUser.close();
-          this.connections.delete(existingUser.id);
-        }
+        // Users can have multiple connections (e.g., multiple browser tabs)
+        // Don't kick existing connections - just update the map to point to latest
+        // All connections are still tracked in this.connections by ID
         this.users.set(connection.agentName, connection);
         routerLog.info(`User registered: ${connection.agentName}`);
       } else {
