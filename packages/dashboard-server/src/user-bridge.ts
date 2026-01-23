@@ -126,9 +126,11 @@ export class UserBridge {
     webSocket: WebSocket,
     options?: { avatarUrl?: string; displayName?: string }
   ): Promise<void> {
-    // If user already registered, unregister first
+    // If user already registered, just update the WebSocket (multi-tab support)
     if (this.users.has(username)) {
-      this.unregisterUser(username);
+      console.log(`[user-bridge] User ${username} already registered, updating WebSocket`);
+      this.updateWebSocket(username, webSocket);
+      return;
     }
 
     // Create relay client for this user
