@@ -110,6 +110,12 @@ export interface UserQueries {
   clearIncomingConnectionId(userId: string): Promise<void>;
   setPendingInstallationRequest(userId: string): Promise<void>;
   clearPendingInstallationRequest(userId: string): Promise<void>;
+  // Email authentication methods
+  createEmailUser(data: { email: string; passwordHash: string; displayName?: string }): Promise<schema.User>;
+  verifyEmail(userId: string): Promise<void>;
+  setEmailVerificationToken(userId: string, token: string, expires: Date): Promise<void>;
+  findByEmailVerificationToken(token: string): Promise<schema.User | null>;
+  updatePassword(userId: string, passwordHash: string): Promise<void>;
 }
 
 export const userQueries: UserQueries = {
@@ -213,6 +219,62 @@ export const userQueries: UserQueries = {
     await db
       .update(schema.users)
       .set({ pendingInstallationRequest: null, updatedAt: new Date() })
+      .where(eq(schema.users.id, userId));
+  },
+
+  async createEmailUser(data: { email: string; passwordHash: string; displayName?: string }): Promise<schema.User> {
+    const db = getDb();
+    const result = await db
+      .insert(schema.users)
+      .values({
+        email: data.email,
+        passwordHash: data.passwordHash,
+        displayName: data.displayName || null,
+        emailVerified: false,
+      })
+      .returning();
+    return result[0];
+  },
+
+  async verifyEmail(userId: string): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.users)
+      .set({
+        emailVerified: true,
+        emailVerificationToken: null,
+        emailVerificationExpires: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.users.id, userId));
+  },
+
+  async setEmailVerificationToken(userId: string, token: string, expires: Date): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.users)
+      .set({
+        emailVerificationToken: token,
+        emailVerificationExpires: expires,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.users.id, userId));
+  },
+
+  async findByEmailVerificationToken(token: string): Promise<schema.User | null> {
+    const db = getDb();
+    const result = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.emailVerificationToken, token));
+    return result[0] ?? null;
+  },
+
+  async updatePassword(userId: string, passwordHash: string): Promise<void> {
+    const db = getDb();
+    await db
+      .update(schema.users)
+      .set({ passwordHash, updatedAt: new Date() })
       .where(eq(schema.users.id, userId));
   },
 };

@@ -75,9 +75,13 @@ nangoAuthRouter.get('/login-status/:connectionId', async (req: Request, res: Res
     const repos = await db.repositories.findByUserId(user.id);
     const hasRepos = repos.length > 0;
 
+    // Check if user needs to provide an email
+    const needsEmail = !user.email;
+
     res.json({
       ready: true,
       hasRepos,
+      needsEmail,
       user: {
         id: user.id,
         githubUsername: user.githubUsername,

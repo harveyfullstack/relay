@@ -26,9 +26,17 @@ import { relations } from 'drizzle-orm';
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
-  githubId: varchar('github_id', { length: 255 }).unique().notNull(),
-  githubUsername: varchar('github_username', { length: 255 }).notNull(),
-  email: varchar('email', { length: 255 }),
+  // GitHub OAuth fields (nullable for email-only users)
+  githubId: varchar('github_id', { length: 255 }).unique(),
+  githubUsername: varchar('github_username', { length: 255 }),
+  // Email authentication fields
+  email: varchar('email', { length: 255 }).unique(),
+  passwordHash: varchar('password_hash', { length: 255 }), // For email login
+  emailVerified: boolean('email_verified').notNull().default(false),
+  emailVerificationToken: varchar('email_verification_token', { length: 255 }),
+  emailVerificationExpires: timestamp('email_verification_expires'),
+  // Profile
+  displayName: varchar('display_name', { length: 255 }), // User-provided name for email users
   avatarUrl: varchar('avatar_url', { length: 512 }),
   plan: varchar('plan', { length: 50 }).notNull().default('free'),
   // Stripe billing
@@ -43,6 +51,7 @@ export const users = pgTable('users', {
 }, (table) => ({
   nangoConnectionIdx: index('idx_users_nango_connection').on(table.nangoConnectionId),
   incomingConnectionIdx: index('idx_users_incoming_connection').on(table.incomingConnectionId),
+  emailIdx: index('idx_users_email').on(table.email),
 }));
 
 export const usersRelations = relations(users, ({ many }) => ({

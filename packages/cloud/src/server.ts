@@ -44,6 +44,7 @@ import { testHelpersRouter } from './api/test-helpers.js';
 import { webhooksRouter } from './api/webhooks.js';
 import { githubAppRouter } from './api/github-app.js';
 import { nangoAuthRouter } from './api/nango-auth.js';
+import { emailAuthRouter } from './api/email-auth.js';
 import { gitRouter } from './api/git.js';
 import { sessionsRouter } from './api/sessions.js';
 import { codexAuthHelperRouter } from './api/codex-auth-helper.js';
@@ -341,6 +342,7 @@ export async function createServer(): Promise<CloudServer> {
 
   // --- Routes with alternative auth (must be before teamsRouter) ---
   app.use('/api/auth', authRouter);                    // Login endpoints (public)
+  app.use('/api/auth/email', emailAuthRouter);         // Email/password authentication
   app.use('/api/auth/nango', nangoAuthRouter);         // Nango webhook (signature verification)
   app.use('/api/auth/codex-helper', codexAuthHelperRouter);
   app.use('/api/git', gitRouter);                      // Workspace token auth

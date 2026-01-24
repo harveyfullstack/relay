@@ -113,6 +113,13 @@
       "when": 1769004592598,
       "tag": "0016_agent_messages_thread_summary",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "5",
+      "when": 1769091000000,
+      "tag": "0017_email_authentication",
+      "breakpoints": true
     }
   ]
 }
