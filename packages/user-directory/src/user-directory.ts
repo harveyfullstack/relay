@@ -269,6 +269,8 @@ export class UserDirectoryService {
   deleteProviderCredentials(userId: string, provider: string): string[] {
     this.validateUserId(userId);
     this.validateProvider(provider);
+    // Normalize provider to lowercase after validation
+    const normalizedProvider = provider.toLowerCase().trim();
     const userHome = this.getUserHome(userId);
     const deleted: string[] = [];
 
@@ -276,19 +278,19 @@ export class UserDirectoryService {
     const pathsToDelete: string[] = [];
 
     // Add standard credential path
-    const config = PROVIDER_CONFIGS[provider];
+    const config = PROVIDER_CONFIGS[normalizedProvider];
     if (config) {
       const providerDir = path.join(userHome, config.dir);
       pathsToDelete.push(path.join(providerDir, config.credentialsFile));
     }
 
     // Handle Gemini/Google special case (.gemini/.env)
-    if (provider === 'gemini' || provider === 'google') {
+    if (normalizedProvider === 'gemini' || normalizedProvider === 'google') {
       pathsToDelete.push(path.join(userHome, '.gemini', '.env'));
     }
 
     // Handle anthropic special case (both .credentials.json and credentials.json)
-    if (provider === 'anthropic' || provider === 'claude') {
+    if (normalizedProvider === 'anthropic' || normalizedProvider === 'claude') {
       const claudeDir = path.join(userHome, '.claude');
       pathsToDelete.push(path.join(claudeDir, '.credentials.json'));
       pathsToDelete.push(path.join(claudeDir, 'credentials.json'));
@@ -300,7 +302,7 @@ export class UserDirectoryService {
         if (fs.existsSync(credPath)) {
           fs.unlinkSync(credPath);
           deleted.push(credPath);
-          logger.info(`Deleted ${provider} credential file for user ${userId}: ${credPath}`);
+          logger.info(`Deleted ${normalizedProvider} credential file for user ${userId}: ${credPath}`);
         }
       } catch (err) {
         logger.warn('Failed to delete credential file', { path: credPath, error: String(err) });
