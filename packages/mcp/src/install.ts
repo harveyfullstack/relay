@@ -452,7 +452,20 @@ export function installForEditor(
 
     // Add agent-relay server config
     const mcpServers = config[editor.configKey] as Record<string, unknown>;
-    mcpServers['agent-relay'] = serverConfig;
+
+    // OpenCode uses a different format: { type: "local", command: [...], environment: {...} }
+    if (editor.name === 'OpenCode') {
+      const openCodeConfig: Record<string, unknown> = {
+        type: 'local',
+        command: [serverConfig.command, ...serverConfig.args],
+      };
+      if (serverConfig.env) {
+        openCodeConfig.environment = serverConfig.env;
+      }
+      mcpServers['agent-relay'] = openCodeConfig;
+    } else {
+      mcpServers['agent-relay'] = serverConfig;
+    }
 
     // For Claude Code, also add permissions to auto-approve agent-relay tools
     // Permissions go in settings.json, not .mcp.json

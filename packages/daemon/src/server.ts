@@ -156,7 +156,12 @@ export class Daemon {
     // The registry persists on every update; this is a no-op helper for symmetry.
     const agents = this.registry.getAgents();
     try {
-      const targetPath = path.join(this.config.teamDir ?? path.dirname(this.config.socketPath), 'agents.json');
+      const targetDir = this.config.teamDir ?? path.dirname(this.config.socketPath);
+      const targetPath = path.join(targetDir, 'agents.json');
+      // Ensure directory exists (defensive - may have been deleted)
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
       const data = JSON.stringify({ agents }, null, 2);
       // Write atomically: write to temp file first, then rename
       // This prevents race conditions where readers see partial/empty data
@@ -175,7 +180,12 @@ export class Daemon {
   private writeProcessingStateFile(): void {
     try {
       const processingAgents = this.router.getProcessingAgents();
-      const targetPath = path.join(this.config.teamDir ?? path.dirname(this.config.socketPath), 'processing-state.json');
+      const targetDir = this.config.teamDir ?? path.dirname(this.config.socketPath);
+      const targetPath = path.join(targetDir, 'processing-state.json');
+      // Ensure directory exists (defensive - may have been deleted)
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
       const data = JSON.stringify({ processingAgents, updatedAt: Date.now() }, null, 2);
       const tempPath = `${targetPath}.tmp`;
       fs.writeFileSync(tempPath, data, 'utf-8');
@@ -193,7 +203,12 @@ export class Daemon {
     try {
       const connectedAgents = this.router.getAgents();
       const connectedUsers = this.router.getUsers();
-      const targetPath = path.join(this.config.teamDir ?? path.dirname(this.config.socketPath), 'connected-agents.json');
+      const targetDir = this.config.teamDir ?? path.dirname(this.config.socketPath);
+      const targetPath = path.join(targetDir, 'connected-agents.json');
+      // Ensure directory exists (defensive - may have been deleted)
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
       const data = JSON.stringify({
         agents: connectedAgents,
         users: connectedUsers,

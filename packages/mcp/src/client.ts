@@ -98,17 +98,23 @@ class FrameParser {
 
 export function createRelayClient(options: RelayClientOptions): RelayClient {
   const { agentName, project = 'default', timeout = 5000 } = options;
-  const discovery = discoverSocket({ socketPath: options.socketPath });
-  const socketPath = discovery?.socketPath || options.socketPath || '/tmp/agent-relay.sock';
+  // Prefer explicit socketPath option over discovery to avoid finding wrong daemon
+  const socketPath = options.socketPath || discoverSocket()?.socketPath || '/tmp/agent-relay.sock';
 
   // Generate unique IDs
   let idCounter = 0;
   const generateId = () => `mcp-${Date.now().toString(36)}-${(++idCounter).toString(36)}`;
 
-  async function request<T>(type: string, payload: unknown): Promise<T> {
+  // Timeouts for different operations
+  const RELEASE_TIMEOUT = 10000; // 10 seconds for release operations
+
+  /**
+   * Fire-and-forget: Send a message without waiting for any response.
+   * Used for SEND and SPAWN where we don't expect daemon to reply.
+   */
+  function fireAndForget(type: string, payload: unknown): Promise<void> {
     return new Promise((resolve, reject) => {
       const id = generateId();
-      // Build a proper protocol envelope
       const envelope = {
         v: PROTOCOL_VERSION,
         type,
@@ -116,16 +122,56 @@ export function createRelayClient(options: RelayClientOptions): RelayClient {
         ts: Date.now(),
         payload,
       };
+
+      const socket: Socket = createConnection(socketPath);
+
+      socket.on('connect', () => {
+        socket.write(encodeFrame(envelope));
+        socket.end();
+        resolve();
+      });
+
+      socket.on('error', (err) => {
+        const errno = (err as NodeJS.ErrnoException).code;
+        if (errno === 'ECONNREFUSED' || errno === 'ENOENT') {
+          reject(new DaemonNotRunningError(`Cannot connect to daemon at ${socketPath}`));
+        } else {
+          reject(err);
+        }
+      });
+    });
+  }
+
+  /**
+   * Request-response: Send a message and wait for daemon to respond.
+   * Used for queries (STATUS, INBOX, etc.) and blocking sends (waits for ACK).
+   */
+  async function request<T>(type: string, payload: unknown, customTimeout?: number, payloadMeta?: { sync?: { blocking?: boolean; correlationId?: string; timeoutMs?: number } }): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const id = generateId();
+      const correlationId = payloadMeta?.sync?.correlationId;
+      // Build a proper protocol envelope
+      const envelope: Record<string, unknown> = {
+        v: PROTOCOL_VERSION,
+        type,
+        id,
+        ts: Date.now(),
+        payload,
+      };
+      if (payloadMeta) {
+        envelope.payload_meta = payloadMeta;
+      }
       let timedOut = false;
       const parser = new FrameParser();
 
       const socket: Socket = createConnection(socketPath);
 
+      const effectiveTimeout = customTimeout ?? timeout;
       const timeoutId = setTimeout(() => {
         timedOut = true;
         socket.destroy();
-        reject(new Error(`Request timeout after ${timeout}ms`));
-      }, timeout);
+        reject(new Error(`Request timeout after ${effectiveTimeout}ms`));
+      }, effectiveTimeout);
 
       socket.on('connect', () => socket.write(encodeFrame(envelope)));
 
@@ -135,16 +181,20 @@ export function createRelayClient(options: RelayClientOptions): RelayClient {
 
         const frames = parser.push(data);
         for (const response of frames) {
-          // Check if this is a response to our request
-          if (response.id === id || (response as { payload?: { replyTo?: string } }).payload?.replyTo === id) {
+          const responsePayload = response.payload as { replyTo?: string; correlationId?: string; error?: string; message?: string; code?: string };
+          // Check if this is a response to our request (by id, replyTo, or correlationId for blocking sends)
+          const isMatchingResponse = response.id === id ||
+            responsePayload?.replyTo === id ||
+            (correlationId && responsePayload?.correlationId === correlationId);
+
+          if (isMatchingResponse) {
             clearTimeout(timeoutId);
             socket.end();
             // Handle error responses
             if (response.type === 'ERROR') {
-              const errorPayload = response.payload as { message?: string; code?: string };
-              reject(new Error(errorPayload?.message || errorPayload?.code || 'Unknown error'));
-            } else if ((response.payload as { error?: string })?.error) {
-              reject(new Error((response.payload as { error: string }).error));
+              reject(new Error(responsePayload?.message || responsePayload?.code || 'Unknown error'));
+            } else if (responsePayload?.error) {
+              reject(new Error(responsePayload.error));
             } else {
               resolve(response.payload as T);
             }
@@ -168,18 +218,38 @@ export function createRelayClient(options: RelayClientOptions): RelayClient {
 
   return {
     async send(to, message, opts = {}) {
-      await request('SEND', { from: agentName, to, body: message, thread: opts.thread });
+      // Fire-and-forget: daemon doesn't respond to non-blocking SEND
+      await fireAndForget('SEND', { from: agentName, to, body: message, thread: opts.thread });
     },
     async sendAndWait(to, message, opts = {}) {
-      const r = await request<{ from: string; body: string; thread?: string }>('SEND_AND_WAIT', { from: agentName, to, body: message, thread: opts.thread, timeoutMs: opts.timeoutMs || 30000 });
-      return { from: r.from, content: r.body, thread: r.thread };
+      // Use proper SEND with sync.blocking - daemon handles the wait and returns ACK
+      const waitTimeout = opts.timeoutMs || 30000;
+      const correlationId = randomUUID();
+      const r = await request<{ correlationId?: string; response?: string; from?: string }>('SEND', {
+        from: agentName,
+        to,
+        body: message,
+        thread: opts.thread,
+      }, waitTimeout + 5000, {
+        sync: {
+          blocking: true,
+          correlationId,
+          timeoutMs: waitTimeout,
+        },
+      });
+      return { from: r.from ?? to, content: r.response ?? '', thread: opts.thread };
     },
     async spawn(opts) {
-      try { await request('SPAWN', { ...opts, parent: agentName }); return { success: true }; }
-      catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) }; }
+      // Fire-and-forget: daemon handles spawning, agent will message when ready
+      try {
+        await fireAndForget('SPAWN', { ...opts, parent: agentName });
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) };
+      }
     },
     async release(name, reason) {
-      try { await request('RELEASE', { name, reason }); return { success: true }; }
+      try { await request('RELEASE', { name, reason }, RELEASE_TIMEOUT); return { success: true }; }
       catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) }; }
     },
     async getStatus() {
