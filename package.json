@@ -109,6 +109,7 @@
   "dependencies": {
     "@agent-relay/bridge": "2.0.11",
     "@agent-relay/config": "2.0.11",
+    "@agent-relay/mcp": "2.0.11",
     "@agent-relay/continuity": "2.0.11",
     "@agent-relay/daemon": "2.0.11",
     "@agent-relay/hooks": "2.0.11",

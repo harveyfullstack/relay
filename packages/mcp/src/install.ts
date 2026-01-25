@@ -15,6 +15,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir, platform } from 'node:os';
+import { execSync } from 'node:child_process';
 import * as TOML from 'smol-toml';
 
 export interface EditorConfig {
@@ -159,6 +160,90 @@ function getConfigPaths(): Record<string, EditorConfig> {
  * Default MCP server configuration
  */
 export function getDefaultServerConfig(): McpServerConfig {
+  return {
+    command: 'npx',
+    args: ['@agent-relay/mcp', 'serve'],
+  };
+}
+
+/**
+ * Check if node is installed via nvm (Node Version Manager).
+ * GUI apps (Claude, Cursor, VS Code) can't use nvm's shell function,
+ * so we need to use absolute paths for nvm installations.
+ */
+function isUsingNvm(): boolean {
+  try {
+    const nodePath = execSync('which node', { encoding: 'utf-8' }).trim();
+    return nodePath.includes('.nvm');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get absolute path to node binary
+ */
+function getNodePath(): string | null {
+  try {
+    return execSync('which node', { encoding: 'utf-8' }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get path to globally installed @agent-relay/mcp bin.js
+ * Returns null if not installed globally.
+ */
+function getGlobalMcpBinPath(): string | null {
+  try {
+    // Get npm global prefix
+    const npmPrefix = execSync('npm prefix -g', { encoding: 'utf-8' }).trim();
+    const binPath = join(npmPrefix, 'lib', 'node_modules', '@agent-relay', 'mcp', 'dist', 'bin.js');
+    if (existsSync(binPath)) {
+      return binPath;
+    }
+  } catch {
+    // npm not available or failed
+  }
+  return null;
+}
+
+/**
+ * Build MCP server configuration with proper paths.
+ *
+ * For nvm users: Uses absolute paths (recommended by MCP community)
+ * For others: Uses npx (works when node is in standard PATH)
+ *
+ * See: https://github.com/modelcontextprotocol/servers/issues/64
+ */
+function buildServerConfig(): McpServerConfig {
+  // If using nvm, we need absolute paths because GUI apps can't access nvm's shell function
+  if (isUsingNvm()) {
+    const nodePath = getNodePath();
+    const mcpBinPath = getGlobalMcpBinPath();
+
+    if (nodePath && mcpBinPath) {
+      // Best option: globally installed package with absolute paths
+      return {
+        command: nodePath,
+        args: [mcpBinPath, 'serve'],
+      };
+    }
+
+    // Package not installed globally - still try with absolute node path + npx
+    if (nodePath) {
+      const npxPath = join(dirname(nodePath), 'npx');
+      if (existsSync(npxPath)) {
+        return {
+          command: npxPath,
+          args: ['@agent-relay/mcp', 'serve'],
+        };
+      }
+    }
+  }
+
+  // Standard case: npx should work
   return {
     command: 'npx',
     args: ['@agent-relay/mcp', 'serve'],
@@ -328,10 +413,11 @@ export function installForEditor(
     }
   }
 
-  // Build server config
+  // Build server config - handles nvm users with absolute paths
+  const defaultConfig = buildServerConfig();
   const serverConfig: McpServerConfig = {
-    command: options.command || 'npx',
-    args: options.args || ['@agent-relay/mcp', 'serve'],
+    command: options.command || defaultConfig.command,
+    args: options.args || defaultConfig.args,
   };
 
   // Note: We don't set RELAY_PROJECT for local installs because the MCP server
