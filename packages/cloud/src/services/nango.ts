@@ -3,6 +3,13 @@ import type { AxiosResponse } from 'axios';
 import crypto from 'node:crypto';
 import { getConfig } from '../config.js';
 
+/**
+ * Nango Integration Configuration
+ *
+ * REQUIRED SCOPES:
+ * - github (GITHUB_USER): Requires 'user:email' scope for email reconciliation.
+ *   Configure this in Nango Dashboard: Integrations → GitHub → OAuth Scopes
+ */
 export const NANGO_INTEGRATIONS = {
   GITHUB_USER: 'github',
   GITHUB_APP: 'github-app-oauth',
