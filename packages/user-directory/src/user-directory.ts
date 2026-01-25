@@ -69,6 +69,16 @@ const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
 const ALL_PROVIDERS = Object.keys(PROVIDER_CONFIGS);
 
 /**
+ * Valid provider names for credential operations.
+ * Includes aliases like 'anthropic' for 'claude' and 'google' for 'gemini'.
+ */
+const VALID_PROVIDERS = new Set([
+  ...ALL_PROVIDERS,
+  'anthropic', // alias for claude
+  'google',    // alias for gemini
+]);
+
+/**
  * Service for managing per-user directories on workspace volumes.
  * Enables multi-user credential storage without conflicts.
  */
@@ -254,9 +264,11 @@ export class UserDirectoryService {
    * @param userId - User ID
    * @param provider - Provider name (claude, codex, gemini, etc.)
    * @returns Array of deleted file paths
+   * @throws Error if provider is invalid
    */
   deleteProviderCredentials(userId: string, provider: string): string[] {
     this.validateUserId(userId);
+    this.validateProvider(provider);
     const userHome = this.getUserHome(userId);
     const deleted: string[] = [];
 
@@ -318,6 +330,23 @@ export class UserDirectoryService {
     const resolved = path.resolve(this.usersDir, userId);
     if (!resolved.startsWith(this.usersDir)) {
       throw new Error('User ID would escape users directory');
+    }
+  }
+
+  /**
+   * Validate a provider name to prevent injection attacks.
+   *
+   * @param provider - Provider name to validate
+   * @throws Error if provider is invalid
+   */
+  private validateProvider(provider: string): void {
+    if (!provider || typeof provider !== 'string') {
+      throw new Error('Provider name is required');
+    }
+
+    const normalizedProvider = provider.toLowerCase().trim();
+    if (!VALID_PROVIDERS.has(normalizedProvider)) {
+      throw new Error(`Invalid provider: ${normalizedProvider.substring(0, 20)}`);
     }
   }
 

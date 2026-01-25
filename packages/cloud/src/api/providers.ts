@@ -533,6 +533,8 @@ providersRouter.delete('/:provider', async (req: Request, res: Response) => {
 
   const workspaceId = workspaceIdParam;
   const provider = providerParam;
+  // Sanitize for logging (prevent log injection)
+  const safeProvider = String(provider).replace(/[\r\n]/g, '').substring(0, 20);
 
   try {
     // Delete from database
@@ -541,13 +543,13 @@ providersRouter.delete('/:provider', async (req: Request, res: Response) => {
     // Clear credentials from workspace filesystem
     const clearResult = await clearProviderCredentials(userId, provider, workspaceId);
     if (!clearResult.cleared) {
-      console.warn(`[providers] Failed to clear workspace credentials for ${provider}: ${clearResult.error}`);
+      console.warn('[providers] Failed to clear workspace credentials', { provider: safeProvider, error: clearResult.error });
       // Don't fail the request, just warn - database entry was already deleted
     }
 
     res.json({ success: true });
   } catch (error) {
-    console.error(`Error disconnecting ${provider}:`, error);
+    console.error('[providers] Error disconnecting', { provider: safeProvider, error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ error: 'Failed to disconnect provider' });
   }
 });
