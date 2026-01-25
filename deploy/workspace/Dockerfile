@@ -89,8 +89,9 @@ RUN chown -R workspace:workspace /app
 # Pre-configure MCP so all CLI tools have relay tools available
 
 # Configure Claude Code MCP settings (global config is ~/.claude/settings.json)
+# Include permissions to auto-approve agent-relay tools
 RUN mkdir -p /home/workspace/.claude && \
-    echo '{"mcpServers":{"agent-relay":{"command":"node","args":["/app/dist/src/cli/index.js","mcp","serve"]}}}' \
+    echo '{"mcpServers":{"agent-relay":{"command":"node","args":["/app/dist/src/cli/index.js","mcp","serve"]}},"permissions":{"allow":["mcp__agent-relay__*"]}}' \
     > /home/workspace/.claude/settings.json && \
     chown -R workspace:workspace /home/workspace/.claude
 

@@ -448,6 +448,41 @@ export function installForEditor(
     const mcpServers = config[editor.configKey] as Record<string, unknown>;
     mcpServers['agent-relay'] = serverConfig;
 
+    // For Claude Code, also add permissions to auto-approve agent-relay tools
+    // Permissions go in settings.json, not .mcp.json
+    if (editor.name === 'Claude Code') {
+      // Determine settings path based on where MCP config is being written
+      const projectDir = configPath.endsWith('.mcp.json')
+        ? dirname(configPath) // project-local: same dir as .mcp.json
+        : dirname(configPath); // global: ~/.claude/
+
+      const settingsPath = configPath.endsWith('.mcp.json')
+        ? join(projectDir, '.claude', 'settings.json') // project-local
+        : configPath; // global uses same file (settings.json)
+
+      // Read existing settings
+      const settings = configPath.endsWith('.mcp.json')
+        ? readConfigFile(settingsPath, 'json') // separate file for project-local
+        : config; // same config object for global
+
+      const permissions = (settings.permissions as Record<string, unknown>) || {};
+      const allowList = (permissions.allow as string[]) || [];
+
+      // Add agent-relay permission if not already present
+      if (!allowList.includes('mcp__agent-relay__*')) {
+        allowList.push('mcp__agent-relay__*');
+      }
+
+      permissions.allow = allowList;
+      settings.permissions = permissions;
+
+      // Write settings (separate file for project-local)
+      if (configPath.endsWith('.mcp.json')) {
+        writeConfigFile(settingsPath, settings, 'json');
+      }
+      // For global, permissions are added to same config object
+    }
+
     // Write updated config
     writeConfigFile(configPath, config, editor.format);
 
