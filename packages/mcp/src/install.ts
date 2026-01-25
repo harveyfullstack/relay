@@ -50,6 +50,8 @@ export interface InstallOptions {
   configFormat?: 'json' | 'jsonc' | 'toml';
   /** Config key for MCP servers when using custom configPath (default: mcpServers) */
   configKey?: string;
+  /** Environment variables to set when launching the MCP server */
+  env?: Record<string, string>;
 }
 
 export interface InstallResult {
@@ -453,12 +455,17 @@ export function installForEditor(
     args: options.args || defaultConfig.args,
   };
 
-  // For project-local installs, set RELAY_SOCKET explicitly so MCP server
-  // can find the daemon regardless of what cwd the editor launches it from
+  // Set environment variables if provided (e.g., RELAY_SOCKET for project-local installs)
+  if (options.env) {
+    serverConfig.env = { ...options.env };
+  }
+
+  // For project-local installs with projectDir, also set RELAY_SOCKET if not already set
   const isProjectLocal = !options.global && options.projectDir;
-  if (isProjectLocal) {
+  if (isProjectLocal && !serverConfig.env?.RELAY_SOCKET) {
     const socketPath = join(options.projectDir!, '.agent-relay', 'relay.sock');
     serverConfig.env = {
+      ...serverConfig.env,
       RELAY_SOCKET: socketPath,
     };
   }
@@ -711,6 +718,7 @@ export function installMcpConfig(
     configKey: options.configKey || 'mcpServers',
     command: options.command,
     args: options.args,
+    env: options.env,
   });
 }
 

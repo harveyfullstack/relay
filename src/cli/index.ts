@@ -183,11 +183,14 @@ program
     // Auto-install MCP config if not present (project-local)
     // Uses .mcp.json in the project root - doesn't modify global settings
     const projectMcpConfigPath = path.join(paths.projectRoot, '.mcp.json');
+    const socketPath = path.join(paths.projectRoot, '.agent-relay', 'relay.sock');
 
     if (!fs.existsSync(projectMcpConfigPath)) {
       try {
         const result = installMcpConfig(projectMcpConfigPath, {
           configKey: 'mcpServers',
+          // Set RELAY_SOCKET so MCP server finds daemon regardless of CWD
+          env: { RELAY_SOCKET: socketPath },
         });
         if (result.success) {
           console.error(`MCP config: ${projectMcpConfigPath} (auto-created)`);

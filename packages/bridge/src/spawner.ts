@@ -864,12 +864,15 @@ export class AgentSpawner {
       // Auto-install MCP config if not present (project-local)
       // Uses .mcp.json in the project root - doesn't modify global settings
       const projectMcpConfigPath = path.join(this.projectRoot, '.mcp.json');
+      const mcpSocketPath = path.join(this.projectRoot, '.agent-relay', 'relay.sock');
       const hasMcpConfig = fs.existsSync(projectMcpConfigPath);
 
       if (!hasMcpConfig) {
         try {
           const result = installMcpConfig(projectMcpConfigPath, {
             configKey: 'mcpServers',
+            // Set RELAY_SOCKET so MCP server finds daemon regardless of CWD
+            env: { RELAY_SOCKET: mcpSocketPath },
           });
           if (result.success) {
             if (debug) log.debug(`Auto-installed MCP config at ${projectMcpConfigPath}`);
