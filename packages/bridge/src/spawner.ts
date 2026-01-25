@@ -147,7 +147,7 @@ export type OnAgentDeathCallback = (info: {
  * @param cliType - The CLI type (claude, codex, gemini, cursor, etc.)
  * @param debug - Whether to log debug information
  */
-function ensureMcpPermissions(projectRoot: string, cliType: string, debug = false): void {
+export function ensureMcpPermissions(projectRoot: string, cliType: string, debug = false): void {
   // Determine settings path based on CLI type
   interface McpPermissionConfig {
     settingsDir: string;

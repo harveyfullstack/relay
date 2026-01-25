@@ -111,7 +111,7 @@ jobs:
           echo "=== Testing main package ==="
           node --eval "
             import('./dist/src/index.js').then(m => {
-              const required = ['RelayServer', 'Connection', 'BaseWrapper', 'PROTOCOL_VERSION'];
+              const required = ['Daemon', 'Connection', 'BaseWrapper', 'PROTOCOL_VERSION'];
               const missing = required.filter(r => !(r in m));
               if (missing.length) {
                 console.error('Missing exports:', missing);

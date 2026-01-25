@@ -18,7 +18,7 @@ import { config as dotenvConfig } from 'dotenv';
 import { Daemon } from '@agent-relay/daemon';
 import { RelayClient } from '@agent-relay/sdk';
 import { RelayPtyOrchestrator, getTmuxPath } from '@agent-relay/wrapper';
-import { AgentSpawner, readWorkersMetadata, getWorkerLogsDir, selectShadowCli } from '@agent-relay/bridge';
+import { AgentSpawner, readWorkersMetadata, getWorkerLogsDir, selectShadowCli, ensureMcpPermissions } from '@agent-relay/bridge';
 import type { SpawnRequest, SpawnResult } from '@agent-relay/bridge';
 import { generateAgentName, checkForUpdatesInBackground, checkForUpdates } from '@agent-relay/utils';
 import { getShadowForAgent } from '@agent-relay/config';
@@ -198,6 +198,13 @@ program
       } catch {
         // Best effort - don't fail the command
       }
+    }
+
+    // Ensure MCP tools are auto-approved (creates ~/.claude/settings.local.json for Claude)
+    try {
+      ensureMcpPermissions(paths.projectRoot, mainCommand, options.debug);
+    } catch {
+      // Best effort - don't fail the command
     }
 
     // Auto-detect agent config and inject --model/--agent for Claude CLI
