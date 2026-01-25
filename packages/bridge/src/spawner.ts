@@ -154,14 +154,17 @@ function ensureMcpPermissions(projectRoot: string, cliType: string, debug = fals
     settingsFile: string;
     permissionKey?: string; // If different from 'permissions.allow'
     enableAllKey?: string; // If supports enableAllProjectMcpServers
+    globalSettingsDir?: string; // For global settings that enable project MCP
   }
 
+  const home = process.env.HOME || '';
   const configMap: Record<string, McpPermissionConfig> = {
     claude: {
       settingsDir: path.join(projectRoot, '.claude'),
       settingsFile: 'settings.local.json',
       permissionKey: 'permissions.allow',
       enableAllKey: 'enableAllProjectMcpServers',
+      globalSettingsDir: path.join(home, '.claude'), // Global settings to enable project MCP
     },
     cursor: {
       settingsDir: path.join(projectRoot, '.cursor'),
@@ -193,6 +196,34 @@ function ensureMcpPermissions(projectRoot: string, cliType: string, debug = fals
     // CLI doesn't use config-based MCP permissions (uses CLI flags instead)
     if (debug) log.debug(`CLI ${cliType} uses flag-based permissions, skipping config setup`);
     return;
+  }
+
+  // For Claude, also ensure global settings have enableAllProjectMcpServers
+  // This is required for Claude Code to load project-local .mcp.json files
+  if (config.globalSettingsDir && config.enableAllKey) {
+    try {
+      const globalSettingsPath = path.join(config.globalSettingsDir, 'settings.local.json');
+      if (!fs.existsSync(config.globalSettingsDir)) {
+        fs.mkdirSync(config.globalSettingsDir, { recursive: true });
+      }
+      let globalSettings: Record<string, unknown> = {};
+      if (fs.existsSync(globalSettingsPath)) {
+        try {
+          globalSettings = JSON.parse(fs.readFileSync(globalSettingsPath, 'utf-8'));
+        } catch {
+          globalSettings = {};
+        }
+      }
+      if (globalSettings[config.enableAllKey] !== true) {
+        globalSettings[config.enableAllKey] = true;
+        fs.writeFileSync(globalSettingsPath, JSON.stringify(globalSettings, null, 2) + '\n');
+        if (debug) log.debug(`Set global ${config.enableAllKey}: true at ${globalSettingsPath}`);
+      }
+    } catch (err) {
+      log.warn('Failed to set global MCP settings', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   const settingsPath = path.join(config.settingsDir, config.settingsFile);
