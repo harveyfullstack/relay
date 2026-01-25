@@ -420,9 +420,15 @@ export function installForEditor(
     args: options.args || defaultConfig.args,
   };
 
-  // Note: We don't set RELAY_PROJECT for local installs because the MCP server
-  // will auto-discover the socket from the current working directory.
-  // This makes the config portable across machines.
+  // For project-local installs, set RELAY_SOCKET explicitly so MCP server
+  // can find the daemon regardless of what cwd the editor launches it from
+  const isProjectLocal = !options.global && options.projectDir;
+  if (isProjectLocal) {
+    const socketPath = join(options.projectDir!, '.agent-relay', 'relay.sock');
+    serverConfig.env = {
+      RELAY_SOCKET: socketPath,
+    };
+  }
 
   if (options.dryRun) {
     return {
