@@ -180,20 +180,17 @@ program
     console.error(`Agent: ${agentName}`);
     console.error(`Project: ${paths.projectId}`);
 
-    // Auto-install MCP config to user scope if not present
-    // User scope (~/.claude.json) doesn't require enableAllProjectMcpServers setting
-    const home = process.env.HOME || '';
-    const userMcpConfigPath = path.join(home, '.claude.json');
+    // Auto-install MCP config if not present (project-local)
+    // Uses .mcp.json in the project root - doesn't modify global settings
     const projectMcpConfigPath = path.join(paths.projectRoot, '.mcp.json');
-    const hasMcpConfig = fs.existsSync(userMcpConfigPath) || fs.existsSync(projectMcpConfigPath);
 
-    if (!hasMcpConfig) {
+    if (!fs.existsSync(projectMcpConfigPath)) {
       try {
-        const result = installMcpConfig(userMcpConfigPath, {
+        const result = installMcpConfig(projectMcpConfigPath, {
           configKey: 'mcpServers',
         });
         if (result.success) {
-          console.error(`MCP config: ${userMcpConfigPath} (auto-created)`);
+          console.error(`MCP config: ${projectMcpConfigPath} (auto-created)`);
         }
       } catch {
         // Best effort - don't fail the command

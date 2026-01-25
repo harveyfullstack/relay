@@ -160,10 +160,12 @@ export function ensureMcpPermissions(projectRoot: string, cliType: string, debug
   const home = process.env.HOME || '';
   const configMap: Record<string, McpPermissionConfig> = {
     claude: {
-      // Use global settings for Claude - user scope doesn't require enableAllProjectMcpServers
+      // Use global settings for Claude
+      // enableAllProjectMcpServers enables project-local .mcp.json files
       settingsDir: path.join(home, '.claude'),
       settingsFile: 'settings.local.json',
       permissionKey: 'permissions.allow',
+      enableAllKey: 'enableAllProjectMcpServers',
     },
     cursor: {
       settingsDir: path.join(projectRoot, '.cursor'),
@@ -835,7 +837,7 @@ export class AgentSpawner {
           : mapModelToCli(); // defaults to claude:sonnet
 
         // Extract effective model name for logging
-        const effectiveModel = modelFromProfile || 'sonnet';
+        const effectiveModel = modelFromProfile || 'opus';
 
         const configuredArgs = buildClaudeArgs(name, args, this.projectRoot);
         // Replace args with configured version (includes --model and --agent if found)
@@ -859,24 +861,18 @@ export class AgentSpawner {
         args.push('--yolo');
       }
 
-      // Auto-install MCP config to user scope if not present
-      // User scope (~/.claude.json) doesn't require enableAllProjectMcpServers setting
-      // This ensures spawned agents have MCP tools available without manual setup
-      const home = process.env.HOME || '';
-      const userMcpConfigPath = path.join(home, '.claude.json');
+      // Auto-install MCP config if not present (project-local)
+      // Uses .mcp.json in the project root - doesn't modify global settings
       const projectMcpConfigPath = path.join(this.projectRoot, '.mcp.json');
-
-      // Check if MCP is configured (either user or project scope)
-      const hasMcpConfig = fs.existsSync(userMcpConfigPath) || fs.existsSync(projectMcpConfigPath);
+      const hasMcpConfig = fs.existsSync(projectMcpConfigPath);
 
       if (!hasMcpConfig) {
         try {
-          // Install to user scope - doesn't require enableAllProjectMcpServers
-          const result = installMcpConfig(userMcpConfigPath, {
-            configKey: 'mcpServers', // Claude uses mcpServers in ~/.claude.json
+          const result = installMcpConfig(projectMcpConfigPath, {
+            configKey: 'mcpServers',
           });
           if (result.success) {
-            if (debug) log.debug(`Auto-installed MCP config at ${userMcpConfigPath}`);
+            if (debug) log.debug(`Auto-installed MCP config at ${projectMcpConfigPath}`);
           } else {
             log.warn(`Failed to auto-install MCP config: ${result.error}`);
           }
@@ -897,8 +893,8 @@ export class AgentSpawner {
       const relaySocket = this.socketPath || process.env.RELAY_SOCKET || path.join(this.projectRoot, '.agent-relay', 'relay.sock');
       let hasMcp = false;
       // Check either user-scope or project-scope MCP config
-      const mcpConfigExists = fs.existsSync(userMcpConfigPath) || fs.existsSync(projectMcpConfigPath);
-      if (mcpConfigExists) {
+      // hasMcpConfig was already computed above
+      if (hasMcpConfig) {
         try {
           hasMcp = fs.statSync(relaySocket).isSocket();
         } catch {
