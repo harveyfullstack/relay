@@ -51,6 +51,7 @@ import {
   track,
   shutdown as shutdownTelemetry,
 } from '@agent-relay/telemetry';
+import { OutboxWatcher, type OutboxMessage, type OutboxSpawn, type OutboxRelease } from './outbox-watcher.js';
 
 export interface DaemonConfig extends ConnectionConfig {
   socketPath: string;
@@ -104,6 +105,7 @@ export class Daemon {
   private cloudSyncDebounceTimer?: NodeJS.Timeout;
   private spawnManager?: SpawnManager;
   private shuttingDown = false;
+  private outboxWatcher?: OutboxWatcher;
 
   /** Telemetry tracking */
   private startTime?: number;
@@ -437,6 +439,9 @@ export class Daemon {
           this.writeProcessingStateFile();
         }, Daemon.PROCESSING_STATE_INTERVAL_MS);
 
+        // Start outbox watcher for MCP file-based messages
+        this.initOutboxWatcher(teamDir);
+
         // Track daemon start
         track('daemon_start', {});
 
@@ -444,6 +449,86 @@ export class Daemon {
         resolve();
       });
     });
+  }
+
+  /**
+   * Initialize the outbox watcher for MCP and file-based agents.
+   * This watches .agent-relay/outbox directories and processes files directly.
+   */
+  private initOutboxWatcher(relayDir: string): void {
+    this.outboxWatcher = new OutboxWatcher({ relayDir });
+
+    // Handle messages from file-based agents (MCP, etc.)
+    this.outboxWatcher.on('message', (msg: OutboxMessage) => {
+      log.debug('Outbox message received', { from: msg.from, to: msg.to });
+      // Create a SendEnvelope and route it
+      const envelope: SendEnvelope = {
+        v: PROTOCOL_VERSION,
+        type: 'SEND',
+        id: generateId(),
+        ts: Date.now(),
+        from: msg.from,
+        to: msg.to,
+        payload: {
+          kind: 'message',
+          body: msg.body,
+          thread: msg.thread,
+        },
+      };
+      // Create a virtual connection for routing (from is in envelope)
+      const virtualConnection = { agentName: msg.from } as any;
+      this.router.route(virtualConnection, envelope);
+    });
+
+    // Handle spawn requests from file-based agents
+    this.outboxWatcher.on('spawn', (spawn: OutboxSpawn) => {
+      log.debug('Outbox spawn received', { from: spawn.from, name: spawn.name, cli: spawn.cli });
+      if (this.spawnManager) {
+        // Create envelope and virtual connection for handleSpawn
+        const envelope: Envelope<SpawnPayload> = {
+          v: PROTOCOL_VERSION,
+          type: 'SPAWN',
+          id: generateId(),
+          ts: Date.now(),
+          payload: {
+            name: spawn.name,
+            cli: spawn.cli,
+            task: spawn.task,
+            cwd: spawn.cwd,
+            model: spawn.model,
+            spawnerName: spawn.from,
+          },
+        };
+        const virtualConnection = { agentName: spawn.from, send: () => true } as any;
+        this.spawnManager.handleSpawn(virtualConnection, envelope);
+      } else {
+        log.warn('Spawn request ignored - SpawnManager not enabled');
+      }
+    });
+
+    // Handle release requests from file-based agents
+    this.outboxWatcher.on('release', (release: OutboxRelease) => {
+      log.debug('Outbox release received', { from: release.from, name: release.name });
+      if (this.spawnManager) {
+        const envelope: Envelope<ReleasePayload> = {
+          v: PROTOCOL_VERSION,
+          type: 'RELEASE',
+          id: generateId(),
+          ts: Date.now(),
+          payload: {
+            name: release.name,
+            reason: release.reason,
+          },
+        };
+        const virtualConnection = { agentName: release.from, send: () => true } as any;
+        this.spawnManager.handleRelease(virtualConnection, envelope);
+      } else {
+        log.warn('Release request ignored - SpawnManager not enabled');
+      }
+    });
+
+    this.outboxWatcher.start();
+    log.info('Outbox watcher started', { relayDir });
   }
 
   /**
@@ -793,6 +878,12 @@ export class Daemon {
     if (this.processingStateInterval) {
       clearInterval(this.processingStateInterval);
       this.processingStateInterval = undefined;
+    }
+
+    // Stop outbox watcher
+    if (this.outboxWatcher) {
+      this.outboxWatcher.stop();
+      this.outboxWatcher = undefined;
     }
 
     // Close all active connections

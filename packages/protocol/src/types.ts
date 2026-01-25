@@ -377,6 +377,8 @@ export interface SpawnPayload {
   team?: string;
   /** Working directory */
   cwd?: string;
+  /** Model override (alternative to cli:model format) */
+  model?: string;
   /** Socket path for the spawned agent */
   socketPath?: string;
   /** Parent agent name */
@@ -417,6 +419,8 @@ export interface SpawnResultPayload {
 export interface ReleasePayload {
   /** Agent name to release */
   name: string;
+  /** Reason for releasing the agent */
+  reason?: string;
 }
 
 export interface ReleaseResultPayload {
