@@ -5,7 +5,7 @@
  * and workspace-aware socket discovery for cloud deployments.
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { findProjectRoot } from '@agent-relay/config';
@@ -457,7 +457,7 @@ export function discoverAgentName(discovery?: DiscoveryResult | null): string | 
         const sorted = files
           .map((f) => {
             try {
-              const stat = require('node:fs').statSync(f.path);
+              const stat = statSync(f.path);
               return { ...f, mtime: stat.mtimeMs };
             } catch {
               return { ...f, mtime: 0 };
