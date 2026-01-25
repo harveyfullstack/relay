@@ -322,6 +322,34 @@ async function checkAndAutoAddToWorkspaces(userId: string, connectionId: string)
 }
 
 /**
+ * Fetch and sync user emails from GitHub
+ * Requires 'user:email' scope to be configured in Nango's GitHub integration
+ */
+async function syncGitHubEmails(userId: string, connectionId: string): Promise<string | null> {
+  try {
+    const emails = await nangoService.getGithubUserEmails(connectionId);
+    if (emails.length === 0) {
+      console.log(`[nango-webhook] No emails returned from GitHub (scope may not be granted)`);
+      return null;
+    }
+
+    // Sync all verified emails to user_emails table
+    const verifiedEmails = emails.filter(e => e.verified);
+    if (verifiedEmails.length > 0) {
+      await db.userEmails.syncFromGitHub(userId, verifiedEmails);
+      console.log(`[nango-webhook] Synced ${verifiedEmails.length} verified emails for user ${userId}`);
+    }
+
+    // Return the primary verified email
+    const primaryEmail = emails.find(e => e.primary && e.verified)?.email;
+    return primaryEmail || null;
+  } catch (error) {
+    console.error('[nango-webhook] Error syncing GitHub emails:', error);
+    return null;
+  }
+}
+
+/**
  * Handle GitHub login webhook
  *
  * Three scenarios:
@@ -342,6 +370,8 @@ async function handleLoginWebhook(
 
   // SCENARIO 1: New user
   if (!existingUser) {
+    // First, get the primary email from GitHub API (requires user:email scope)
+    // We'll create the user first, then sync emails
     const newUser = await db.users.upsert({
       githubId,
       githubUsername: githubUser.login,
@@ -351,10 +381,18 @@ async function handleLoginWebhook(
       incomingConnectionId: connectionId,
     });
 
+    // Sync all GitHub emails and get primary email
+    const primaryEmail = await syncGitHubEmails(newUser.id, connectionId);
+
+    // If we got a primary email from the API and user doesn't have one, update it
+    if (primaryEmail && !newUser.email) {
+      await db.users.update(newUser.id, { email: primaryEmail });
+    }
+
     // Update connection with real user ID
     await nangoService.updateEndUser(connectionId, NANGO_INTEGRATIONS.GITHUB_USER, {
       id: newUser.id,
-      email: newUser.email || undefined,
+      email: primaryEmail || newUser.email || undefined,
     });
 
     console.log(`[nango-webhook] New user created: ${githubUser.login}`);
@@ -377,6 +415,9 @@ async function handleLoginWebhook(
       githubUsername: githubUser.login,
       avatarUrl: githubUser.avatar_url || null,
     });
+
+    // Sync GitHub emails using the temporary connection before we delete it
+    await syncGitHubEmails(existingUser.id, connectionId);
 
     // Delete the temporary connection from Nango to prevent duplicates
     try {
@@ -401,10 +442,13 @@ async function handleLoginWebhook(
     avatarUrl: githubUser.avatar_url || null,
   });
 
+  // Sync GitHub emails
+  const primaryEmail = await syncGitHubEmails(existingUser.id, connectionId);
+
   // Update connection with user ID
   await nangoService.updateEndUser(connectionId, NANGO_INTEGRATIONS.GITHUB_USER, {
     id: existingUser.id,
-    email: existingUser.email || undefined,
+    email: primaryEmail || existingUser.email || undefined,
   });
 
   // Check for auto-add to workspaces

@@ -61,6 +61,36 @@ export const usersRelations = relations(users, ({ many }) => ({
   repositories: many(repositories),
   linkedDaemons: many(linkedDaemons),
   installedGitHubApps: many(githubInstallations),
+  emails: many(userEmails),
+}));
+
+// ============================================================================
+// User Emails (GitHub-linked email addresses for account reconciliation)
+// ============================================================================
+
+export const userEmails = pgTable('user_emails', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  email: varchar('email', { length: 255 }).notNull(),
+  /** Whether this email is verified on GitHub */
+  verified: boolean('verified').notNull().default(false),
+  /** Whether this is the primary email on GitHub */
+  primary: boolean('primary').notNull().default(false),
+  /** Source of this email: 'github', 'manual', etc. */
+  source: varchar('source', { length: 50 }).notNull().default('github'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  userEmailIdx: unique('user_emails_user_email_unique').on(table.userId, table.email),
+  emailIdx: index('idx_user_emails_email').on(table.email),
+  userIdIdx: index('idx_user_emails_user_id').on(table.userId),
+}));
+
+export const userEmailsRelations = relations(userEmails, ({ one }) => ({
+  user: one(users, {
+    fields: [userEmails.userId],
+    references: [users.id],
+  }),
 }));
 
 // ============================================================================
@@ -522,6 +552,8 @@ export const agentSummaries = pgTable('agent_summaries', {
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type UserEmail = typeof userEmails.$inferSelect;
+export type NewUserEmail = typeof userEmails.$inferInsert;
 export type GitHubInstallation = typeof githubInstallations.$inferSelect;
 export type NewGitHubInstallation = typeof githubInstallations.$inferInsert;
 export type Credential = typeof credentials.$inferSelect;

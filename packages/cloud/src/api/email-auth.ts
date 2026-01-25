@@ -105,9 +105,18 @@ emailAuthRouter.post('/signup', async (req: Request, res: Response) => {
       return res.status(400).json({ error: passwordValidation.message });
     }
 
-    // Check if email already exists
-    const existingUser = await db.users.findByEmail(normalizedEmail);
+    // Check if email already exists (in users.email or user_emails table)
+    // This enables account reconciliation - if someone signed up via GitHub,
+    // their linked emails will be found and they should log in instead
+    const existingUser = await db.userEmails.findUserByEmail(normalizedEmail);
     if (existingUser) {
+      // If the existing user signed up via GitHub, offer to use that account
+      if (existingUser.githubId && !existingUser.passwordHash) {
+        return res.status(409).json({
+          error: 'This email is associated with a GitHub account. Please log in with GitHub, or set a password on that account.',
+          code: 'GITHUB_ACCOUNT_EXISTS',
+        });
+      }
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
 
@@ -151,6 +160,9 @@ emailAuthRouter.post('/signup', async (req: Request, res: Response) => {
 /**
  * POST /api/auth/email/login
  * Login with email/password
+ *
+ * Supports account reconciliation: users can log in with any email address
+ * linked to their account via GitHub, not just their primary email.
  */
 emailAuthRouter.post('/login', async (req: Request, res: Response) => {
   try {
@@ -167,8 +179,9 @@ emailAuthRouter.post('/login', async (req: Request, res: Response) => {
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Find user by email
-    const user = await db.users.findByEmail(normalizedEmail);
+    // Find user by email - checks both user_emails table (GitHub-linked emails)
+    // and users.email (primary email), enabling account reconciliation
+    const user = await db.userEmails.findUserByEmail(normalizedEmail);
     if (!user) {
       // Use same message for security (don't reveal if email exists)
       return res.status(401).json({ error: 'Invalid email or password' });
@@ -177,7 +190,7 @@ emailAuthRouter.post('/login', async (req: Request, res: Response) => {
     // Check if user has a password (might be GitHub-only user)
     if (!user.passwordHash) {
       return res.status(401).json({
-        error: 'This account uses GitHub login. Please sign in with GitHub.',
+        error: 'This account uses GitHub login. Please sign in with GitHub, or set a password to enable email login.',
         code: 'GITHUB_ACCOUNT',
       });
     }
@@ -313,7 +326,13 @@ emailAuthRouter.post('/set-email', requireAuth, async (req: Request, res: Respon
       return res.status(400).json({ error: 'Email is already set for this account' });
     }
 
-    // Check if email is already used by another user
+    // Check if email is already used by another user (including in user_emails table)
+    const isLinkedToOther = await db.userEmails.isEmailLinkedToOtherUser(normalizedEmail, userId);
+    if (isLinkedToOther) {
+      return res.status(409).json({ error: 'This email is already associated with another account' });
+    }
+
+    // Also check users.email directly
     const existingUser = await db.users.findByEmail(normalizedEmail);
     if (existingUser && existingUser.id !== userId) {
       return res.status(409).json({ error: 'This email is already associated with another account' });

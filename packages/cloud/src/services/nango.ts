@@ -66,6 +66,46 @@ class NangoService {
   }
 
   /**
+   * Fetch all email addresses associated with a GitHub user.
+   * Requires 'user:email' scope to be configured in Nango.
+   * @see https://docs.github.com/en/rest/users/emails#list-email-addresses-for-the-authenticated-user
+   */
+  async getGithubUserEmails(connectionId: string): Promise<Array<{
+    email: string;
+    verified: boolean;
+    primary: boolean;
+    visibility: string | null;
+  }>> {
+    try {
+      const response = await this.client.get<Array<{
+        email: string;
+        verified: boolean;
+        primary: boolean;
+        visibility: string | null;
+      }>>({
+        connectionId,
+        providerConfigKey: NANGO_INTEGRATIONS.GITHUB_USER,
+        endpoint: '/user/emails',
+      }) as AxiosResponse<Array<{
+        email: string;
+        verified: boolean;
+        primary: boolean;
+        visibility: string | null;
+      }>>;
+      return response.data || [];
+    } catch (err: unknown) {
+      // If scope is not granted, return empty array
+      const error = err as { response?: { status?: number } };
+      if (error.response?.status === 403 || error.response?.status === 404) {
+        console.warn('[nango] Cannot fetch user emails - user:email scope may not be granted');
+        return [];
+      }
+      console.error('[nango] Error fetching user emails:', err);
+      return [];
+    }
+  }
+
+  /**
    * Retrieve an installation access token from a GitHub App connection.
    * Use this ONLY when you need the raw token (e.g., for git clone URLs).
    * For API calls, use the proxy methods instead.
