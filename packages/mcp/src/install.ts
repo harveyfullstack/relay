@@ -44,6 +44,12 @@ export interface InstallOptions {
   command?: string;
   /** Custom server args */
   args?: string[];
+  /** Custom config path - overrides auto-detected path */
+  configPath?: string;
+  /** Config format when using custom configPath (default: json) */
+  configFormat?: 'json' | 'jsonc' | 'toml';
+  /** Config key for MCP servers when using custom configPath (default: mcpServers) */
+  configKey?: string;
 }
 
 export interface InstallResult {
@@ -394,7 +400,8 @@ export function installForEditor(
 ): InstallResult {
   const editor = getEditorConfig(editorKey);
 
-  if (!editor) {
+  // Allow custom configPath even without known editor
+  if (!editor && !options.configPath) {
     return {
       editor: editorKey,
       configPath: '',
@@ -404,13 +411,39 @@ export function installForEditor(
     };
   }
 
-  // Determine config path (global vs local)
-  let configPath = editor.configPath;
-  if (!options.global && options.projectDir && editor.supportsLocal) {
-    const localPath = getLocalConfigPath(editor, options.projectDir);
-    if (localPath) {
-      configPath = localPath;
+  // Determine config path, format, and key
+  // Custom configPath overrides everything (for programmatic installation)
+  let configPath: string;
+  let configFormat: 'json' | 'jsonc' | 'toml';
+  let configKey: string;
+
+  if (options.configPath) {
+    // Use custom path - for programmatic/auto installation
+    configPath = options.configPath;
+    configFormat = options.configFormat || 'json';
+    configKey = options.configKey || 'mcpServers';
+  } else if (editor) {
+    // Use editor's config
+    configPath = editor.configPath;
+    configFormat = editor.format;
+    configKey = editor.configKey;
+
+    // Check for local path override
+    if (!options.global && options.projectDir && editor.supportsLocal) {
+      const localPath = getLocalConfigPath(editor, options.projectDir);
+      if (localPath) {
+        configPath = localPath;
+      }
     }
+  } else {
+    // Should not reach here due to early return above
+    return {
+      editor: editorKey,
+      configPath: '',
+      success: false,
+      error: `Unknown editor: ${editorKey}`,
+      created: false,
+    };
   }
 
   // Build server config - handles nvm users with absolute paths
@@ -431,8 +464,9 @@ export function installForEditor(
   }
 
   if (options.dryRun) {
+    const editorName = editor?.name || editorKey || 'custom';
     return {
-      editor: editor.name,
+      editor: editorName,
       configPath,
       success: true,
       created: !existsSync(configPath),
@@ -441,20 +475,20 @@ export function installForEditor(
 
   try {
     // Read existing config
-    const config = readConfigFile(configPath, editor.format);
+    const config = readConfigFile(configPath, configFormat);
     const created = !existsSync(configPath);
 
     // Initialize mcpServers if not present
-    const configKeyValue = config[editor.configKey];
+    const configKeyValue = config[configKey];
     if (!configKeyValue || typeof configKeyValue !== 'object') {
-      (config as Record<string, unknown>)[editor.configKey] = {};
+      (config as Record<string, unknown>)[configKey] = {};
     }
 
     // Add agent-relay server config
-    const mcpServers = config[editor.configKey] as Record<string, unknown>;
+    const mcpServers = config[configKey] as Record<string, unknown>;
 
     // OpenCode uses a different format: { type: "local", command: [...], environment: {...} }
-    if (editor.name === 'OpenCode') {
+    if (editor?.name === 'OpenCode') {
       const openCodeConfig: Record<string, unknown> = {
         type: 'local',
         command: [serverConfig.command, ...serverConfig.args],
@@ -469,7 +503,7 @@ export function installForEditor(
 
     // For Claude Code, also add permissions to auto-approve agent-relay tools
     // Permissions go in settings.json, not .mcp.json
-    if (editor.name === 'Claude Code') {
+    if (editor?.name === 'Claude Code') {
       // Determine settings path based on where MCP config is being written
       const projectDir = configPath.endsWith('.mcp.json')
         ? dirname(configPath) // project-local: same dir as .mcp.json
@@ -503,17 +537,19 @@ export function installForEditor(
     }
 
     // Write updated config
-    writeConfigFile(configPath, config, editor.format);
+    writeConfigFile(configPath, config, configFormat);
 
+    const editorName = editor?.name || editorKey || 'custom';
     return {
-      editor: editor.name,
+      editor: editorName,
       configPath,
       success: true,
       created,
     };
   } catch (err) {
+    const editorName = editor?.name || editorKey || 'custom';
     return {
-      editor: editor.name,
+      editor: editorName,
       configPath,
       success: false,
       error: err instanceof Error ? err.message : String(err),
@@ -650,6 +686,32 @@ export function install(options: InstallOptions = {}): InstallResult[] {
   }
 
   return results;
+}
+
+/**
+ * Install MCP server configuration to a specific config file path.
+ * This is a simpler API for programmatic/automated installation.
+ *
+ * @param configPath - Absolute path to config file
+ * @param options - Optional settings for format, key, etc.
+ */
+export function installMcpConfig(
+  configPath: string,
+  options: {
+    format?: 'json' | 'jsonc' | 'toml';
+    configKey?: string;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+  } = {}
+): InstallResult {
+  return installForEditor('custom', {
+    configPath,
+    configFormat: options.format || 'json',
+    configKey: options.configKey || 'mcpServers',
+    command: options.command,
+    args: options.args,
+  });
 }
 
 /**

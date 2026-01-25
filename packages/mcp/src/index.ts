@@ -83,3 +83,21 @@ export {
   type CloudWorkspace,
   type CloudConnectionInfo,
 } from './cloud.js';
+
+// Installation
+export {
+  installMcpConfig,
+  installForEditor,
+  install,
+  uninstall,
+  uninstallFromEditor,
+  isInstalledFor,
+  detectInstalledEditors,
+  getEditorConfig,
+  listSupportedEditors,
+  getDefaultServerConfig,
+  type InstallOptions,
+  type InstallResult,
+  type EditorConfig,
+  type McpServerConfig,
+} from './install.js';
