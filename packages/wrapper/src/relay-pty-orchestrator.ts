@@ -20,7 +20,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import { createConnection, Socket } from 'node:net';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
-import { existsSync, unlinkSync, mkdirSync, symlinkSync, lstatSync, rmSync, watch, readdirSync } from 'node:fs';
+import { existsSync, unlinkSync, mkdirSync, symlinkSync, lstatSync, rmSync, watch, readdirSync, readlinkSync } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import { getProjectPaths } from '@agent-relay/config/project-namespace';
 import { getAgentOutboxTemplate } from '@agent-relay/config/relay-file-writer';
@@ -406,20 +406,56 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         if (!existsSync(linkParent)) {
           mkdirSync(linkParent, { recursive: true });
         }
+        
+        // Remove existing path if it exists (file, symlink, or directory)
         if (existsSync(linkPath)) {
           try {
             const stats = lstatSync(linkPath);
-            if (stats.isSymbolicLink() || stats.isFile()) {
+            if (stats.isSymbolicLink()) {
+              const currentTarget = readlinkSync(linkPath);
+              if (currentTarget === targetPath) {
+                // Symlink already points to correct target, no need to recreate
+                this.log(` Symlink already exists and is correct: ${linkPath} -> ${targetPath}`);
+                return;
+              }
+              unlinkSync(linkPath);
+            } else if (stats.isFile()) {
               unlinkSync(linkPath);
             } else if (stats.isDirectory()) {
+              // Force remove directory - this is critical for fixing existing directories
               rmSync(linkPath, { recursive: true, force: true });
+              // Verify removal succeeded
+              if (existsSync(linkPath)) {
+                throw new Error(`Failed to remove existing directory: ${linkPath}`);
+              }
             }
-          } catch {
-            // Ignore cleanup errors
+          } catch (err: any) {
+            // Log cleanup errors instead of silently ignoring them
+            this.logError(` Failed to clean up existing path ${linkPath}: ${err.message}`);
+            throw err; // Re-throw to prevent symlink creation on failed cleanup
           }
         }
-        symlinkSync(targetPath, linkPath);
-        this.log(` Created symlink: ${linkPath} -> ${targetPath}`);
+        
+        // Create the symlink
+        try {
+          symlinkSync(targetPath, linkPath);
+          // Verify symlink was created correctly
+          if (!existsSync(linkPath)) {
+            throw new Error(`Symlink creation failed: ${linkPath}`);
+          }
+          const verifyStats = lstatSync(linkPath);
+          if (!verifyStats.isSymbolicLink()) {
+            throw new Error(`Created path is not a symlink: ${linkPath}`);
+          }
+          const verifyTarget = readlinkSync(linkPath);
+          if (verifyTarget !== targetPath) {
+            throw new Error(`Symlink points to wrong target: expected ${targetPath}, got ${verifyTarget}`);
+          }
+          this.log(` Created symlink: ${linkPath} -> ${targetPath}`);
+        } catch (err: any) {
+          this.logError(` Failed to create symlink ${linkPath} -> ${targetPath}: ${err.message}`);
+          throw err;
+        }
       };
 
       // In workspace mode, create symlinks so agents can use canonical path
