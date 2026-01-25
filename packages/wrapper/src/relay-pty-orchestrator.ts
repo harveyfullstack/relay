@@ -20,7 +20,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import { createConnection, Socket } from 'node:net';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
-import { existsSync, unlinkSync, mkdirSync, symlinkSync, lstatSync, rmSync, watch, readdirSync, readlinkSync } from 'node:fs';
+import { existsSync, unlinkSync, mkdirSync, symlinkSync, lstatSync, rmSync, watch, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import { getProjectPaths } from '@agent-relay/config/project-namespace';
 import { getAgentOutboxTemplate } from '@agent-relay/config/relay-file-writer';
@@ -80,7 +80,17 @@ interface ShutdownRequest {
   type: 'shutdown';
 }
 
-type RelayPtyRequest = InjectRequest | StatusRequest | ShutdownRequest;
+/**
+ * Send just Enter key (for stuck input recovery)
+ * Used when message was written to PTY but Enter wasn't processed
+ */
+interface SendEnterRequest {
+  type: 'send_enter';
+  /** Message ID this is for (for tracking) */
+  id: string;
+}
+
+type RelayPtyRequest = InjectRequest | StatusRequest | ShutdownRequest | SendEnterRequest;
 
 /**
  * Response types received from relay-pty socket
@@ -116,12 +126,26 @@ interface ShutdownAckResponse {
   type: 'shutdown_ack';
 }
 
+/**
+ * Response for SendEnter request (stuck input recovery)
+ */
+interface SendEnterResultResponse {
+  type: 'send_enter_result';
+  /** Message ID this is for */
+  id: string;
+  /** Whether Enter was sent successfully */
+  success: boolean;
+  /** Unix timestamp in milliseconds */
+  timestamp: number;
+}
+
 type RelayPtyResponse =
   | InjectResultResponse
   | StatusResponse
   | BackpressureResponse
   | ErrorResponse
-  | ShutdownAckResponse;
+  | ShutdownAckResponse
+  | SendEnterResultResponse;
 
 /**
  * Configuration for RelayPtyOrchestrator
@@ -195,6 +219,16 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     shortId: string;     // First 8 chars of messageId for verification
     retryCount: number;  // Track retry attempts
     originalBody: string; // Original injection content for retries
+  }> = new Map();
+  // Pending SendEnter requests (for stuck input recovery)
+  private pendingSendEnter: Map<string, {
+    resolve: (verified: boolean) => void;
+    timeout: NodeJS.Timeout;
+    from: string;
+    shortId: string;
+    retryCount: number;
+    originalBody: string;
+    originalResolve: (success: boolean) => void; // Original injection promise resolver
   }> = new Map();
   private backpressureActive = false;
   private readyForMessages = false;
@@ -501,6 +535,26 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       }
     } catch (err: any) {
       this.logError(` Failed to set up outbox: ${err.message}`);
+    }
+
+    // Write MCP identity file so MCP servers can discover their agent name
+    // This is needed because Claude Code may not pass through env vars to MCP server processes
+    try {
+      const projectPaths = getProjectPaths(this.config.cwd);
+      const identityDir = join(projectPaths.dataDir);
+      if (!existsSync(identityDir)) {
+        mkdirSync(identityDir, { recursive: true });
+      }
+      // Write a per-process identity file (using PPID so MCP server finds parent's identity)
+      const identityPath = join(identityDir, `mcp-identity-${process.pid}`);
+      writeFileSync(identityPath, this.config.name, 'utf-8');
+      this.log(` Wrote MCP identity file: ${identityPath}`);
+
+      // Also write a simple identity file (for single-agent scenarios)
+      const simpleIdentityPath = join(identityDir, 'mcp-identity');
+      writeFileSync(simpleIdentityPath, this.config.name, 'utf-8');
+    } catch (err: any) {
+      this.logError(` Failed to write MCP identity file: ${err.message}`);
     }
 
     // Find relay-pty binary
@@ -1266,6 +1320,13 @@ export class RelayPtyOrchestrator extends BaseWrapper {
         case 'shutdown_ack':
           this.log(` Shutdown acknowledged`);
           break;
+
+        case 'send_enter_result':
+          // Handle SendEnter result (stuck input recovery)
+          this.handleSendEnterResult(response).catch((err: Error) => {
+            this.logError(` Error handling send_enter result: ${err.message}`);
+          });
+          break;
       }
     } catch (err: any) {
       this.logError(` Failed to parse socket response: ${err.message}`);
@@ -1356,7 +1417,6 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
         // Check if we should retry
         if (pending.retryCount < INJECTION_CONSTANTS.MAX_RETRIES - 1) {
-          this.log(` Retrying injection (attempt ${pending.retryCount + 2}/${INJECTION_CONSTANTS.MAX_RETRIES})`);
           clearTimeout(pending.timeout);
           this.pendingInjections.delete(response.id);
 
@@ -1382,40 +1442,56 @@ export class RelayPtyOrchestrator extends BaseWrapper {
             return;
           }
 
-          // Re-inject by sending another socket request
-          // The original promise will be resolved when this retry completes
-          // Prepend [RETRY] to help agent notice this is a retry
-          const retryBody = pending.originalBody.startsWith('[RETRY]')
-            ? pending.originalBody
-            : `[RETRY] ${pending.originalBody}`;
-          const retryRequest: InjectRequest = {
-            type: 'inject',
-            id: response.id,
-            from: pending.from,
-            body: retryBody,
-            priority: 1, // Higher priority for retries
-          };
+          // On first retry attempt (retryCount === 0), try SendEnter first
+          // This handles the case where message content was written but Enter wasn't processed
+          if (pending.retryCount === 0) {
+            this.log(` Trying SendEnter first for ${pending.shortId} (stuck input recovery)`);
 
-          // Create new pending entry with incremented retry count
-          const newTimeout = setTimeout(() => {
-            this.logError(` Retry timeout for ${pending.shortId}`);
-            this.pendingInjections.delete(response.id);
-            pending.resolve(false);
-          }, 30000);
+            // Send just the Enter key
+            const sendEnterRequest: SendEnterRequest = {
+              type: 'send_enter',
+              id: response.id,
+            };
 
-          this.pendingInjections.set(response.id, {
-            ...pending,
-            timeout: newTimeout,
-            retryCount: pending.retryCount + 1,
-            originalBody: retryBody, // Use retry body for subsequent retries
-          });
+            // Track this SendEnter request for verification
+            const sendEnterTimeout = setTimeout(() => {
+              this.logError(` SendEnter timeout for ${pending.shortId}`);
+              this.pendingSendEnter.delete(response.id);
+              // Fall back to full retry after SendEnter timeout
+              this.doFullRetry(response.id, pending);
+            }, 5000); // 5 second timeout for SendEnter
 
-          this.sendSocketRequest(retryRequest).catch((err) => {
-            this.logError(` Retry request failed: ${err.message}`);
-            clearTimeout(newTimeout);
-            this.pendingInjections.delete(response.id);
-            pending.resolve(false);
-          });
+            this.pendingSendEnter.set(response.id, {
+              resolve: (verified: boolean) => {
+                if (verified) {
+                  // SendEnter worked!
+                  this.injectionMetrics.successWithRetry++;
+                  this.injectionMetrics.total++;
+                  pending.resolve(true);
+                } else {
+                  // SendEnter didn't work, do full retry
+                  this.doFullRetry(response.id, pending);
+                }
+              },
+              timeout: sendEnterTimeout,
+              from: pending.from,
+              shortId: pending.shortId,
+              retryCount: pending.retryCount,
+              originalBody: pending.originalBody,
+              originalResolve: pending.resolve,
+            });
+
+            this.sendSocketRequest(sendEnterRequest).catch((err) => {
+              this.logError(` SendEnter request failed: ${err.message}`);
+              clearTimeout(sendEnterTimeout);
+              this.pendingSendEnter.delete(response.id);
+              // Fall back to full retry
+              this.doFullRetry(response.id, pending);
+            });
+          } else {
+            // On subsequent retries (retryCount > 0), do full retry directly
+            this.doFullRetry(response.id, pending);
+          }
         } else {
           // Max retries exceeded
           this.logError(` Message ${pending.shortId} failed after ${INJECTION_CONSTANTS.MAX_RETRIES} attempts - NOT found in output`);
@@ -1445,6 +1521,102 @@ export class RelayPtyOrchestrator extends BaseWrapper {
       });
     }
     // queued/injecting are intermediate states - wait for final status
+  }
+
+  /**
+   * Handle SendEnter result (stuck input recovery)
+   * Called when relay-pty responds to a SendEnter request
+   */
+  private async handleSendEnterResult(response: SendEnterResultResponse): Promise<void> {
+    this.log(` handleSendEnterResult: id=${response.id.substring(0, 8)} success=${response.success}`);
+
+    const pendingEnter = this.pendingSendEnter.get(response.id);
+    if (!pendingEnter) {
+      this.log(` No pending SendEnter found for ${response.id.substring(0, 8)}`);
+      return;
+    }
+
+    clearTimeout(pendingEnter.timeout);
+    this.pendingSendEnter.delete(response.id);
+
+    if (!response.success) {
+      this.log(` SendEnter failed for ${pendingEnter.shortId}, will try full retry`);
+      pendingEnter.resolve(false);
+      return;
+    }
+
+    // SendEnter succeeded - wait and verify
+    this.log(` SendEnter sent for ${pendingEnter.shortId}, waiting to verify...`);
+    await sleep(150); // Give time for Enter to be processed
+
+    // Verify the message appeared in output
+    const verified = await verifyInjection(
+      pendingEnter.shortId,
+      pendingEnter.from,
+      async () => this.getCleanOutput()
+    );
+
+    if (verified) {
+      this.log(` Message ${pendingEnter.shortId} verified after SendEnter ✓`);
+      pendingEnter.resolve(true);
+    } else {
+      this.log(` Message ${pendingEnter.shortId} still not verified after SendEnter, will try full retry`);
+      pendingEnter.resolve(false);
+    }
+  }
+
+  /**
+   * Do a full retry with message content (used when SendEnter fails or for subsequent retries)
+   */
+  private doFullRetry(
+    messageId: string,
+    pending: {
+      resolve: (success: boolean) => void;
+      reject: (error: Error) => void;
+      from: string;
+      shortId: string;
+      retryCount: number;
+      originalBody: string;
+    }
+  ): void {
+    this.log(` Doing full retry for ${pending.shortId} (attempt ${pending.retryCount + 2}/${INJECTION_CONSTANTS.MAX_RETRIES})`);
+
+    // Re-inject by sending another socket request
+    // Prepend [RETRY] to help agent notice this is a retry
+    const retryBody = pending.originalBody.startsWith('[RETRY]')
+      ? pending.originalBody
+      : `[RETRY] ${pending.originalBody}`;
+    const retryRequest: InjectRequest = {
+      type: 'inject',
+      id: messageId,
+      from: pending.from,
+      body: retryBody,
+      priority: 1, // Higher priority for retries
+    };
+
+    // Create new pending entry with incremented retry count
+    const newTimeout = setTimeout(() => {
+      this.logError(` Retry timeout for ${pending.shortId}`);
+      this.pendingInjections.delete(messageId);
+      pending.resolve(false);
+    }, 30000);
+
+    this.pendingInjections.set(messageId, {
+      resolve: pending.resolve,
+      reject: pending.reject,
+      timeout: newTimeout,
+      from: pending.from,
+      shortId: pending.shortId,
+      retryCount: pending.retryCount + 1,
+      originalBody: retryBody,
+    });
+
+    this.sendSocketRequest(retryRequest).catch((err) => {
+      this.logError(` Full retry request failed: ${err.message}`);
+      clearTimeout(newTimeout);
+      this.pendingInjections.delete(messageId);
+      pending.resolve(false);
+    });
   }
 
   /**

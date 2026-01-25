@@ -220,8 +220,8 @@ async fn main() -> Result<()> {
     // Create message queue with broadcast sender
     let queue = Arc::new(MessageQueue::new(config.queue_max, response_tx));
 
-    // Create injector
-    let injector = Arc::new(Injector::new(inject_tx, Arc::clone(&queue), config.clone()));
+    // Create injector (clone inject_tx since we also need it for SocketServer)
+    let injector = Arc::new(Injector::new(inject_tx.clone(), Arc::clone(&queue), config.clone()));
 
     // Create output parser
     let mut parser = if let Some(ref outbox) = outbox_path {
@@ -276,6 +276,7 @@ async fn main() -> Result<()> {
         Arc::clone(&queue),
         status_tx,
         shutdown_tx,
+        inject_tx.clone(), // For SendEnter requests
     );
 
     let socket_handle = tokio::spawn(async move {

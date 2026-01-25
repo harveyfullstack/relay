@@ -30,6 +30,8 @@ pub struct SocketServer {
     status_tx: mpsc::Sender<StatusQuery>,
     /// Shutdown signal
     shutdown_tx: mpsc::Sender<()>,
+    /// Direct PTY write channel (for SendEnter)
+    pty_tx: mpsc::Sender<Vec<u8>>,
 }
 
 /// Status query request
@@ -53,12 +55,14 @@ impl SocketServer {
         queue: Arc<MessageQueue>,
         status_tx: mpsc::Sender<StatusQuery>,
         shutdown_tx: mpsc::Sender<()>,
+        pty_tx: mpsc::Sender<Vec<u8>>,
     ) -> Self {
         Self {
             socket_path,
             queue,
             status_tx,
             shutdown_tx,
+            pty_tx,
         }
     }
 
@@ -98,10 +102,11 @@ impl SocketServer {
                     let queue = Arc::clone(&self.queue);
                     let status_tx = self.status_tx.clone();
                     let shutdown_tx = self.shutdown_tx.clone();
+                    let pty_tx = self.pty_tx.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) =
-                            handle_connection(stream, queue, status_tx, shutdown_tx).await
+                            handle_connection(stream, queue, status_tx, shutdown_tx, pty_tx).await
                         {
                             error!("Connection error: {}", e);
                         }
@@ -124,6 +129,7 @@ async fn handle_connection(
     queue: Arc<MessageQueue>,
     status_tx: mpsc::Sender<StatusQuery>,
     shutdown_tx: mpsc::Sender<()>,
+    pty_tx: mpsc::Sender<Vec<u8>>,
 ) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -168,7 +174,7 @@ async fn handle_connection(
                             None
                         };
 
-                        let response = handle_request(request, &queue, &status_tx, &shutdown_tx).await;
+                        let response = handle_request(request, &queue, &status_tx, &shutdown_tx, &pty_tx).await;
 
                         // Send the initial response to the client
                         // For inject requests, this is the "Queued" status
@@ -266,6 +272,7 @@ async fn handle_request(
     queue: &Arc<MessageQueue>,
     status_tx: &mpsc::Sender<StatusQuery>,
     shutdown_tx: &mpsc::Sender<()>,
+    pty_tx: &mpsc::Sender<Vec<u8>>,
 ) -> InjectResponse {
     match request {
         InjectRequest::Inject {
@@ -297,6 +304,25 @@ async fn handle_request(
                 InjectResponse::Error {
                     message: format!("Message {} rejected (duplicate or backpressure)", id),
                 }
+            }
+        }
+
+        InjectRequest::SendEnter { id } => {
+            info!("SendEnter request for message {}", id);
+
+            // Send just the Enter key (\r) to the PTY
+            let success = pty_tx.send(vec![0x0d]).await.is_ok();
+
+            if success {
+                info!("Enter key sent successfully for {}", id);
+            } else {
+                warn!("Failed to send Enter key for {} - PTY channel closed", id);
+            }
+
+            InjectResponse::SendEnterResult {
+                id,
+                success,
+                timestamp: current_timestamp_ms(),
             }
         }
 
@@ -417,6 +443,7 @@ mod tests {
         let (response_tx, _response_rx) = broadcast::channel(16);
         let (status_tx, _status_rx) = mpsc::channel(16);
         let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let (pty_tx, _pty_rx) = mpsc::channel::<Vec<u8>>(16);
 
         let queue = Arc::new(MessageQueue::new(10, response_tx));
 
@@ -425,6 +452,7 @@ mod tests {
             Arc::clone(&queue),
             status_tx,
             shutdown_tx,
+            pty_tx,
         );
 
         // Start server in background
@@ -461,11 +489,12 @@ mod tests {
         let (status_tx, status_rx) = mpsc::channel(1);
         drop(status_rx);
         let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let (pty_tx, _pty_rx) = mpsc::channel(1);
 
         let queue = Arc::new(MessageQueue::new(1, response_tx));
 
         let response =
-            handle_request(InjectRequest::Status, &queue, &status_tx, &shutdown_tx).await;
+            handle_request(InjectRequest::Status, &queue, &status_tx, &shutdown_tx, &pty_tx).await;
 
         match response {
             InjectResponse::Error { message } => {
@@ -480,11 +509,12 @@ mod tests {
         let (response_tx, _response_rx) = broadcast::channel(1);
         let (status_tx, _status_rx) = mpsc::channel(1);
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
+        let (pty_tx, _pty_rx) = mpsc::channel(1);
 
         let queue = Arc::new(MessageQueue::new(1, response_tx));
 
         let response =
-            handle_request(InjectRequest::Shutdown, &queue, &status_tx, &shutdown_tx).await;
+            handle_request(InjectRequest::Shutdown, &queue, &status_tx, &shutdown_tx, &pty_tx).await;
         assert!(matches!(response, InjectResponse::ShutdownAck));
 
         let received =
@@ -500,6 +530,7 @@ mod tests {
         let (response_tx, _response_rx) = broadcast::channel(4);
         let (status_tx, _status_rx) = mpsc::channel(1);
         let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let (pty_tx, _pty_rx) = mpsc::channel(1);
 
         let queue = Arc::new(MessageQueue::new(1, response_tx));
 
@@ -513,6 +544,7 @@ mod tests {
             &queue,
             &status_tx,
             &shutdown_tx,
+            &pty_tx,
         )
         .await;
 
@@ -534,6 +566,7 @@ mod tests {
             &queue,
             &status_tx,
             &shutdown_tx,
+            &pty_tx,
         )
         .await;
 
@@ -557,12 +590,13 @@ mod tests {
         let (response_tx, _response_rx) = broadcast::channel(1);
         let (status_tx, _status_rx) = mpsc::channel(1);
         let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let (pty_tx, _pty_rx) = mpsc::channel::<Vec<u8>>(1);
 
         let queue = Arc::new(MessageQueue::new(1, response_tx));
         let (server_stream, client_stream) = UnixStream::pair().unwrap();
 
         let server_handle = tokio::spawn(async move {
-            handle_connection(server_stream, queue, status_tx, shutdown_tx)
+            handle_connection(server_stream, queue, status_tx, shutdown_tx, pty_tx)
                 .await
                 .unwrap();
         });
