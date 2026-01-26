@@ -11,7 +11,7 @@ Before you begin, ensure you have:
 
 - **Node.js** 18 or higher
 - **tmux** installed on your system
-- At least one AI CLI installed (Claude, Codex, or Gemini)
+- At least one AI CLI installed (Claude, Codex, Cursor, or Gemini)
 
 ## Installation
 
@@ -27,6 +27,14 @@ Verify the installation:
 agent-relay --version
 ```
 
+Check that agents know how to use the agent-relay protocol
+```bash
+npx prpm install @agent-relay/agent-relay-snippet
+
+# If Claude
+npx prpm install @agent-relay/agent-relay-snippet --location CLAUDE.md
+```
+
 ## Step-by-Step Setup
 
 <Steps>
@@ -34,7 +42,7 @@ agent-relay --version
     The daemon is the central message broker. Start it first:
 
     ```bash
-    agent-relay up
+    agent-relay up --dashboard
     ```
 
     You should see:
