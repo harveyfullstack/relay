@@ -463,15 +463,6 @@ export abstract class BaseWrapper extends EventEmitter {
       return;
     }
 
-    // Add hash only after confirming we will attempt the send
-    this.sentMessageHashes.add(hash);
-
-    // Limit hash set size
-    if (this.sentMessageHashes.size > 500) {
-      const oldest = this.sentMessageHashes.values().next().value;
-      if (oldest) this.sentMessageHashes.delete(oldest);
-    }
-
     console.error(`[base-wrapper] sendRelayCommand: to=${cmd.to}, body=${cmd.body.substring(0, 50)}...`);
 
     let sendMeta: SendMeta | undefined;
@@ -483,14 +474,29 @@ export abstract class BaseWrapper extends EventEmitter {
       };
     }
 
+    // Helper to mark message as sent (only after successful transmission)
+    const markSent = () => {
+      this.sentMessageHashes.add(hash);
+      // Limit hash set size
+      if (this.sentMessageHashes.size > 500) {
+        const oldest = this.sentMessageHashes.values().next().value;
+        if (oldest) this.sentMessageHashes.delete(oldest);
+      }
+    };
+
     // Check if target is a channel (starts with #)
     if (cmd.to.startsWith('#')) {
       // Use CHANNEL_MESSAGE protocol for channel targets
       console.error(`[base-wrapper] Sending CHANNEL_MESSAGE to ${cmd.to}`);
-      this.client.sendChannelMessage(cmd.to, cmd.body, {
+      const success = this.client.sendChannelMessage(cmd.to, cmd.body, {
         thread: cmd.thread,
         data: cmd.data,
       });
+      if (success) {
+        markSent();
+      } else {
+        console.error(`[base-wrapper] sendChannelMessage failed for ${cmd.to}`);
+      }
     } else {
       // Use SEND protocol for direct messages and broadcasts
       if (cmd.sync?.blocking) {
@@ -499,11 +505,18 @@ export abstract class BaseWrapper extends EventEmitter {
           kind: cmd.kind,
           data: cmd.data,
           thread: cmd.thread,
+        }).then(() => {
+          markSent();
         }).catch((err) => {
           console.error(`[base-wrapper] sendAndWait failed for ${cmd.to}: ${err.message}`);
         });
       } else {
-        this.client.sendMessage(cmd.to, cmd.body, cmd.kind, cmd.data, cmd.thread, sendMeta);
+        const success = this.client.sendMessage(cmd.to, cmd.body, cmd.kind, cmd.data, cmd.thread, sendMeta);
+        if (success) {
+          markSent();
+        } else {
+          console.error(`[base-wrapper] sendMessage failed for ${cmd.to}`);
+        }
       }
     }
   }

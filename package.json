@@ -89,7 +89,9 @@
     "cli-tester:start": "cd packages/cli-tester && ./scripts/start.sh",
     "cli-tester:start:clean": "cd packages/cli-tester && ./scripts/start.sh --clean",
     "cli-tester:start:daemon": "cd packages/cli-tester && ./scripts/start.sh --daemon",
-    "cli-tester:build": "cd packages/cli-tester && docker compose -f docker/docker-compose.yml build"
+    "cli-tester:build": "cd packages/cli-tester && docker compose -f docker/docker-compose.yml build",
+    "hooks:install": "./scripts/hooks/install.sh",
+    "fmt:rust": "cd relay-pty && cargo fmt"
   },
   "keywords": [
     "agent",

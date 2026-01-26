@@ -382,8 +382,9 @@ async fn main() -> Result<()> {
 
     // Periodic timer for auto-Enter checks (runs independently of output events)
     // This is critical: the auto-Enter logic MUST run even when there's no output
-    let mut auto_enter_interval =
-        tokio::time::interval(std::time::Duration::from_millis(AUTO_ENTER_CHECK_INTERVAL_MS));
+    let mut auto_enter_interval = tokio::time::interval(std::time::Duration::from_millis(
+        AUTO_ENTER_CHECK_INTERVAL_MS,
+    ));
 
     loop {
         select! {

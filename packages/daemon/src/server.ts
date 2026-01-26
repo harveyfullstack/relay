@@ -7,6 +7,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { createRequire } from 'node:module';
 import { Connection, type ConnectionConfig, DEFAULT_CONFIG } from './connection.js';
 import { Router } from './router.js';
 import {
@@ -53,6 +54,11 @@ import {
 } from '@agent-relay/telemetry';
 import { RelayWatchdog, type ProcessedFile } from './relay-watchdog.js';
 import type { RelayPaths } from '@agent-relay/config/relay-file-writer';
+
+// Get version from package.json
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json');
+const DAEMON_VERSION: string = packageJson.version;
 
 export interface DaemonConfig extends ConnectionConfig {
   socketPath: string;
@@ -1281,7 +1287,7 @@ export class Daemon {
           id: envelope.id,
           ts: Date.now(),
           payload: {
-            version: '2.0.13',
+            version: DAEMON_VERSION,
             uptime: uptimeMs,
             cloudConnected: this.cloudSync?.isConnected() ?? false,
             agentCount: this.router.connectionCount,
@@ -1301,8 +1307,10 @@ export class Daemon {
             return [];
           }
           try {
+            // If channel is specified, get channel messages; otherwise get DMs to agent
+            const toFilter = inboxPayload.channel || agentName;
             const messages = await this.storage.getMessages({
-              to: agentName,
+              to: toFilter,
               from: inboxPayload.from,
               limit: inboxPayload.limit || 50,
               unreadOnly: inboxPayload.unreadOnly,

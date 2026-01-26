@@ -577,19 +577,21 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     this.log(` Using binary: ${binaryPath}`);
 
-    // Connect to relay daemon first
+    // Spawn relay-pty process FIRST (before connecting to daemon)
+    // This ensures the CLI is actually running before we register with the daemon
+    await this.spawnRelayPty(binaryPath);
+
+    // Wait for socket to become available and connect
+    await this.connectToSocket();
+
+    // Connect to relay daemon AFTER CLI is spawned
+    // This prevents the spawner from seeing us as "registered" before the CLI runs
     try {
       await this.client.connect();
       this.log(` Relay daemon connected`);
     } catch (err: any) {
       this.logError(` Relay connect failed: ${err.message}`);
     }
-
-    // Spawn relay-pty process
-    await this.spawnRelayPty(binaryPath);
-
-    // Wait for socket to become available and connect
-    await this.connectToSocket();
 
     this.running = true;
     // DON'T set readyForMessages yet - wait for CLI to be ready first
