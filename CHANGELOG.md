@@ -10,31 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.20] - 2026-01-26
 
 ### Added
+- Introduced the `@agent-relay/mcp` package for Model Context Protocol (MCP) server support with a one-command installer.
+- MCP tools for agents: `relay_send`, `relay_inbox`, `relay_who`, `relay_spawn`, `relay_release`, `relay_status`.
+- MCP resources for state inspection: `relay://agents`, `relay://inbox`, `relay://project`.
+- Automatic socket discovery with cloud workspace support and JSONC editor configuration preservation.
+- First-class channels and direct messages, including unified threading models across DMs and channels.
+- Workspace-scoped provider credentials for better isolation across workspaces.
+- Mega coordinator command and additional agent profiles for multi-project coordination.
+- Workspace persistence across container restarts and dynamic repository management.
+- Force-update workspaces GitHub workflow for operational recovery.
+- Turborepo build system integration for parallelized builds.
+- Rust-based relay-pty core with TypeScript orchestrator and infrastructure tests.
 
-#### MCP Server Support
-- New `@agent-relay/mcp` package providing Model Context Protocol (MCP) server
-- One-command installation: `npx @agent-relay/mcp install`
-- Support for Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, and Zed
-- 6 native tools for AI agents:
-  - `relay_send` - Send messages to agents/channels
-  - `relay_inbox` - Check pending messages
-  - `relay_who` - List online agents
-  - `relay_spawn` - Spawn worker agents
-  - `relay_release` - Release workers
-  - `relay_status` - Check connection status
-- 3 MCP resources for state inspection:
-  - `relay://agents` - List of online agents
-  - `relay://inbox` - Message inbox
-  - `relay://project` - Project configuration
-- Automatic socket discovery with cloud workspace support
-- Integration with main CLI via `agent-relay mcp` command
-- Comprehensive test suite with 43 passing tests
+### Fixed
+- Direct message and channel message routing issues (delivery, duplication, and visibility).
+- Workspace selector visibility, workspace proxy query parameter handling, and workspace change handling.
+- Spawn timing race conditions that could drop messages before agent registration.
+- Duplicate terminal "Connected - Interactive Mode" messages and relay-pty injection reliability issues.
+- Cloud routing issues for channel messages, queue monitor stuck messages, and cloud sync timeouts.
+- Dashboard UI bugs: mobile scrolling, agent list labeling, message attribution, and markdown rendering consistency.
+- CI/build issues including Turbo/TypeScript errors and publish errors.
+- GitHub auth fallback handling and GH_TOKEN injection for spawned agents.
 
 ### Changed
-- Updated main CLI to include MCP commands via dynamic import
+- Updated main CLI to include MCP commands via dynamic import.
+- Consolidated sync messaging protocol with `[await]`/ACK tracking and model selection/mapping logic.
+- Improved xterm viewport stability on mobile devices and standardized markdown rendering across views.
+- Updated pricing information and clarified agent roles (devops vs infrastructure).
 
-### Technical Details
-- MCP server uses simplified RelayClient for minimal overhead
-- Auto-discovery supports RELAY_SOCKET env, cloud workspaces, CWD config
-- Editor configurations use JSONC format with proper comment preservation
-- Package designed for global npm installation and npx usage
+### Infrastructure & Refactors
+- Cloud link logic with fallback mechanisms, migrations, and workspace deployment fixes.
+- Daemon-based spawning with dashboard disabled by default plus enhanced spawn diagnostics.
+- WebSocket ping/pong keepalive for main and bridge connections.
+- Workspace namespacing for inbox paths and better state/continuity parsing.
+- Custom GitHub credential helper with improved token fetch retry logic.
+- Updated container entrypoint commands and deployment workflow fixes.
+- Added `/api/bridge` endpoint for cloud server routing.
+
+### Documentation
+- Documented multi-server architecture, agent CLI patterns, and competitive analysis updates.
+- Added CLI auth testing guide and updated TASKS/protocol guidance for relay-first communication.
+
+### Breaking Changes
+- None noted for this release.
