@@ -59,9 +59,6 @@ jobs:
       - name: Build packages
         run: npm run build
 
-      - name: Build dashboard
-        run: npm run build:dashboard
-
       - name: Validate all
         run: |
           echo "=== Validating packages ==="
@@ -124,13 +121,13 @@ jobs:
           echo ""
           echo "SUCCESS: All validations passed"
 
-      - name: Test dashboard startup
+      - name: Test CLI startup
         run: |
-          echo "=== Testing dashboard ==="
-          timeout 30 node dist/src/cli/index.js up --port 3999 --dashboard &
+          echo "=== Testing CLI daemon ==="
+          timeout 30 node dist/src/cli/index.js up --port 3999 &
           for i in {1..15}; do
-            curl -s http://localhost:3999 > /dev/null && break
+            curl -s http://localhost:3999/health > /dev/null && break
             sleep 1
           done
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3999)
-          [ "$HTTP_CODE" = "200" ] && echo "✓ Dashboard OK" || exit 1
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3999/health)
+          [ "$HTTP_CODE" = "200" ] && echo "✓ Daemon OK" || exit 1
