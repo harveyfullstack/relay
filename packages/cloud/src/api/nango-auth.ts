@@ -365,10 +365,41 @@ async function handleLoginWebhook(
   const githubUser = await nangoService.getGithubUser(connectionId);
   const githubId = String(githubUser.id);
 
-  // Check if user already exists
-  const existingUser = await db.users.findByGithubId(githubId);
+  // Check if user already exists by GitHub ID
+  let existingUser = await db.users.findByGithubId(githubId);
 
-  // SCENARIO 1: New user
+  // If not found by GitHub ID, check by email (for email-signup users connecting GitHub)
+  if (!existingUser && githubUser.email) {
+    const userByEmail = await db.users.findByEmail(githubUser.email);
+    if (userByEmail) {
+      // Email-signup user is connecting their GitHub account
+      console.log(`[nango-webhook] Linking GitHub to existing email user: ${githubUser.login} -> ${userByEmail.email}`);
+
+      // Update the existing user with GitHub info
+      await db.users.update(userByEmail.id, {
+        githubId,
+        githubUsername: githubUser.login,
+        avatarUrl: githubUser.avatar_url || null,
+        nangoConnectionId: connectionId,
+        incomingConnectionId: connectionId,
+      });
+
+      // Sync GitHub emails
+      await syncGitHubEmails(userByEmail.id, connectionId);
+
+      // Update connection with user ID
+      await nangoService.updateEndUser(connectionId, NANGO_INTEGRATIONS.GITHUB_USER, {
+        id: userByEmail.id,
+        email: userByEmail.email || undefined,
+      });
+
+      // Check for auto-add to workspaces
+      await checkAndAutoAddToWorkspaces(userByEmail.id, connectionId);
+      return;
+    }
+  }
+
+  // SCENARIO 1: New user (no existing user by GitHub ID or email)
   if (!existingUser) {
     // First, get the primary email from GitHub API (requires user:email scope)
     // We'll create the user first, then sync emails

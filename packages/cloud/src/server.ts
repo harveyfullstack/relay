@@ -2163,7 +2163,10 @@ export async function createServer(): Promise<CloudServer> {
       if (server) {
         await new Promise<void>((resolve) => server!.close(() => resolve()));
       }
-      await redisClient.quit();
+      // Only quit Redis if client is still open
+      if (redisClient.isOpen) {
+        await redisClient.quit();
+      }
     },
   };
 }
