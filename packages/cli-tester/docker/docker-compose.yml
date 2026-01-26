@@ -1,0 +1,33 @@
+services:
+  cli-tester:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    stdin_open: true  # Keep stdin open for interactive use (-i)
+    tty: true         # Allocate TTY for CLI tools (-t)
+    ports:
+      - "1455:1455"   # Codex OAuth callback port
+    volumes:
+      # Persist credentials between runs (named volumes)
+      - cli-config:/home/workspace/.config
+      - claude-credentials:/home/workspace/.claude
+      - codex-credentials:/home/workspace/.codex
+      - gemini-credentials:/home/workspace/.gemini
+      - cursor-credentials:/home/workspace/.cursor
+      - opencode-credentials:/home/workspace/.local/share/opencode
+      # Mount scripts for easy editing during development
+      - ../scripts:/app/scripts:ro
+    environment:
+      - TERM=xterm-256color
+      # Disable auto-updates for deterministic testing
+      - DISABLE_AUTOUPDATER=1
+      - CODEX_CHECK_FOR_UPDATES=false
+      - CODEX_DISABLE_AUTOUPDATE=1
+
+volumes:
+  cli-config:
+  claude-credentials:
+  codex-credentials:
+  gemini-credentials:
+  cursor-credentials:
+  opencode-credentials:
