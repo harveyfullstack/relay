@@ -243,6 +243,7 @@ jobs:
           - sdk
           - daemon
           - cloud
+          - dashboard
           - dashboard-server
           - telemetry
 
