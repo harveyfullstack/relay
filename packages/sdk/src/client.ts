@@ -7,6 +7,7 @@
 
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
+// Import shared protocol types and framing utilities from @agent-relay/protocol
 import {
   type Envelope,
   type HelloPayload,
@@ -36,6 +37,8 @@ import {
   type InboxPayload,
   type InboxMessage,
   type InboxResponsePayload,
+  type MessagesQueryPayload,
+  type MessagesResponsePayload,
   type ListAgentsPayload,
   type AgentInfo,
   type ListAgentsResponsePayload,
@@ -47,13 +50,12 @@ import {
   type HealthResponsePayload,
   type MetricsPayload,
   type MetricsResponsePayload,
-  type ConsensusType,
-  type VoteValue,
   type CreateProposalOptions,
   type VoteOptions,
   PROTOCOL_VERSION,
-} from './protocol/types.js';
-import { encodeFrameLegacy, FrameParser } from './protocol/framing.js';
+  encodeFrameLegacy,
+  FrameParser,
+} from '@agent-relay/protocol';
 
 export type ClientState = 'DISCONNECTED' | 'CONNECTING' | 'HANDSHAKING' | 'READY' | 'BACKOFF';
 
@@ -929,6 +931,38 @@ export class RelayClient {
       channel: options.channel,
     };
     const response = await this.query<InboxResponsePayload>('INBOX', payload);
+    return response.messages || [];
+  }
+
+  /**
+   * Query all messages (not filtered by recipient).
+   * Used by dashboard to get message history.
+   * @param options - Query options
+   * @param options.limit - Maximum number of messages to return (default: 100)
+   * @param options.sinceTs - Only return messages after this timestamp
+   * @param options.from - Filter by sender
+   * @param options.to - Filter by recipient
+   * @param options.thread - Filter by thread ID
+   * @param options.order - Sort order ('asc' or 'desc', default: 'desc')
+   * @returns Array of messages
+   */
+  async queryMessages(options: {
+    limit?: number;
+    sinceTs?: number;
+    from?: string;
+    to?: string;
+    thread?: string;
+    order?: 'asc' | 'desc';
+  } = {}): Promise<MessagesResponsePayload['messages']> {
+    const payload: MessagesQueryPayload = {
+      limit: options.limit,
+      sinceTs: options.sinceTs,
+      from: options.from,
+      to: options.to,
+      thread: options.thread,
+      order: options.order,
+    };
+    const response = await this.query<MessagesResponsePayload>('MESSAGES_QUERY', payload);
     return response.messages || [];
   }
 

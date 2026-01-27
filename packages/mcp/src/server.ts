@@ -46,6 +46,36 @@ import {
   relayRemoveAgentTool,
   relayRemoveAgentSchema,
   handleRelayRemoveAgent,
+  relayBroadcastTool,
+  relayBroadcastSchema,
+  handleRelayBroadcast,
+  relaySubscribeTool,
+  relaySubscribeSchema,
+  handleRelaySubscribe,
+  relayUnsubscribeTool,
+  relayUnsubscribeSchema,
+  handleRelayUnsubscribe,
+  relayChannelJoinTool,
+  relayChannelJoinSchema,
+  handleRelayChannelJoin,
+  relayChannelLeaveTool,
+  relayChannelLeaveSchema,
+  handleRelayChannelLeave,
+  relayChannelMessageTool,
+  relayChannelMessageSchema,
+  handleRelayChannelMessage,
+  relayShadowBindTool,
+  relayShadowBindSchema,
+  handleRelayShadowBind,
+  relayShadowUnbindTool,
+  relayShadowUnbindSchema,
+  handleRelayShadowUnbind,
+  relayProposalTool,
+  relayProposalSchema,
+  handleRelayProposal,
+  relayVoteTool,
+  relayVoteSchema,
+  handleRelayVote,
 } from './tools/index.js';
 import { protocolPrompt, getProtocolPrompt } from './prompts/index.js';
 import {
@@ -73,6 +103,16 @@ const TOOLS = [
   relayMetricsTool,
   relayHealthTool,
   relayContinuityTool,
+  relayBroadcastTool,
+  relaySubscribeTool,
+  relayUnsubscribeTool,
+  relayChannelJoinTool,
+  relayChannelLeaveTool,
+  relayChannelMessageTool,
+  relayShadowBindTool,
+  relayShadowUnbindTool,
+  relayProposalTool,
+  relayVoteTool,
 ];
 
 /**
@@ -196,6 +236,66 @@ export function createMCPServer(client: RelayClient, config?: MCPServerConfig): 
         case 'relay_continuity': {
           const input = relayContinuitySchema.parse(args);
           result = await handleRelayContinuity(client, input);
+          break;
+        }
+
+        case 'relay_broadcast': {
+          const input = relayBroadcastSchema.parse(args);
+          result = await handleRelayBroadcast(client, input);
+          break;
+        }
+
+        case 'relay_subscribe': {
+          const input = relaySubscribeSchema.parse(args);
+          result = await handleRelaySubscribe(client, input);
+          break;
+        }
+
+        case 'relay_unsubscribe': {
+          const input = relayUnsubscribeSchema.parse(args);
+          result = await handleRelayUnsubscribe(client, input);
+          break;
+        }
+
+        case 'relay_channel_join': {
+          const input = relayChannelJoinSchema.parse(args);
+          result = await handleRelayChannelJoin(client, input);
+          break;
+        }
+
+        case 'relay_channel_leave': {
+          const input = relayChannelLeaveSchema.parse(args);
+          result = await handleRelayChannelLeave(client, input);
+          break;
+        }
+
+        case 'relay_channel_message': {
+          const input = relayChannelMessageSchema.parse(args);
+          result = await handleRelayChannelMessage(client, input);
+          break;
+        }
+
+        case 'relay_shadow_bind': {
+          const input = relayShadowBindSchema.parse(args);
+          result = await handleRelayShadowBind(client, input);
+          break;
+        }
+
+        case 'relay_shadow_unbind': {
+          const input = relayShadowUnbindSchema.parse(args);
+          result = await handleRelayShadowUnbind(client, input);
+          break;
+        }
+
+        case 'relay_proposal': {
+          const input = relayProposalSchema.parse(args);
+          result = await handleRelayProposal(client, input);
+          break;
+        }
+
+        case 'relay_vote': {
+          const input = relayVoteSchema.parse(args);
+          result = await handleRelayVote(client, input);
           break;
         }
 

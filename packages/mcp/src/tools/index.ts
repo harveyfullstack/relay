@@ -76,3 +76,58 @@ export {
   handleRelayRemoveAgent,
   type RelayRemoveAgentInput,
 } from './relay-remove-agent.js';
+
+export {
+  relayBroadcastTool,
+  relayBroadcastSchema,
+  handleRelayBroadcast,
+  type RelayBroadcastInput,
+} from './relay-broadcast.js';
+
+export {
+  relaySubscribeTool,
+  relaySubscribeSchema,
+  handleRelaySubscribe,
+  type RelaySubscribeInput,
+  relayUnsubscribeTool,
+  relayUnsubscribeSchema,
+  handleRelayUnsubscribe,
+  type RelayUnsubscribeInput,
+} from './relay-subscribe.js';
+
+export {
+  relayChannelJoinTool,
+  relayChannelJoinSchema,
+  handleRelayChannelJoin,
+  type RelayChannelJoinInput,
+  relayChannelLeaveTool,
+  relayChannelLeaveSchema,
+  handleRelayChannelLeave,
+  type RelayChannelLeaveInput,
+  relayChannelMessageTool,
+  relayChannelMessageSchema,
+  handleRelayChannelMessage,
+  type RelayChannelMessageInput,
+} from './relay-channel.js';
+
+export {
+  relayShadowBindTool,
+  relayShadowBindSchema,
+  handleRelayShadowBind,
+  type RelayShadowBindInput,
+  relayShadowUnbindTool,
+  relayShadowUnbindSchema,
+  handleRelayShadowUnbind,
+  type RelayShadowUnbindInput,
+} from './relay-shadow.js';
+
+export {
+  relayProposalTool,
+  relayProposalSchema,
+  handleRelayProposal,
+  type RelayProposalInput,
+  relayVoteTool,
+  relayVoteSchema,
+  handleRelayVote,
+  type RelayVoteInput,
+} from './relay-consensus.js';

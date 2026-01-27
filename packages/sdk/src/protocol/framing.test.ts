@@ -6,8 +6,8 @@ import {
   HEADER_SIZE,
   LEGACY_HEADER_SIZE,
   MAX_FRAME_BYTES,
-} from './framing.js';
-import type { Envelope } from './types.js';
+  type Envelope,
+} from '@agent-relay/protocol';
 
 describe('protocol framing', () => {
   describe('legacy format (4-byte header)', () => {

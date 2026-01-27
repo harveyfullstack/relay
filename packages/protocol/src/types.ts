@@ -55,7 +55,13 @@ export type MessageType =
   | 'HEALTH'
   | 'HEALTH_RESPONSE'
   | 'METRICS'
-  | 'METRICS_RESPONSE';
+  | 'METRICS_RESPONSE'
+  // Messages query (for dashboard)
+  | 'MESSAGES_QUERY'
+  | 'MESSAGES_RESPONSE'
+  // Consensus types
+  | 'PROPOSAL_CREATE'
+  | 'VOTE';
 
 export type PayloadKind = 'message' | 'action' | 'state' | 'thinking';
 
@@ -239,7 +245,7 @@ export interface PongPayload {
   nonce: string;
 }
 
-export type ErrorCode = 'BAD_REQUEST' | 'UNAUTHORIZED' | 'NOT_FOUND' | 'INTERNAL' | 'RESUME_TOO_OLD' | 'DUPLICATE_CONNECTION';
+export type ErrorCode = 'BAD_REQUEST' | 'UNAUTHORIZED' | 'NOT_FOUND' | 'INTERNAL' | 'RESUME_TOO_OLD' | 'DUPLICATE_CONNECTION' | 'TIMEOUT';
 
 export interface ErrorPayload {
   /** Error code */
@@ -521,6 +527,45 @@ export interface InboxResponsePayload {
 }
 
 /**
+ * Payload for MESSAGES_QUERY request.
+ * Used by dashboard to query all messages (not filtered by recipient).
+ */
+export interface MessagesQueryPayload {
+  /** Maximum number of messages to return */
+  limit?: number;
+  /** Only return messages after this timestamp (Unix ms) */
+  sinceTs?: number;
+  /** Filter by sender */
+  from?: string;
+  /** Filter by recipient */
+  to?: string;
+  /** Filter by thread ID */
+  thread?: string;
+  /** Sort order */
+  order?: 'asc' | 'desc';
+}
+
+/**
+ * Payload for MESSAGES_RESPONSE.
+ */
+export interface MessagesResponsePayload {
+  /** Messages matching the query */
+  messages: Array<{
+    id: string;
+    from: string;
+    to: string;
+    body: string;
+    channel?: string;
+    thread?: string;
+    timestamp: number;
+    status?: string;
+    isBroadcast?: boolean;
+    replyCount?: number;
+    data?: Record<string, unknown>;
+  }>;
+}
+
+/**
  * Payload for LIST_AGENTS request.
  */
 export interface ListAgentsPayload {
@@ -592,6 +637,8 @@ export type StatusEnvelope = Envelope<StatusPayload>;
 export type StatusResponseEnvelope = Envelope<StatusResponsePayload>;
 export type InboxEnvelope = Envelope<InboxPayload>;
 export type InboxResponseEnvelope = Envelope<InboxResponsePayload>;
+export type MessagesQueryEnvelope = Envelope<MessagesQueryPayload>;
+export type MessagesResponseEnvelope = Envelope<MessagesResponsePayload>;
 export type ListAgentsEnvelope = Envelope<ListAgentsPayload>;
 export type ListAgentsResponseEnvelope = Envelope<ListAgentsResponsePayload>;
 export type ListConnectedAgentsEnvelope = Envelope<ListConnectedAgentsPayload>;
@@ -672,3 +719,120 @@ export type HealthEnvelope = Envelope<HealthPayload>;
 export type HealthResponseEnvelope = Envelope<HealthResponsePayload>;
 export type MetricsEnvelope = Envelope<MetricsPayload>;
 export type MetricsResponseEnvelope = Envelope<MetricsResponsePayload>;
+
+// =============================================================================
+// Consensus Types
+// =============================================================================
+
+export type ConsensusType =
+  | 'majority'      // >50% agree
+  | 'supermajority' // >=threshold agree (default 2/3)
+  | 'unanimous'     // 100% agree
+  | 'weighted'      // Weighted by role
+  | 'quorum';       // Minimum participation + majority
+
+export type VoteValue = 'approve' | 'reject' | 'abstain';
+
+export type ProposalStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'expired'
+  | 'cancelled';
+
+/**
+ * Options for creating a consensus proposal.
+ */
+export interface CreateProposalOptions {
+  /** Proposal title */
+  title: string;
+  /** Detailed description */
+  description: string;
+  /** Agents allowed to vote */
+  participants: string[];
+  /** Consensus type (default: majority) */
+  consensusType?: ConsensusType;
+  /** Timeout in milliseconds (default: 5 minutes) */
+  timeoutMs?: number;
+  /** Minimum votes required (for quorum type) */
+  quorum?: number;
+  /** Threshold for supermajority (0-1, default 0.67) */
+  threshold?: number;
+}
+
+/**
+ * Options for voting on a proposal.
+ */
+export interface VoteOptions {
+  /** Proposal ID to vote on */
+  proposalId: string;
+  /** Vote value */
+  value: VoteValue;
+  /** Optional reason for the vote */
+  reason?: string;
+}
+
+// =============================================================================
+// Named Record Types (for reusability)
+// =============================================================================
+
+/**
+ * A stored message in the inbox.
+ */
+export interface InboxMessage {
+  id: string;
+  from: string;
+  body: string;
+  channel?: string;
+  thread?: string;
+  timestamp: number;
+}
+
+/**
+ * Agent info returned by LIST_AGENTS.
+ */
+export interface AgentInfo {
+  name: string;
+  cli?: string;
+  idle?: boolean;
+  parent?: string;
+  task?: string;
+  connectedAt?: number;
+}
+
+/**
+ * A crash record.
+ */
+export interface CrashRecord {
+  id: string;
+  agentName: string;
+  crashedAt: string;
+  likelyCause: string;
+  summary?: string;
+}
+
+/**
+ * An alert record.
+ */
+export interface AlertRecord {
+  id: string;
+  agentName: string;
+  alertType: string;
+  message: string;
+  createdAt: string;
+}
+
+/**
+ * Metrics for a single agent.
+ */
+export interface AgentMetrics {
+  name: string;
+  pid?: number;
+  status: string;
+  rssBytes?: number;
+  cpuPercent?: number;
+  trend?: string;
+  alertLevel?: string;
+  highWatermark?: number;
+  uptimeMs?: number;
+}

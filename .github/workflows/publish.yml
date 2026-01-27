@@ -446,9 +446,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Trigger post-publish verification
+  verify-publish:
+    name: Verify Published Package
+    needs: [build, publish-main]
+    if: |
+      always() &&
+      github.event.inputs.dry_run != 'true' &&
+      needs.publish-main.result == 'success'
+    uses: ./.github/workflows/verify-publish.yml
+    with:
+      version: ${{ needs.build.outputs.new_version }}
+
   summary:
     name: Summary
-    needs: [build, publish-packages, publish-main]
+    needs: [build, publish-packages, publish-main, verify-publish]
     runs-on: ubuntu-latest
     if: always()
 
@@ -464,3 +476,4 @@ jobs:
           echo "### Results" >> $GITHUB_STEP_SUMMARY
           echo "- Packages: ${{ needs.publish-packages.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- Main: ${{ needs.publish-main.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Verification: ${{ needs.verify-publish.result }}" >> $GITHUB_STEP_SUMMARY

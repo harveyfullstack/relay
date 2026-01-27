@@ -24,6 +24,8 @@ import {
   type StatusResponsePayload,
   type InboxPayload,
   type InboxResponsePayload,
+  type MessagesQueryPayload,
+  type MessagesResponsePayload,
   type ListAgentsPayload,
   type ListAgentsResponsePayload,
   type ListConnectedAgentsPayload,
@@ -1359,6 +1361,56 @@ export class Daemon {
           connection.send(response);
         }).catch(err => {
           this.sendErrorEnvelope(connection, `Failed to get inbox: ${err.message}`);
+        });
+        break;
+      }
+
+      case 'MESSAGES_QUERY': {
+        // Query all messages (used by dashboard) - not filtered by recipient
+        const queryPayload = envelope.payload as MessagesQueryPayload;
+
+        const getMessages = async () => {
+          if (!this.storage?.getMessages) {
+            return [];
+          }
+          try {
+            const messages = await this.storage.getMessages({
+              limit: queryPayload.limit || 100,
+              sinceTs: queryPayload.sinceTs,
+              from: queryPayload.from,
+              to: queryPayload.to,
+              thread: queryPayload.thread,
+              order: queryPayload.order || 'desc',
+            });
+            return messages.map(m => ({
+              id: m.id,
+              from: m.from,
+              to: m.to,
+              body: m.body,
+              channel: (m.data as { channel?: string })?.channel,
+              thread: m.thread,
+              timestamp: m.ts,
+              status: m.status,
+              isBroadcast: m.is_broadcast,
+              replyCount: m.replyCount,
+              data: m.data,
+            }));
+          } catch {
+            return [];
+          }
+        };
+
+        getMessages().then(messages => {
+          const response: Envelope<MessagesResponsePayload> = {
+            v: PROTOCOL_VERSION,
+            type: 'MESSAGES_RESPONSE',
+            id: envelope.id,
+            ts: Date.now(),
+            payload: { messages },
+          };
+          connection.send(response);
+        }).catch(err => {
+          this.sendErrorEnvelope(connection, `Failed to get messages: ${err.message}`);
         });
         break;
       }
