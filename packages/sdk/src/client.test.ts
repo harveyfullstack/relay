@@ -10,7 +10,7 @@ import type {
   HealthResponsePayload,
   MetricsResponsePayload,
   InboxResponsePayload,
-} from './protocol/types.js';
+} from '@agent-relay/protocol';
 import { RelayClient } from './client.js';
 
 describe('RelayClient', () => {

@@ -7,6 +7,7 @@
 
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
+// Import shared protocol types and framing utilities from @agent-relay/protocol
 import {
   type Envelope,
   type HelloPayload,
@@ -47,13 +48,12 @@ import {
   type HealthResponsePayload,
   type MetricsPayload,
   type MetricsResponsePayload,
-  type ConsensusType,
-  type VoteValue,
   type CreateProposalOptions,
   type VoteOptions,
   PROTOCOL_VERSION,
-} from './protocol/types.js';
-import { encodeFrameLegacy, FrameParser } from './protocol/framing.js';
+  encodeFrameLegacy,
+  FrameParser,
+} from '@agent-relay/protocol';
 
 export type ClientState = 'DISCONNECTED' | 'CONNECTING' | 'HANDSHAKING' | 'READY' | 'BACKOFF';
 

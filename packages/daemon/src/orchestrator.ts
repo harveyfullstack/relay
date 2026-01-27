@@ -53,7 +53,7 @@ export interface OrchestratorConfig {
 
 /**
  * Determine the default host binding.
- * - In cloud environments (Fly.io, Docker with WORKSPACE_ID), bind to 0.0.0.0 for external access
+ * - In cloud environments, bind to '::' for IPv6+IPv4 dual-stack (required for Fly.io 6PN)
  * - Locally, bind to localhost for security
  * - Can be overridden with AGENT_RELAY_API_HOST env var
  */
@@ -62,13 +62,14 @@ function getDefaultHost(): string {
   if (process.env.AGENT_RELAY_API_HOST) {
     return process.env.AGENT_RELAY_API_HOST;
   }
-  // Cloud environment detection - bind to all interfaces for load balancer access
+  // Cloud environment detection - bind to :: for IPv6 + IPv4 dual-stack
+  // Fly.io internal network uses IPv6 (fdaa:...), so 0.0.0.0 won't work
   const isCloudEnvironment =
     process.env.FLY_APP_NAME ||           // Fly.io
     process.env.WORKSPACE_ID ||           // Agent Relay workspace
     process.env.RELAY_WORKSPACE_ID ||     // Alternative workspace ID
     process.env.RUNNING_IN_DOCKER === 'true';  // Docker container
-  return isCloudEnvironment ? '0.0.0.0' : 'localhost';
+  return isCloudEnvironment ? '::' : 'localhost';
 }
 
 const DEFAULT_CONFIG: OrchestratorConfig = {
