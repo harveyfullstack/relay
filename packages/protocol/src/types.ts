@@ -56,6 +56,9 @@ export type MessageType =
   | 'HEALTH_RESPONSE'
   | 'METRICS'
   | 'METRICS_RESPONSE'
+  // Messages query (for dashboard)
+  | 'MESSAGES_QUERY'
+  | 'MESSAGES_RESPONSE'
   // Consensus types
   | 'PROPOSAL_CREATE'
   | 'VOTE';
@@ -524,6 +527,45 @@ export interface InboxResponsePayload {
 }
 
 /**
+ * Payload for MESSAGES_QUERY request.
+ * Used by dashboard to query all messages (not filtered by recipient).
+ */
+export interface MessagesQueryPayload {
+  /** Maximum number of messages to return */
+  limit?: number;
+  /** Only return messages after this timestamp (Unix ms) */
+  sinceTs?: number;
+  /** Filter by sender */
+  from?: string;
+  /** Filter by recipient */
+  to?: string;
+  /** Filter by thread ID */
+  thread?: string;
+  /** Sort order */
+  order?: 'asc' | 'desc';
+}
+
+/**
+ * Payload for MESSAGES_RESPONSE.
+ */
+export interface MessagesResponsePayload {
+  /** Messages matching the query */
+  messages: Array<{
+    id: string;
+    from: string;
+    to: string;
+    body: string;
+    channel?: string;
+    thread?: string;
+    timestamp: number;
+    status?: string;
+    isBroadcast?: boolean;
+    replyCount?: number;
+    data?: Record<string, unknown>;
+  }>;
+}
+
+/**
  * Payload for LIST_AGENTS request.
  */
 export interface ListAgentsPayload {
@@ -595,6 +637,8 @@ export type StatusEnvelope = Envelope<StatusPayload>;
 export type StatusResponseEnvelope = Envelope<StatusResponsePayload>;
 export type InboxEnvelope = Envelope<InboxPayload>;
 export type InboxResponseEnvelope = Envelope<InboxResponsePayload>;
+export type MessagesQueryEnvelope = Envelope<MessagesQueryPayload>;
+export type MessagesResponseEnvelope = Envelope<MessagesResponsePayload>;
 export type ListAgentsEnvelope = Envelope<ListAgentsPayload>;
 export type ListAgentsResponseEnvelope = Envelope<ListAgentsResponsePayload>;
 export type ListConnectedAgentsEnvelope = Envelope<ListConnectedAgentsPayload>;

@@ -71,6 +71,7 @@ export {
   // Query/response types
   type StatusResponsePayload,
   type InboxMessage,
+  type MessagesResponsePayload,
   type AgentInfo,
   type HealthResponsePayload,
   type CrashRecord,
