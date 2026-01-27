@@ -1,0 +1,223 @@
+name: Verify Published Package
+
+# This workflow verifies that the published npm package works correctly
+# across multiple Node.js versions using both global install and npx.
+#
+# Triggered:
+# - Automatically after publish workflow completes
+# - Manually via workflow_dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version to verify (default: latest)"
+        required: false
+        type: string
+        default: "latest"
+  workflow_call:
+    inputs:
+      version:
+        description: "Package version to verify"
+        required: false
+        type: string
+        default: "latest"
+
+jobs:
+  verify:
+    name: Verify Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "20", "22"]
+
+    steps:
+      - name: Checkout (for scripts)
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Get package spec
+        id: pkg
+        run: |
+          VERSION="${{ inputs.version || 'latest' }}"
+          if [ "$VERSION" = "latest" ]; then
+            SPEC="agent-relay"
+          else
+            SPEC="agent-relay@${VERSION}"
+          fi
+          echo "spec=$SPEC" >> $GITHUB_OUTPUT
+          echo "Testing: $SPEC"
+
+      # Wait for npm to propagate the package
+      - name: Wait for npm propagation
+        if: inputs.version != 'latest'
+        run: |
+          echo "Waiting for npm to propagate version ${{ inputs.version }}..."
+          for i in {1..30}; do
+            if npm view agent-relay@${{ inputs.version }} version 2>/dev/null; then
+              echo "Package found on npm registry"
+              break
+            fi
+            echo "Attempt $i: Package not yet available, waiting 10s..."
+            sleep 10
+          done
+
+      # Test 1: Global npm install
+      - name: "Test: Global npm install"
+        run: |
+          echo "Installing ${{ steps.pkg.outputs.spec }} globally..."
+          npm install -g ${{ steps.pkg.outputs.spec }}
+
+      - name: "Test: Global --version"
+        run: |
+          VERSION=$(agent-relay --version)
+          echo "Version output: $VERSION"
+          if echo "$VERSION" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "Version check passed"
+          else
+            echo "Version check failed - no version number found"
+            exit 1
+          fi
+
+      - name: "Test: Global -V flag"
+        run: agent-relay -V
+
+      - name: "Test: Global version command"
+        run: |
+          OUTPUT=$(agent-relay version)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "Version command check passed"
+          else
+            exit 1
+          fi
+
+      - name: "Test: Global --help"
+        run: |
+          agent-relay --help | head -20
+
+      - name: Cleanup global install
+        run: npm uninstall -g agent-relay
+
+      # Test 2: npx execution
+      - name: "Test: npx --version"
+        run: |
+          VERSION=$(npx -y ${{ steps.pkg.outputs.spec }} --version)
+          echo "npx version output: $VERSION"
+          if echo "$VERSION" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "npx version check passed"
+          else
+            exit 1
+          fi
+
+      - name: "Test: npx --help"
+        run: npx -y ${{ steps.pkg.outputs.spec }} --help | head -20
+
+      - name: "Test: npx version command"
+        run: |
+          OUTPUT=$(npx -y ${{ steps.pkg.outputs.spec }} version)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "npx version command check passed"
+          else
+            exit 1
+          fi
+
+      # Test 3: Local project install
+      - name: "Test: Local project install"
+        run: |
+          mkdir -p /tmp/test-project
+          cd /tmp/test-project
+          npm init -y
+          npm install ${{ steps.pkg.outputs.spec }}
+
+      - name: "Test: Local npx execution"
+        run: |
+          cd /tmp/test-project
+          VERSION=$(npx agent-relay --version)
+          echo "Local npx version: $VERSION"
+          if echo "$VERSION" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "Local npx check passed"
+          else
+            exit 1
+          fi
+
+      - name: "Test: Local bin executable"
+        run: |
+          cd /tmp/test-project
+          if [ -x "./node_modules/.bin/agent-relay" ]; then
+            VERSION=$(./node_modules/.bin/agent-relay --version)
+            echo "Local bin version: $VERSION"
+          else
+            echo "Local bin not found or not executable"
+            exit 1
+          fi
+
+      - name: Cleanup
+        run: rm -rf /tmp/test-project
+
+  # Docker-based verification (more isolated)
+  verify-docker:
+    name: Verify Docker (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "20", "22"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build verification image
+        run: |
+          VERSION="${{ inputs.version || 'latest' }}"
+          docker build \
+            --build-arg NODE_VERSION=${{ matrix.node }} \
+            --build-arg PACKAGE_VERSION=$VERSION \
+            -t agent-relay-verify:node${{ matrix.node }} \
+            -f scripts/post-publish-verify/Dockerfile \
+            scripts/post-publish-verify/
+
+      - name: Run verification
+        run: |
+          docker run --rm agent-relay-verify:node${{ matrix.node }}
+
+  summary:
+    name: Verification Summary
+    needs: [verify, verify-docker]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Summary
+        run: |
+          echo "## Post-Publish Verification Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package**: \`agent-relay@${{ inputs.version || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Native Tests" >> $GITHUB_STEP_SUMMARY
+          echo "| Node Version | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Node 18 | ${{ needs.verify.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node 20 | ${{ needs.verify.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node 22 | ${{ needs.verify.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Tests" >> $GITHUB_STEP_SUMMARY
+          echo "| Node Version | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Node 18 | ${{ needs.verify-docker.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node 20 | ${{ needs.verify-docker.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node 22 | ${{ needs.verify-docker.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Overall" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.verify.result }}" = "success" ] && [ "${{ needs.verify-docker.result }}" = "success" ]; then
+            echo "✅ All verification tests passed!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Some verification tests failed" >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,0 +1,226 @@
+#!/bin/bash
+# Post-publish verification script
+# Tests both global npm install and npx installation of agent-relay
+#
+# Environment variables:
+#   PACKAGE_VERSION: Version to install (default: latest)
+#   NODE_VERSION: Node version being tested (for logging)
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[PASS]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[FAIL]${NC} $1"; }
+log_header() { echo -e "\n${BLUE}========================================${NC}"; echo -e "${BLUE}$1${NC}"; echo -e "${BLUE}========================================${NC}"; }
+
+# Track test results
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+record_pass() {
+    ((TESTS_PASSED++))
+    log_success "$1"
+}
+
+record_fail() {
+    ((TESTS_FAILED++))
+    log_error "$1"
+}
+
+# Get package specification
+PACKAGE_SPEC="agent-relay"
+if [ -n "$PACKAGE_VERSION" ] && [ "$PACKAGE_VERSION" != "latest" ]; then
+    PACKAGE_SPEC="agent-relay@${PACKAGE_VERSION}"
+fi
+
+log_header "Post-Publish Verification"
+log_info "Node.js version: $(node --version)"
+log_info "npm version: $(npm --version)"
+log_info "Package to test: $PACKAGE_SPEC"
+log_info "User: $(whoami)"
+log_info "Working directory: $(pwd)"
+
+# ============================================
+# Test 1: Global npm install
+# ============================================
+log_header "Test 1: Global npm install"
+
+# Clean any previous installation
+log_info "Cleaning previous global installation..."
+npm uninstall -g agent-relay 2>/dev/null || true
+
+# Install globally
+log_info "Installing ${PACKAGE_SPEC} globally..."
+if npm install -g "$PACKAGE_SPEC" 2>&1; then
+    record_pass "Global npm install succeeded"
+else
+    record_fail "Global npm install failed"
+fi
+
+# Test --version flag
+log_info "Testing 'agent-relay --version'..."
+GLOBAL_VERSION=$(agent-relay --version 2>&1) || true
+if [ -n "$GLOBAL_VERSION" ]; then
+    log_info "Output: $GLOBAL_VERSION"
+    # Verify it contains a version number pattern
+    if echo "$GLOBAL_VERSION" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+        record_pass "Global install --version returns valid version: $GLOBAL_VERSION"
+    else
+        record_fail "Global install --version output doesn't contain version number"
+    fi
+else
+    record_fail "Global install --version returned empty output"
+fi
+
+# Test -V flag (short version flag)
+log_info "Testing 'agent-relay -V'..."
+GLOBAL_V=$(agent-relay -V 2>&1) || true
+if [ -n "$GLOBAL_V" ]; then
+    record_pass "Global install -V works: $GLOBAL_V"
+else
+    record_fail "Global install -V failed"
+fi
+
+# Test version command
+log_info "Testing 'agent-relay version'..."
+GLOBAL_VERSION_CMD=$(agent-relay version 2>&1) || true
+if echo "$GLOBAL_VERSION_CMD" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+    record_pass "Global install 'version' command works"
+else
+    record_fail "Global install 'version' command failed"
+fi
+
+# Test help command
+log_info "Testing 'agent-relay --help'..."
+GLOBAL_HELP=$(agent-relay --help 2>&1) || true
+if echo "$GLOBAL_HELP" | grep -q "agent-relay"; then
+    record_pass "Global install --help works"
+else
+    record_fail "Global install --help failed"
+fi
+
+# Cleanup global install
+log_info "Cleaning up global installation..."
+npm uninstall -g agent-relay 2>/dev/null || true
+
+# ============================================
+# Test 2: npx execution (without prior install)
+# ============================================
+log_header "Test 2: npx execution"
+
+# Clear npm cache to ensure fresh download
+log_info "Clearing npm cache for npx test..."
+npm cache clean --force 2>/dev/null || true
+
+# Test npx --version
+log_info "Testing 'npx ${PACKAGE_SPEC} --version'..."
+NPX_VERSION=$(npx -y "$PACKAGE_SPEC" --version 2>&1) || true
+if [ -n "$NPX_VERSION" ]; then
+    log_info "Output: $NPX_VERSION"
+    if echo "$NPX_VERSION" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+        record_pass "npx --version returns valid version: $NPX_VERSION"
+    else
+        record_fail "npx --version output doesn't contain version number"
+    fi
+else
+    record_fail "npx --version returned empty output"
+fi
+
+# Test npx help
+log_info "Testing 'npx ${PACKAGE_SPEC} --help'..."
+NPX_HELP=$(npx -y "$PACKAGE_SPEC" --help 2>&1) || true
+if echo "$NPX_HELP" | grep -q "agent-relay"; then
+    record_pass "npx --help works"
+else
+    record_fail "npx --help failed"
+fi
+
+# Test npx version command
+log_info "Testing 'npx ${PACKAGE_SPEC} version'..."
+NPX_VERSION_CMD=$(npx -y "$PACKAGE_SPEC" version 2>&1) || true
+if echo "$NPX_VERSION_CMD" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+    record_pass "npx 'version' command works"
+else
+    record_fail "npx 'version' command failed"
+fi
+
+# ============================================
+# Test 3: Local project install
+# ============================================
+log_header "Test 3: Local project install"
+
+# Create a test project
+TEST_PROJECT_DIR=$(mktemp -d)
+log_info "Created test project at: $TEST_PROJECT_DIR"
+cd "$TEST_PROJECT_DIR"
+
+# Initialize package.json
+log_info "Initializing package.json..."
+npm init -y > /dev/null 2>&1
+
+# Install as local dependency
+log_info "Installing ${PACKAGE_SPEC} locally..."
+if npm install "$PACKAGE_SPEC" 2>&1; then
+    record_pass "Local npm install succeeded"
+else
+    record_fail "Local npm install failed"
+fi
+
+# Test via npx (should use local version)
+log_info "Testing 'npx agent-relay --version' (local)..."
+LOCAL_VERSION=$(npx agent-relay --version 2>&1) || true
+if [ -n "$LOCAL_VERSION" ]; then
+    if echo "$LOCAL_VERSION" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+        record_pass "Local install via npx works: $LOCAL_VERSION"
+    else
+        record_fail "Local install via npx doesn't return version"
+    fi
+else
+    record_fail "Local install via npx failed"
+fi
+
+# Test via node_modules/.bin
+log_info "Testing './node_modules/.bin/agent-relay --version'..."
+if [ -x "./node_modules/.bin/agent-relay" ]; then
+    BIN_VERSION=$(./node_modules/.bin/agent-relay --version 2>&1) || true
+    if echo "$BIN_VERSION" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+        record_pass "Local bin executable works: $BIN_VERSION"
+    else
+        record_fail "Local bin executable doesn't return version"
+    fi
+else
+    record_fail "Local bin executable not found or not executable"
+fi
+
+# Cleanup test project
+log_info "Cleaning up test project..."
+cd /home/testuser
+rm -rf "$TEST_PROJECT_DIR"
+
+# ============================================
+# Summary
+# ============================================
+log_header "Verification Summary"
+echo ""
+log_info "Node.js: $(node --version)"
+log_info "Package: $PACKAGE_SPEC"
+echo ""
+echo -e "Tests passed: ${GREEN}${TESTS_PASSED}${NC}"
+echo -e "Tests failed: ${RED}${TESTS_FAILED}${NC}"
+echo ""
+
+if [ $TESTS_FAILED -eq 0 ]; then
+    log_success "All tests passed!"
+    exit 0
+else
+    log_error "Some tests failed!"
+    exit 1
+fi
