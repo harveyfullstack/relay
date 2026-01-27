@@ -1614,6 +1614,11 @@ interface RelaySessionInfo {
 }
 
 async function discoverRelaySessions(): Promise<RelaySessionInfo[]> {
+  // Skip tmux discovery in test environments to avoid hangs
+  if (process.env.AGENT_RELAY_SKIP_TMUX === '1') {
+    return [];
+  }
+
   try {
     const tmuxPath = getTmuxPath();
     const { stdout } = await execAsync(`"${tmuxPath}" list-sessions -F "#{session_name}"`);
