@@ -1110,6 +1110,15 @@ export class Router {
     // Clear any pending deliveries
     this.deliveryTracker.clearPendingForConnection(connection.id);
 
+    // Clean up channel memberships (same as unregister)
+    this.removeFromAllChannels(agentName);
+
+    // Clean up shadow relationships
+    this.unbindShadow(agentName);
+
+    // Clear processing state
+    this.clearProcessing(agentName);
+
     return true;
   }
 
