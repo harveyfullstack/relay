@@ -77,9 +77,13 @@ jobs:
         run: |
           echo "Installing ${{ steps.pkg.outputs.spec }} globally..."
           npm install -g ${{ steps.pkg.outputs.spec }}
+          # Add npm global bin to PATH
+          echo "$(npm config get prefix)/bin" >> $GITHUB_PATH
 
       - name: "Test: Global --version"
         run: |
+          # Ensure npm global bin is in PATH
+          export PATH="$(npm config get prefix)/bin:$PATH"
           VERSION=$(agent-relay --version)
           echo "Version output: $VERSION"
           if echo "$VERSION" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
@@ -90,10 +94,13 @@ jobs:
           fi
 
       - name: "Test: Global -V flag"
-        run: agent-relay -V
+        run: |
+          export PATH="$(npm config get prefix)/bin:$PATH"
+          agent-relay -V
 
       - name: "Test: Global version command"
         run: |
+          export PATH="$(npm config get prefix)/bin:$PATH"
           OUTPUT=$(agent-relay version)
           echo "$OUTPUT"
           if echo "$OUTPUT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
@@ -104,10 +111,13 @@ jobs:
 
       - name: "Test: Global --help"
         run: |
+          export PATH="$(npm config get prefix)/bin:$PATH"
           agent-relay --help | head -20
 
       - name: Cleanup global install
-        run: npm uninstall -g agent-relay
+        run: |
+          export PATH="$(npm config get prefix)/bin:$PATH"
+          npm uninstall -g agent-relay
 
       # Test 2: npx execution
       - name: "Test: npx --version"
