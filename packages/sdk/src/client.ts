@@ -1174,6 +1174,7 @@ export class RelayClient {
 
       case 'STATUS_RESPONSE':
       case 'INBOX_RESPONSE':
+      case 'MESSAGES_RESPONSE':
       case 'LIST_AGENTS_RESPONSE':
       case 'LIST_CONNECTED_AGENTS_RESPONSE':
       case 'REMOVE_AGENT_RESPONSE':
