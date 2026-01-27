@@ -20,6 +20,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import { createConnection, Socket } from 'node:net';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
+import { homedir } from 'node:os';
 import { existsSync, unlinkSync, mkdirSync, symlinkSync, lstatSync, rmSync, watch, readdirSync, readlinkSync, writeFileSync, appendFileSync } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import { getProjectPaths } from '@agent-relay/config/project-namespace';
@@ -319,8 +320,10 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     } else {
       // Local mode: use project paths directly (no symlinks needed)
       this._outboxPath = this._canonicalOutboxPath;
-      // Socket at {teamDir}/sockets/{agentName}.sock
-      this.socketPath = join(projectPaths.teamDir, 'sockets', `${config.name}.sock`);
+      // Socket path: use ~/.agent-relay/sockets/{projectId}/{agentName}.sock
+      // This keeps paths short (uses 12-char hashed projectId) while staying organized
+      // Example: /Users/foo/.agent-relay/sockets/abc123def456/MyAgent.sock (~65 chars)
+      this.socketPath = join(homedir(), '.agent-relay', 'sockets', projectPaths.projectId, `${config.name}.sock`);
       // Legacy path for backwards compat (older agents might still use /tmp/relay-outbox)
       // Even in local mode, we need this symlink for agents with stale instructions
       this._legacyOutboxPath = `/tmp/relay-outbox/${config.name}`;
