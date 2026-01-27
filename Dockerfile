@@ -1,5 +1,6 @@
 # Agent Relay Cloud - Control Plane
 # Runs the Express API server with PostgreSQL/Redis connections
+# Dashboard is served from npm package @agent-relay/dashboard
 
 FROM node:20-slim AS builder
 
@@ -47,9 +48,6 @@ COPY . .
 
 # Build TypeScript
 RUN npm run build
-
-# Install dashboard from npm (for serving static files)
-RUN npm install @agent-relay/dashboard
 
 # Production image
 FROM node:20-slim AS runner
