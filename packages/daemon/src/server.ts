@@ -26,6 +26,10 @@ import {
   type InboxResponsePayload,
   type ListAgentsPayload,
   type ListAgentsResponsePayload,
+  type ListConnectedAgentsPayload,
+  type ListConnectedAgentsResponsePayload,
+  type RemoveAgentPayload,
+  type RemoveAgentResponsePayload,
   type HealthPayload,
   type HealthResponsePayload,
   type MetricsPayload,
@@ -1402,6 +1406,104 @@ export class Daemon {
           payload: { agents },
         };
         connection.send(response);
+        break;
+      }
+
+      case 'LIST_CONNECTED_AGENTS': {
+        // Returns only currently connected agents (not historical/registered agents)
+        const connectedAgents = this.router.getAgents();
+        const registryAgents = this.registry?.getAgents() ?? [];
+        const registryMap = new Map(registryAgents.map(a => [a.name, a]));
+
+        const agents = connectedAgents
+          .filter(name => !this.isInternalAgent(name))
+          .map(name => {
+            const registryAgent = registryMap.get(name);
+            return {
+              name,
+              cli: registryAgent?.cli,
+              idle: false,
+              parent: registryAgent?.task?.includes('spawned by') ? 'parent' : undefined,
+            };
+          });
+
+        const connectedResponse: Envelope<ListConnectedAgentsResponsePayload> = {
+          v: PROTOCOL_VERSION,
+          type: 'LIST_CONNECTED_AGENTS_RESPONSE',
+          id: envelope.id,
+          ts: Date.now(),
+          payload: { agents },
+        };
+        connection.send(connectedResponse);
+        break;
+      }
+
+      case 'REMOVE_AGENT': {
+        const removePayload = envelope.payload as RemoveAgentPayload;
+        const agentName = removePayload.name;
+
+        const doRemove = async (): Promise<{ removed: boolean; message: string }> => {
+          let removed = false;
+          let message = '';
+
+          // Remove from registry (agents.json)
+          if (this.registry) {
+            const wasInRegistry = this.registry.getAgents().some(a => a.name === agentName);
+            if (wasInRegistry) {
+              this.registry.remove(agentName);
+              removed = true;
+              message = `Removed ${agentName} from registry`;
+            }
+          }
+
+          // Remove from storage (sessions table) if storage is available
+          if (this.storage?.removeAgent) {
+            await this.storage.removeAgent(agentName);
+            if (!removed) {
+              removed = true;
+              message = `Removed ${agentName} from storage`;
+            } else {
+              message += ' and storage';
+            }
+          }
+
+          // Optionally remove messages
+          if (removePayload.removeMessages && this.storage?.removeMessagesForAgent) {
+            await this.storage.removeMessagesForAgent(agentName);
+            message += ' (including messages)';
+          }
+
+          // Force remove from router if still connected (shouldn't be, but just in case)
+          if (this.router.forceRemoveAgent(agentName)) {
+            message += ', disconnected from router';
+          }
+
+          if (!removed) {
+            message = `Agent ${agentName} not found in registry or storage`;
+          }
+
+          return { removed, message };
+        };
+
+        doRemove().then(({ removed, message }) => {
+          const removeResponse: Envelope<RemoveAgentResponsePayload> = {
+            v: PROTOCOL_VERSION,
+            type: 'REMOVE_AGENT_RESPONSE',
+            id: envelope.id,
+            ts: Date.now(),
+            payload: { success: removed, removed, message },
+          };
+          connection.send(removeResponse);
+        }).catch(err => {
+          const removeResponse: Envelope<RemoveAgentResponsePayload> = {
+            v: PROTOCOL_VERSION,
+            type: 'REMOVE_AGENT_RESPONSE',
+            id: envelope.id,
+            ts: Date.now(),
+            payload: { success: false, removed: false, message: `Error: ${(err as Error).message}` },
+          };
+          connection.send(removeResponse);
+        });
         break;
       }
 
