@@ -51,9 +51,29 @@ export interface OrchestratorConfig {
   autoStartDaemons: boolean;
 }
 
+/**
+ * Determine the default host binding.
+ * - In cloud environments (Fly.io, Docker with WORKSPACE_ID), bind to 0.0.0.0 for external access
+ * - Locally, bind to localhost for security
+ * - Can be overridden with AGENT_RELAY_API_HOST env var
+ */
+function getDefaultHost(): string {
+  // Explicit override
+  if (process.env.AGENT_RELAY_API_HOST) {
+    return process.env.AGENT_RELAY_API_HOST;
+  }
+  // Cloud environment detection - bind to all interfaces for load balancer access
+  const isCloudEnvironment =
+    process.env.FLY_APP_NAME ||           // Fly.io
+    process.env.WORKSPACE_ID ||           // Agent Relay workspace
+    process.env.RELAY_WORKSPACE_ID ||     // Alternative workspace ID
+    process.env.RUNNING_IN_DOCKER === 'true';  // Docker container
+  return isCloudEnvironment ? '0.0.0.0' : 'localhost';
+}
+
 const DEFAULT_CONFIG: OrchestratorConfig = {
   port: 3456,
-  host: 'localhost',
+  host: getDefaultHost(),
   dataDir: path.join(process.env.HOME || '', '.agent-relay', 'orchestrator'),
   autoStartDaemons: true,
 };
