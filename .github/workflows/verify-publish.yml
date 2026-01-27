@@ -6,8 +6,13 @@ name: Verify Published Package
 # Triggered:
 # - Automatically after publish workflow completes
 # - Manually via workflow_dispatch
+# - On PR (for testing the workflow itself)
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/verify-publish.yml"
+      - "scripts/post-publish-verify/**"
   workflow_dispatch:
     inputs:
       version:
