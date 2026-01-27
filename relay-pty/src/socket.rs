@@ -85,7 +85,7 @@ impl SocketServer {
                 // Socket doesn't exist - this is fine
             }
             Err(e) => {
-                    warn!(
+                warn!(
                     "Failed to remove existing socket (will try bind anyway): {}",
                     e
                 );
