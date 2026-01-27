@@ -766,7 +766,7 @@ export class AgentSpawner {
     }
 
     // Enforce agent limit based on plan (MAX_AGENTS is set by provisioner based on plan)
-    const maxAgents = parseInt(process.env.MAX_AGENTS || '10', 10);
+    const maxAgents = parseInt(process.env.MAX_AGENTS ?? '', 10) || 10_000;
     const currentAgentCount = this.activeWorkers.size;
     if (currentAgentCount >= maxAgents) {
       log.warn(`Agent limit reached: ${currentAgentCount}/${maxAgents}`);
