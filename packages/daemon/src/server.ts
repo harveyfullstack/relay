@@ -259,6 +259,8 @@ export class Daemon {
   removeStaleAgent(agentName: string): boolean {
     const removed = this.router.forceRemoveAgent(agentName);
     if (removed) {
+      // Notify cloud sync about agent removal
+      this.notifyCloudSync();
       // Update connected-agents.json to reflect the removal
       this.writeConnectedAgentsFile();
       log.info('Removed stale agent from router', { agentName });
@@ -1503,6 +1505,9 @@ export class Daemon {
           // Force remove from router if still connected (shouldn't be, but just in case)
           if (this.router.forceRemoveAgent(agentName)) {
             message += ', disconnected from router';
+            // Notify cloud sync and update connected-agents.json
+            this.notifyCloudSync();
+            this.writeConnectedAgentsFile();
           }
 
           if (!removed) {

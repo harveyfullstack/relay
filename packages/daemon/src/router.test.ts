@@ -78,8 +78,8 @@ describe('Router', () => {
       router.register(primary);
       router.register(shadow);
 
-      // Bind shadow
-      router.bindShadow('Primary', { shadowAgent: 'Shadow', speakOn: ['CODE_WRITTEN'] });
+      // Bind shadow: bindShadow(shadowAgent, primaryAgent, options)
+      router.bindShadow('Shadow', 'Primary', { speakOn: ['CODE_WRITTEN'] });
 
       // Force remove should not throw and should clean up
       expect(() => router.forceRemoveAgent('Shadow')).not.toThrow();
