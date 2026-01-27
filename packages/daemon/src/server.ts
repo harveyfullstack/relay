@@ -7,6 +7,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { createRequire } from 'node:module';
 import { Connection, type ConnectionConfig, DEFAULT_CONFIG } from './connection.js';
 import { Router } from './router.js';
 import {
@@ -25,6 +26,10 @@ import {
   type InboxResponsePayload,
   type ListAgentsPayload,
   type ListAgentsResponsePayload,
+  type ListConnectedAgentsPayload,
+  type ListConnectedAgentsResponsePayload,
+  type RemoveAgentPayload,
+  type RemoveAgentResponsePayload,
   type HealthPayload,
   type HealthResponsePayload,
   type MetricsPayload,
@@ -53,6 +58,11 @@ import {
 } from '@agent-relay/telemetry';
 import { RelayWatchdog, type ProcessedFile } from './relay-watchdog.js';
 import type { RelayPaths } from '@agent-relay/config/relay-file-writer';
+
+// Get version from package.json
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json');
+const DAEMON_VERSION: string = packageJson.version;
 
 export interface DaemonConfig extends ConnectionConfig {
   socketPath: string;
@@ -131,23 +141,8 @@ export class Daemon {
     if (this.config.teamDir) {
       this.registry = new AgentRegistry(this.config.teamDir);
     }
-    // Initialize SpawnManager if enabled
-    if (this.config.spawnManager) {
-      const spawnConfig = typeof this.config.spawnManager === 'object'
-        ? this.config.spawnManager
-        : {};
-      // Derive projectRoot from teamDir (teamDir is typically {projectRoot}/.agent-relay/)
-      const projectRoot = spawnConfig.projectRoot || path.dirname(this.config.teamDir || this.config.socketPath);
-      this.spawnManager = new SpawnManager({
-        projectRoot,
-        socketPath: this.config.socketPath,
-        ...spawnConfig,
-        // Track spawn count for telemetry
-        onAgentSpawn: () => {
-          this.agentSpawnCount++;
-        },
-      });
-    }
+    // SpawnManager is initialized in start() after router is created
+    // so we can wire up onMarkSpawning/onClearSpawning callbacks
     // Storage is initialized lazily in start() to support async createStorageAdapter
     this.server = net.createServer(this.handleConnection.bind(this));
   }
@@ -215,6 +210,14 @@ export class Daemon {
       const connectedUsers = this.router.getUsers();
       const targetDir = this.config.teamDir ?? path.dirname(this.config.socketPath);
       const targetPath = path.join(targetDir, 'connected-agents.json');
+
+      // Debug: log what we're writing
+      log.info('Writing connected-agents.json', {
+        agents: connectedAgents.join(','),
+        path: targetPath,
+        teamDir: this.config.teamDir,
+      });
+
       // Ensure directory exists (defensive - may have been deleted)
       if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
@@ -247,6 +250,22 @@ export class Daemon {
    */
   clearSpawning(agentName: string): void {
     this.router.clearSpawning(agentName);
+  }
+
+  /**
+   * Remove a stale agent from the router (used when process dies without clean disconnect).
+   * This is called by the orchestrator's health monitoring when a PID is detected as dead.
+   */
+  removeStaleAgent(agentName: string): boolean {
+    const removed = this.router.forceRemoveAgent(agentName);
+    if (removed) {
+      // Notify cloud sync about agent removal
+      this.notifyCloudSync();
+      // Update connected-agents.json to reflect the removal
+      this.writeConnectedAgentsFile();
+      log.info('Removed stale agent from router', { agentName });
+    }
+    return removed;
   }
 
   /**
@@ -297,6 +316,28 @@ export class Daemon {
       },
       channelMembershipStore,
     });
+
+    // Initialize SpawnManager if enabled (after router, so we can wire callbacks)
+    if (this.config.spawnManager) {
+      const spawnConfig = typeof this.config.spawnManager === 'object'
+        ? this.config.spawnManager
+        : {};
+      // Derive projectRoot from teamDir (teamDir is typically {projectRoot}/.agent-relay/)
+      const projectRoot = spawnConfig.projectRoot || path.dirname(this.config.teamDir || this.config.socketPath);
+      this.spawnManager = new SpawnManager({
+        projectRoot,
+        socketPath: this.config.socketPath,
+        ...spawnConfig,
+        // Track spawn count for telemetry
+        onAgentSpawn: () => {
+          this.agentSpawnCount++;
+        },
+        // Wire spawn tracking to router so messages are queued during spawn
+        onMarkSpawning: (name: string) => this.router.markSpawning(name),
+        onClearSpawning: (name: string) => this.router.clearSpawning(name),
+      });
+      log.info('SpawnManager initialized with spawn tracking callbacks');
+    }
 
     // Initialize consensus (enabled by default, can be disabled with consensus: false)
     if (this.config.consensus !== false) {
@@ -1266,7 +1307,7 @@ export class Daemon {
           id: envelope.id,
           ts: Date.now(),
           payload: {
-            version: '2.0.13',
+            version: DAEMON_VERSION,
             uptime: uptimeMs,
             cloudConnected: this.cloudSync?.isConnected() ?? false,
             agentCount: this.router.connectionCount,
@@ -1286,8 +1327,10 @@ export class Daemon {
             return [];
           }
           try {
+            // If channel is specified, get channel messages; otherwise get DMs to agent
+            const toFilter = inboxPayload.channel || agentName;
             const messages = await this.storage.getMessages({
-              to: agentName,
+              to: toFilter,
               from: inboxPayload.from,
               limit: inboxPayload.limit || 50,
               unreadOnly: inboxPayload.unreadOnly,
@@ -1339,7 +1382,8 @@ export class Daemon {
               name,
               cli: registryAgent?.cli,
               idle: false, // Connected agents are not idle
-              parent: registryAgent?.task?.includes('spawned by') ? 'parent' : undefined,
+              // TODO: Add proper parent tracking via spawner relationship
+              parent: undefined,
             };
           });
 
@@ -1365,6 +1409,133 @@ export class Daemon {
           payload: { agents },
         };
         connection.send(response);
+        break;
+      }
+
+      case 'LIST_CONNECTED_AGENTS': {
+        // Returns only currently connected agents (not historical/registered agents)
+        const connectedAgents = this.router.getAgents();
+        const registryAgents = this.registry?.getAgents() ?? [];
+        const registryMap = new Map(registryAgents.map(a => [a.name, a]));
+
+        const agents = connectedAgents
+          .filter(name => !this.isInternalAgent(name))
+          .map(name => {
+            const registryAgent = registryMap.get(name);
+            return {
+              name,
+              cli: registryAgent?.cli,
+              idle: false,
+              // TODO: Add proper parent tracking via spawner relationship
+              parent: undefined,
+            };
+          });
+
+        const connectedResponse: Envelope<ListConnectedAgentsResponsePayload> = {
+          v: PROTOCOL_VERSION,
+          type: 'LIST_CONNECTED_AGENTS_RESPONSE',
+          id: envelope.id,
+          ts: Date.now(),
+          payload: { agents },
+        };
+        connection.send(connectedResponse);
+        break;
+      }
+
+      case 'REMOVE_AGENT': {
+        const removePayload = envelope.payload as RemoveAgentPayload;
+        const agentName = removePayload.name;
+
+        // Validate agent name
+        if (!agentName || typeof agentName !== 'string' || agentName.length === 0) {
+          const errorResponse: Envelope<RemoveAgentResponsePayload> = {
+            v: PROTOCOL_VERSION,
+            type: 'REMOVE_AGENT_RESPONSE',
+            id: envelope.id,
+            ts: Date.now(),
+            payload: { success: false, removed: false, message: 'Invalid agent name: name is required' },
+          };
+          connection.send(errorResponse);
+          break;
+        }
+
+        if (agentName.length > 128) {
+          const errorResponse: Envelope<RemoveAgentResponsePayload> = {
+            v: PROTOCOL_VERSION,
+            type: 'REMOVE_AGENT_RESPONSE',
+            id: envelope.id,
+            ts: Date.now(),
+            payload: { success: false, removed: false, message: 'Invalid agent name: exceeds 128 characters' },
+          };
+          connection.send(errorResponse);
+          break;
+        }
+
+        const doRemove = async (): Promise<{ removed: boolean; message: string }> => {
+          let removed = false;
+          let message = '';
+
+          // Remove from registry (agents.json)
+          if (this.registry) {
+            const wasInRegistry = this.registry.getAgents().some(a => a.name === agentName);
+            if (wasInRegistry) {
+              this.registry.remove(agentName);
+              removed = true;
+              message = `Removed ${agentName} from registry`;
+            }
+          }
+
+          // Remove from storage (sessions table) if storage is available
+          if (this.storage?.removeAgent) {
+            await this.storage.removeAgent(agentName);
+            if (!removed) {
+              removed = true;
+              message = `Removed ${agentName} from storage`;
+            } else {
+              message += ' and storage';
+            }
+          }
+
+          // Optionally remove messages
+          if (removePayload.removeMessages && this.storage?.removeMessagesForAgent) {
+            await this.storage.removeMessagesForAgent(agentName);
+            message += ' (including messages)';
+          }
+
+          // Force remove from router if still connected (shouldn't be, but just in case)
+          if (this.router.forceRemoveAgent(agentName)) {
+            message += ', disconnected from router';
+            // Notify cloud sync and update connected-agents.json
+            this.notifyCloudSync();
+            this.writeConnectedAgentsFile();
+          }
+
+          if (!removed) {
+            message = `Agent ${agentName} not found in registry or storage`;
+          }
+
+          return { removed, message };
+        };
+
+        doRemove().then(({ removed, message }) => {
+          const removeResponse: Envelope<RemoveAgentResponsePayload> = {
+            v: PROTOCOL_VERSION,
+            type: 'REMOVE_AGENT_RESPONSE',
+            id: envelope.id,
+            ts: Date.now(),
+            payload: { success: removed, removed, message },
+          };
+          connection.send(removeResponse);
+        }).catch(err => {
+          const removeResponse: Envelope<RemoveAgentResponsePayload> = {
+            v: PROTOCOL_VERSION,
+            type: 'REMOVE_AGENT_RESPONSE',
+            id: envelope.id,
+            ts: Date.now(),
+            payload: { success: false, removed: false, message: `Error: ${(err as Error).message}` },
+          };
+          connection.send(removeResponse);
+        });
         break;
       }
 

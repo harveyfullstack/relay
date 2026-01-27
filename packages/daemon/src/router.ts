@@ -582,7 +582,7 @@ export class Router {
     const to = envelope.to;
     const topic = envelope.topic;
 
-    routerLog.debug(`Route ${senderName} -> ${to}`, { preview: envelope.payload.body?.substring(0, 50) });
+    routerLog.debug(`Route ${senderName} -> ${to}`, { preview: typeof envelope.payload.body === 'string' ? envelope.payload.body.substring(0, 50) : JSON.stringify(envelope.payload.body)?.substring(0, 50) });
 
     if (to === '*') {
       // Broadcast to all (except sender)
@@ -725,7 +725,7 @@ export class Router {
         if (sent) anySent = true;
         routerLog.debug(`Delivered ${from} -> ${to} (user connection ${userConn.id})`, {
           success: sent,
-          preview: envelope.payload.body?.substring(0, 40),
+          preview: typeof envelope.payload.body === 'string' ? envelope.payload.body.substring(0, 40) : JSON.stringify(envelope.payload.body)?.substring(0, 40),
         });
         // Persist only once (for the first connection)
         if (userConn === [...userConnections][0]) {
@@ -745,7 +745,7 @@ export class Router {
     const target = agentTarget!;
     const deliver = this.createDeliverEnvelope(from, to, envelope, target);
     const sent = target.send(deliver);
-    routerLog.debug(`Delivered ${from} -> ${to}`, { success: sent, preview: envelope.payload.body?.substring(0, 40) });
+    routerLog.debug(`Delivered ${from} -> ${to}`, { success: sent, preview: typeof envelope.payload.body === 'string' ? envelope.payload.body.substring(0, 40) : JSON.stringify(envelope.payload.body)?.substring(0, 40) });
     this.persistDeliverEnvelope(deliver);
     if (sent) {
       this.trackDelivery(target, deliver);
@@ -967,7 +967,7 @@ export class Router {
     routerLog.info(`Persisting offline message for "${to}"`, {
       from,
       messageId: envelope.id,
-      bodyPreview: envelope.payload.body?.substring(0, 50),
+      bodyPreview: typeof envelope.payload.body === 'string' ? envelope.payload.body.substring(0, 50) : JSON.stringify(envelope.payload.body)?.substring(0, 50),
     });
 
     this.storage.saveMessage({
@@ -1079,6 +1079,47 @@ export class Router {
    */
   getConnection(agentName: string): RoutableConnection | undefined {
     return this.agents.get(agentName);
+  }
+
+  /**
+   * Force remove an agent from the router (used when process dies without clean disconnect).
+   * This cleans up the agent's connection and subscriptions without needing the connection object.
+   */
+  forceRemoveAgent(agentName: string): boolean {
+    const connection = this.agents.get(agentName);
+    if (!connection) {
+      routerLog.debug(`forceRemoveAgent: agent ${agentName} not found in router`);
+      return false;
+    }
+
+    routerLog.info(`Force removing stale agent: ${agentName}`);
+
+    // Remove from agents map
+    this.agents.delete(agentName);
+
+    // Remove from all channel subscriptions
+    for (const [channel, subscribers] of this.subscriptions) {
+      if (subscribers.delete(agentName)) {
+        routerLog.debug(`Removed ${agentName} from channel ${channel}`);
+      }
+    }
+
+    // Remove from connections map
+    this.connections.delete(connection.id);
+
+    // Clear any pending deliveries
+    this.deliveryTracker.clearPendingForConnection(connection.id);
+
+    // Clean up channel memberships (same as unregister)
+    this.removeFromAllChannels(agentName);
+
+    // Clean up shadow relationships
+    this.unbindShadow(agentName);
+
+    // Clear processing state
+    this.clearProcessing(agentName);
+
+    return true;
   }
 
   /**
