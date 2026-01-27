@@ -965,6 +965,12 @@ export class AgentSpawner {
         args.push(initialPrompt);
       }
 
+      // Cursor requires 'login' subcommand for interactive auth flows (setup terminals)
+      // Unlike Claude/Codex which auto-start auth, Cursor needs explicit 'agent login'
+      if (isCursorCli && interactive && !task) {
+        args.unshift('login');
+      }
+
       if (debug) log.debug(`Spawning ${name} with: ${command} ${args.join(' ')}`);
 
       // Create PtyWrapper config
