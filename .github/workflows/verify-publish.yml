@@ -339,7 +339,8 @@ jobs:
         id: pkg
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            SPEC="./$(ls agent-relay-*.tgz | head -1)"
+            # Use absolute path so it works when cd'ing to /tmp/test-project
+            SPEC="$(pwd)/$(ls agent-relay-*.tgz | head -1)"
           else
             VERSION="${{ inputs.version || 'latest' }}"
             if [ "$VERSION" = "latest" ]; then
