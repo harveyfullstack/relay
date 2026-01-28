@@ -41,6 +41,7 @@
     "build:api-types": "cd packages/api-types && npm run build",
     "build:spawner": "cd packages/spawner && npm run build",
     "build:telemetry": "cd packages/telemetry && npm run build",
+    "build:benchmark": "cd packages/benchmark && npm run build",
     "postbuild": "chmod +x dist/src/cli/index.js",
     "dev:watch": "tsc -w",
     "predev": "npm run clean && npm run build:packages && tsc && chmod +x dist/src/cli/index.js",
