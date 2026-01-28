@@ -321,15 +321,179 @@ jobs:
         working-directory: packages/sdk
         run: npm publish --access public --provenance --tag ${{ github.event.inputs.tag }} --ignore-scripts
 
+  # Pre-publish verification: ensure all binaries are valid before publishing
+  verify-binaries-linux:
+    name: Verify Binaries (Linux)
+    needs: [build, build-binaries]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.package == 'all' || github.event.inputs.package == 'main'
+
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: relay-pty-*
+          path: bin/
+          merge-multiple: true
+
+      - name: List downloaded binaries
+        run: |
+          echo "Downloaded binaries:"
+          ls -la bin/
+
+      - name: Verify all platform binaries exist
+        run: |
+          MISSING=0
+
+          for BINARY in relay-pty-darwin-arm64 relay-pty-darwin-x64 relay-pty-linux-x64 relay-pty-linux-arm64; do
+            if [ -f "bin/$BINARY" ]; then
+              echo "✓ $BINARY exists ($(stat -c%s "bin/$BINARY" 2>/dev/null || stat -f%z "bin/$BINARY") bytes)"
+            else
+              echo "✗ $BINARY MISSING"
+              MISSING=1
+            fi
+          done
+
+          if [ $MISSING -eq 1 ]; then
+            echo ""
+            echo "ERROR: Some binaries are missing! Cannot publish."
+            exit 1
+          fi
+
+          echo ""
+          echo "All platform binaries present."
+
+      - name: Make binaries executable
+        run: chmod +x bin/relay-pty-*
+
+      - name: Verify Linux binary works
+        run: |
+          echo "Testing relay-pty-linux-x64 --help..."
+          OUTPUT=$(./bin/relay-pty-linux-x64 --help 2>&1) || true
+          echo "$OUTPUT"
+
+          if echo "$OUTPUT" | grep -q "PTY wrapper"; then
+            echo "✓ Linux x64 binary works"
+          else
+            echo "✗ Linux x64 binary failed --help test"
+            exit 1
+          fi
+
+      - name: Verify binary sizes are reasonable
+        run: |
+          # Binaries should be at least 1MB (to catch empty/corrupt files)
+          MIN_SIZE=1000000
+
+          for BINARY in bin/relay-pty-*; do
+            SIZE=$(stat -c%s "$BINARY" 2>/dev/null || stat -f%z "$BINARY")
+            if [ "$SIZE" -lt "$MIN_SIZE" ]; then
+              echo "✗ $BINARY is suspiciously small: $SIZE bytes"
+              exit 1
+            fi
+            echo "✓ $BINARY size OK: $SIZE bytes"
+          done
+
+      - name: Summary
+        run: |
+          echo "## Pre-Publish Binary Verification (Linux)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Binary | Status | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|------|" >> $GITHUB_STEP_SUMMARY
+          for BINARY in bin/relay-pty-*; do
+            NAME=$(basename "$BINARY")
+            SIZE=$(stat -c%s "$BINARY" 2>/dev/null || stat -f%z "$BINARY")
+            SIZE_MB=$(echo "scale=2; $SIZE / 1048576" | bc)
+            echo "| $NAME | ✅ | ${SIZE_MB}MB |" >> $GITHUB_STEP_SUMMARY
+          done
+
+  # Verify macOS binaries actually work on macOS (critical - catches issues before publish)
+  verify-binaries-macos:
+    name: Verify Binaries (macOS ${{ matrix.arch }})
+    needs: [build-binaries]
+    if: github.event.inputs.package == 'all' || github.event.inputs.package == 'main'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+            binary: relay-pty-darwin-arm64
+          - os: macos-13
+            arch: x64
+            binary: relay-pty-darwin-x64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/${{ matrix.binary }}
+
+      - name: Verify binary exists and has reasonable size
+        run: |
+          if [ ! -f "bin/${{ matrix.binary }}" ]; then
+            echo "ERROR: Binary not found!"
+            exit 1
+          fi
+
+          SIZE=$(stat -f%z "bin/${{ matrix.binary }}")
+          echo "Binary size: $SIZE bytes"
+
+          # Should be at least 1MB
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "ERROR: Binary is suspiciously small!"
+            exit 1
+          fi
+
+          echo "✓ Binary exists with valid size"
+
+      - name: Test binary --help
+        run: |
+          echo "Testing ${{ matrix.binary }} --help..."
+          OUTPUT=$(./bin/${{ matrix.binary }} --help 2>&1) || true
+          echo "$OUTPUT"
+
+          if echo "$OUTPUT" | grep -q "PTY wrapper"; then
+            echo "✓ ${{ matrix.binary }} --help works"
+          else
+            echo "✗ ${{ matrix.binary }} --help failed!"
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          echo "## macOS ${{ matrix.arch }} Binary Verification" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **${{ matrix.binary }}** verified on macOS ${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
+
+  # Gate job that requires both Linux and macOS verification to pass
+  verify-binaries:
+    name: All Binaries Verified
+    needs: [verify-binaries-linux, verify-binaries-macos]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.package == 'all' || github.event.inputs.package == 'main'
+    steps:
+      - name: All binary checks passed
+        run: |
+          echo "✅ All binary verification checks passed!"
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Binary Verification Gate" >> $GITHUB_STEP_SUMMARY
+          echo "✅ All platform binaries verified and ready for publish" >> $GITHUB_STEP_SUMMARY
+
   # Publish main package
   publish-main:
     name: Publish Main Package
-    needs: [build, build-binaries, publish-packages]
+    needs: [build, build-binaries, verify-binaries, publish-packages]
     runs-on: ubuntu-latest
     if: |
       always() &&
       (github.event.inputs.package == 'all' || github.event.inputs.package == 'main') &&
       needs.build.result == 'success' &&
+      needs.verify-binaries.result == 'success' &&
       (needs.publish-packages.result == 'success' || needs.publish-packages.result == 'skipped')
 
     steps:
@@ -374,7 +538,7 @@ jobs:
   # Create git tag and release
   create-release:
     name: Create Release
-    needs: [build, build-binaries, publish-main]
+    needs: [build, build-binaries, verify-binaries, publish-main]
     runs-on: ubuntu-latest
     if: |
       always() &&
@@ -460,7 +624,7 @@ jobs:
 
   summary:
     name: Summary
-    needs: [build, publish-packages, publish-main, verify-publish]
+    needs: [build, build-binaries, verify-binaries, publish-packages, publish-main, verify-publish]
     runs-on: ubuntu-latest
     if: always()
 
@@ -474,6 +638,11 @@ jobs:
           echo "**Dry Run**: \`${{ github.event.inputs.dry_run }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Results" >> $GITHUB_STEP_SUMMARY
-          echo "- Packages: ${{ needs.publish-packages.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Main: ${{ needs.publish-main.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Verification: ${{ needs.verify-publish.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result == 'success' && '✅' || '❌' }} ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Binaries | ${{ needs.build-binaries.result == 'success' && '✅' || (needs.build-binaries.result == 'skipped' && '⏭️' || '❌') }} ${{ needs.build-binaries.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Verify Binaries** | ${{ needs.verify-binaries.result == 'success' && '✅' || (needs.verify-binaries.result == 'skipped' && '⏭️' || '❌') }} ${{ needs.verify-binaries.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Publish Packages | ${{ needs.publish-packages.result == 'success' && '✅' || (needs.publish-packages.result == 'skipped' && '⏭️' || '❌') }} ${{ needs.publish-packages.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Publish Main | ${{ needs.publish-main.result == 'success' && '✅' || (needs.publish-main.result == 'skipped' && '⏭️' || '❌') }} ${{ needs.publish-main.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Post-Publish Verify | ${{ needs.verify-publish.result == 'success' && '✅' || (needs.verify-publish.result == 'skipped' && '⏭️' || '❌') }} ${{ needs.verify-publish.result }} |" >> $GITHUB_STEP_SUMMARY
