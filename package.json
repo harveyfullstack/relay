@@ -188,5 +188,24 @@
   "overrides": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
-  }
+  },
+  "bundleDependencies": [
+    "@agent-relay/bridge",
+    "@agent-relay/config",
+    "@agent-relay/continuity",
+    "@agent-relay/daemon",
+    "@agent-relay/hooks",
+    "@agent-relay/mcp",
+    "@agent-relay/protocol",
+    "@agent-relay/resiliency",
+    "@agent-relay/sdk",
+    "@agent-relay/spawner",
+    "@agent-relay/state",
+    "@agent-relay/storage",
+    "@agent-relay/telemetry",
+    "@agent-relay/trajectory",
+    "@agent-relay/user-directory",
+    "@agent-relay/utils",
+    "@agent-relay/wrapper"
+  ]
 }
