@@ -426,9 +426,6 @@ jobs:
           - os: macos-latest
             arch: arm64
             binary: relay-pty-darwin-arm64
-          - os: macos-12  # Intel runner (macos-13 retired, macos-12 deprecated but available)
-            arch: x64
-            binary: relay-pty-darwin-x64
     runs-on: ${{ matrix.os }}
 
     steps:
