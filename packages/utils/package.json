@@ -77,7 +77,7 @@
     "build:esm": "tsc",
     "build:cjs": "node ./scripts/build-cjs.mjs",
     "postbuild": "npm run build:cjs",
-    "prepack": "npm run build",
+    "prepack": "if [ -d node_modules ]; then npm run build; else true; fi",
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:watch": "vitest"
