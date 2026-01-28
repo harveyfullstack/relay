@@ -200,7 +200,9 @@ jobs:
 
       - name: Clean reinstall after version bump
         run: |
-          rm -rf node_modules packages/*/node_modules
+          # Clear npm cache and node_modules to ensure fresh platform-specific deps
+          npm cache clean --force
+          rm -rf node_modules packages/*/node_modules package-lock.json
           npm install
 
       - name: Build all packages
