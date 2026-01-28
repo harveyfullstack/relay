@@ -99,6 +99,15 @@ async function checkNodeSqlite(): Promise<CheckResult> {
     };
   }
 
+  if (process.env.AGENT_RELAY_DOCTOR_NODE_SQLITE_AVAILABLE === '0') {
+    return {
+      name: 'node:sqlite',
+      ok: false,
+      message: `Not available (Node ${nodeVersion.raw})`,
+      remediation: 'Upgrade to Node 22+ or install better-sqlite3',
+    };
+  }
+
   if (nodeVersion.major < 22) {
     return {
       name: 'node:sqlite',
