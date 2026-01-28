@@ -5,6 +5,17 @@
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
+  "files": [
+    "dist",
+    "bin",
+    "install.sh",
+    "scripts/postinstall.js",
+    "scripts/build-cjs.mjs",
+    "packages",
+    "relay-snippets",
+    "LICENSE",
+    "README.md"
+  ],
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
