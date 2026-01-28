@@ -1,6 +1,6 @@
 # Storage Troubleshooting
 
-This guide covers stable storage behaviors and fixes based on the final storage chain (SQLite → JSONL → Memory). Future migrator tooling is noted as a placeholder where applicable.
+This guide covers stable storage behaviors and fixes based on the final storage chain (SQLite → JSONL → Memory).
 See `docs/architecture/storage.md` for adapter structure and fallback diagrams.
 
 - If the daemon prints `Running in non-persistent mode`, you are on an in-memory fallback.
@@ -87,7 +87,8 @@ See `docs/architecture/storage.md` for adapter structure and fallback diagrams.
 
 Symptoms:
 - Warning during npm install
-- "Running in non-persistent mode" on daemon start (if JSONL also failed)
+- Daemon logs `Storage: JSONL (file-based fallback)` if SQLite cannot load
+- "Running in non-persistent mode" only if JSONL also fails
 
 Diagnosis:
 - Run: `agent-relay doctor`

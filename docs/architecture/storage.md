@@ -1,6 +1,6 @@
 # Storage Architecture
 
-This describes the adapter stack, fallback behavior, and data policies. Only future migrator/compaction tooling remains as a placeholder.
+This describes the adapter stack, fallback behavior, and data policies.
 
 ## Components
 - **createStorageAdapter**: Factory that selects an adapter based on config/env and handles fallbacks.
