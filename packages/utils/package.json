@@ -76,6 +76,8 @@
     "build": "npm run clean && npm run build:esm && npm run build:cjs",
     "build:esm": "tsc",
     "build:cjs": "node ./scripts/build-cjs.mjs",
+    "postbuild": "npm run build:cjs",
+    "prepack": "npm run build",
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:watch": "vitest"
