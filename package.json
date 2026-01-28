@@ -3,28 +3,8 @@
   "version": "2.0.29",
   "description": "Real-time agent-to-agent communication system",
   "type": "module",
-  "main": "dist/index.cjs",
+  "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
-  "files": [
-    "dist",
-    "bin",
-    "install.sh",
-    "scripts/postinstall.js",
-    "scripts/build-cjs.mjs",
-    "packages",
-    "relay-snippets",
-    "LICENSE",
-    "README.md"
-  ],
-  "exports": {
-    ".": {
-      "types": "./dist/src/index.d.ts",
-      "require": "./dist/index.cjs",
-      "import": "./dist/src/index.js",
-      "default": "./dist/index.cjs"
-    },
-    "./package.json": "./package.json"
-  },
   "bin": {
     "agent-relay": "dist/src/cli/index.js"
   },
@@ -62,9 +42,7 @@
     "build:spawner": "cd packages/spawner && npm run build",
     "build:telemetry": "cd packages/telemetry && npm run build",
     "build:benchmark": "cd packages/benchmark && npm run build",
-    "build:cjs": "node ./scripts/build-cjs.mjs",
-    "postbuild": "chmod +x dist/src/cli/index.js && npm run build:cjs",
-    "prepack": "if [ -d node_modules ]; then npm run build; else echo '⚠ node_modules not found, skipping prepack build'; fi",
+    "postbuild": "chmod +x dist/src/cli/index.js",
     "dev:watch": "tsc -w",
     "predev": "npm run clean && npm run build:packages && tsc && chmod +x dist/src/cli/index.js",
     "dev": "node dist/src/cli/index.js up --dashboard --port 3888",

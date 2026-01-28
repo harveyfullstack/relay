@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-01-28T08:21:36.870Z",
+  "lastUpdated": "2026-01-26T20:13:57.256Z",
   "trajectories": {
     "traj_1b1dj40sl6jl": {
       "title": "Revert aggressive retry logic in relay-pty-orchestrator",
@@ -99,20 +99,6 @@
       "startedAt": "2026-01-26T20:13:08.103Z",
       "completedAt": "2026-01-26T20:13:57.229Z",
       "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_iw5vf6ucvqnz.json"
-    },
-    "traj_uo63i808yvrq": {
-      "title": "PR #325 Devin Review fixes",
-      "status": "completed",
-      "startedAt": "2026-01-28T08:21:05.564Z",
-      "completedAt": "2026-01-28T08:21:17.440Z",
-      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_uo63i808yvrq.json"
-    },
-    "traj_kcban1muyxkq": {
-      "title": "Fix npx --version test failure in verify-publish",
-      "status": "completed",
-      "startedAt": "2026-01-28T08:21:20.800Z",
-      "completedAt": "2026-01-28T08:21:36.859Z",
-      "path": "/Users/khaliqgant/Projects/agent-workforce/relay/.trajectories/completed/2026-01/traj_kcban1muyxkq.json"
     }
   }
 }
