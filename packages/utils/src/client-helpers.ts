@@ -74,7 +74,7 @@ export function isMatchingResponse(
   return (
     response.id === requestId ||
     responsePayload?.replyTo === requestId ||
-    (correlationId &&
+    (!!correlationId &&
       (responsePayload?.correlationId === correlationId ||
         ackPayload?.correlationId === correlationId))
   );
