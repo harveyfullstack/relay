@@ -315,6 +315,20 @@ jobs:
           echo "spec=$SPEC" >> $GITHUB_OUTPUT
           echo "Testing: $SPEC"
 
+      # Wait for npm to propagate the package (same as verify job)
+      - name: Wait for npm propagation
+        if: inputs.version != 'latest'
+        run: |
+          echo "Waiting for npm to propagate version ${{ inputs.version }}..."
+          for i in {1..30}; do
+            if npm view agent-relay@${{ inputs.version }} version 2>/dev/null; then
+              echo "Package found on npm registry"
+              break
+            fi
+            echo "Attempt $i: Package not yet available, waiting 10s..."
+            sleep 10
+          done
+
       - name: "Test: npm install"
         run: |
           mkdir -p /tmp/test-project
