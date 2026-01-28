@@ -174,6 +174,14 @@ function describeCurrentAdapter(
     };
   }
 
+  if (type === 'jsonl') {
+    return {
+      name: 'Current adapter',
+      ok: true,
+      message: 'JSONL (append-only files)',
+    };
+  }
+
   if (type === 'postgres' || type === 'postgresql') {
     return {
       name: 'Current adapter',
@@ -299,6 +307,13 @@ async function checkWriteTest(
       message: 'Skipped (in-memory storage)',
     };
   }
+  if (storageType === 'jsonl') {
+    return {
+      name: 'Write test',
+      ok: true,
+      message: 'Skipped (JSONL storage)',
+    };
+  }
 
   const driver = pickDriver(availability);
   if (!driver) {
@@ -351,6 +366,13 @@ async function checkReadTest(
       name: 'Read test',
       ok: true,
       message: 'Skipped (in-memory storage)',
+    };
+  }
+  if (storageType === 'jsonl') {
+    return {
+      name: 'Read test',
+      ok: true,
+      message: 'Skipped (JSONL storage)',
     };
   }
 

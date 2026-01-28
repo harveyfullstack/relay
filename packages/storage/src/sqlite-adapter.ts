@@ -344,6 +344,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
       result.error = err instanceof Error ? err.message : String(err);
     }
 
+    result.persistent = result.canRead && result.canWrite;
     return result;
   }
 

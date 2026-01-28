@@ -61,6 +61,9 @@ export class JsonlStorageAdapter implements StorageAdapter {
   private cleanupIntervalMs: number;
   private cleanupTimer?: NodeJS.Timeout;
   private fallbackReason?: string;
+  // Serialize writes to avoid interleaved JSON lines or session truncation
+  private messageWriteChain: Promise<void> = Promise.resolve();
+  private sessionLock: Promise<void> = Promise.resolve();
 
   private messages: Map<string, StoredMessage> = new Map();
   private deletedMessages: Set<string> = new Set();
@@ -137,6 +140,7 @@ export class JsonlStorageAdapter implements StorageAdapter {
       result.error = err instanceof Error ? err.message : String(err);
     }
 
+    result.persistent = result.canRead && result.canWrite;
     return result;
   }
 
@@ -263,31 +267,37 @@ export class JsonlStorageAdapter implements StorageAdapter {
   // ============ Session Handling ============
 
   async startSession(session: Omit<StoredSession, 'messageCount'>): Promise<void> {
-    const stored: StoredSession = { ...session, messageCount: 0 };
-    const record: SessionRecord = { type: 'session-start', session: stored };
-    await this.appendSessionRecord(record);
-    this.applySessionRecord(record);
+    await this.runWithSessionLock(async () => {
+      const stored: StoredSession = { ...session, messageCount: 0 };
+      const record: SessionRecord = { type: 'session-start', session: stored };
+      await this.appendSessionRecord(record);
+      this.applySessionRecord(record);
+    });
   }
 
   async endSession(
     sessionId: string,
     options?: { summary?: string; closedBy?: 'agent' | 'disconnect' | 'error' }
   ): Promise<void> {
-    const record: SessionRecord = {
-      type: 'session-end',
-      id: sessionId,
-      endedAt: Date.now(),
-      summary: options?.summary,
-      closedBy: options?.closedBy,
-    };
-    await this.appendSessionRecord(record);
-    this.applySessionRecord(record);
+    await this.runWithSessionLock(async () => {
+      const record: SessionRecord = {
+        type: 'session-end',
+        id: sessionId,
+        endedAt: Date.now(),
+        summary: options?.summary,
+        closedBy: options?.closedBy,
+      };
+      await this.appendSessionRecord(record);
+      this.applySessionRecord(record);
+    });
   }
 
   async incrementSessionMessageCount(sessionId: string): Promise<void> {
-    const record: SessionRecord = { type: 'session-increment', id: sessionId, delta: 1 };
-    await this.appendSessionRecord(record);
-    this.applySessionRecord(record);
+    await this.runWithSessionLock(async () => {
+      const record: SessionRecord = { type: 'session-increment', id: sessionId, delta: 1 };
+      await this.appendSessionRecord(record);
+      this.applySessionRecord(record);
+    });
   }
 
   async getSessions(query: SessionQuery = {}): Promise<StoredSession[]> {
@@ -320,21 +330,23 @@ export class JsonlStorageAdapter implements StorageAdapter {
   }
 
   async removeAgent(agentName: string): Promise<void> {
-    const updatedSessions: string[] = [];
-    for (const [id, session] of this.sessions) {
-      if (session.agentName === agentName) {
-        this.sessions.delete(id);
-        updatedSessions.push(id);
+    await this.runWithSessionLock(async () => {
+      const updatedSessions: string[] = [];
+      for (const [id, session] of this.sessions) {
+        if (session.agentName === agentName) {
+          this.sessions.delete(id);
+          updatedSessions.push(id);
+        }
       }
-    }
 
-    if (updatedSessions.length === 0) return;
+      if (updatedSessions.length === 0) return;
 
-    // Rebuild resume index after removals
-    this.rebuildResumeIndex();
+      // Rebuild resume index after removals
+      this.rebuildResumeIndex();
 
-    // Rewrite sessions file to reflect removals (sessions are small)
-    await this.rewriteSessionsFile();
+      // Rewrite sessions file to reflect removals (sessions are small)
+      await this.rewriteSessionsFile();
+    });
   }
 
   // ============ Cleanup ============
@@ -351,6 +363,7 @@ export class JsonlStorageAdapter implements StorageAdapter {
         if (!match) continue;
         const fileDate = new Date(`${match[1]}T00:00:00Z`).getTime();
         const cutoffDay = this.startOfDay(cutoffTs);
+        // Coarse day-level cleanup: may drop messages slightly newer than retention within same day bucket
         if (fileDate < cutoffDay) {
           await fs.promises.unlink(path.join(this.messageDir, file)).catch(() => {});
           removedFiles++;
@@ -527,7 +540,9 @@ export class JsonlStorageAdapter implements StorageAdapter {
   private async appendMessageRecord(record: MessageLogRecord): Promise<void> {
     const targetFile = this.getMessageFilePath(record.type === 'message' ? record.message.ts : Date.now());
     const line = `${JSON.stringify(record)}\n`;
-    await fs.promises.appendFile(targetFile, line, 'utf-8');
+    await this.enqueueMessageWrite(async () => {
+      await fs.promises.appendFile(targetFile, line, 'utf-8');
+    });
   }
 
   private async appendSessionRecord(record: SessionRecord): Promise<void> {
@@ -574,12 +589,30 @@ export class JsonlStorageAdapter implements StorageAdapter {
       if (session.endedAt !== undefined) {
         records.push({ type: 'session-end', id: session.id, endedAt: session.endedAt, summary: session.summary, closedBy: session.closedBy });
       }
-      if (session.messageCount > 0) {
-        records.push({ type: 'session-increment', id: session.id, delta: session.messageCount });
-      }
     }
 
     const content = records.map(r => JSON.stringify(r)).join('\n');
-    await fs.promises.writeFile(this.sessionFile, content ? `${content}\n` : '', 'utf-8');
+    const tmpPath = `${this.sessionFile}.tmp`;
+
+    await fs.promises.writeFile(tmpPath, content ? `${content}\n` : '', 'utf-8');
+    await fs.promises.rename(tmpPath, this.sessionFile);
+  }
+
+  /**
+   * Serialize session operations to prevent races between append/rewrite paths.
+   */
+  private async runWithSessionLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.sessionLock.then(fn);
+    this.sessionLock = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  /**
+   * Serialize message writes; keep chain alive even if a single write fails.
+   */
+  private async enqueueMessageWrite(fn: () => Promise<void>): Promise<void> {
+    const run = this.messageWriteChain.then(fn);
+    this.messageWriteChain = run.then(() => undefined, () => undefined);
+    return run;
   }
 }

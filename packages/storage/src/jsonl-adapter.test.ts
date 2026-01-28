@@ -151,6 +151,12 @@ describe('JsonlStorageAdapter', () => {
 
     const messages = await adapter.getMessages({});
     expect(messages).toHaveLength(25);
+
+    // Ensure file is parseable and not interleaved
+    const files = fs.readdirSync(path.join(baseDir, 'messages'));
+    const content = fs.readFileSync(path.join(baseDir, 'messages', files[0]), 'utf-8');
+    const parsed = content.split('\n').filter(Boolean).map(line => JSON.parse(line));
+    expect(parsed).toHaveLength(25);
   });
 
   it('health check reports readable/writable', async () => {
@@ -159,5 +165,36 @@ describe('JsonlStorageAdapter', () => {
     expect(health.driver).toBe('jsonl');
     expect(health.canRead).toBe(true);
     expect(health.canWrite).toBe(true);
+  });
+
+  it('serializes session mutations to avoid lost increments', async () => {
+    await adapter.startSession({
+      id: 'sess-lock',
+      agentName: 'Agent',
+      startedAt: Date.now(),
+    });
+
+    await Promise.all(Array.from({ length: 20 }).map(() => adapter.incrementSessionMessageCount('sess-lock')));
+    const sessions = await adapter.getSessions({});
+    expect(sessions[0]?.messageCount).toBe(20);
+  });
+
+  it('does not double messageCount when sessions file is rewritten', async () => {
+    await adapter.startSession({
+      id: 'sess-rewrite',
+      agentName: 'Agent',
+      startedAt: Date.now(),
+    });
+    await adapter.incrementSessionMessageCount('sess-rewrite');
+    await adapter.incrementSessionMessageCount('sess-rewrite');
+
+    // Force a sessions rewrite and reload
+    await (adapter as any).rewriteSessionsFile();
+    await adapter.close();
+    adapter = new JsonlStorageAdapter({ baseDir, cleanupIntervalMs: 0 });
+    await adapter.init();
+
+    const sessions = await adapter.getSessions({ agentName: 'Agent' });
+    expect(sessions[0]?.messageCount).toBe(2);
   });
 });

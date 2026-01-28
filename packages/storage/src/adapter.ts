@@ -201,6 +201,12 @@ export class MemoryStorageAdapter implements StorageAdapter {
     if (query?.sinceTs) {
       result = result.filter(m => m.ts >= query.sinceTs!);
     }
+    if (query?.unreadOnly) {
+      result = result.filter(m => m.status === 'unread');
+    }
+    if (query?.urgentOnly) {
+      result = result.filter(m => m.is_urgent);
+    }
 
     if (query?.order === 'asc') {
       result.sort((a, b) => a.ts - b.ts);
