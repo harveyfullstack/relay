@@ -298,17 +298,17 @@ export function getStorageConfigFromEnv(): StorageConfig {
  * Configuration priority:
  * 1. Explicit config passed to function
  * 2. Environment variables (AGENT_RELAY_STORAGE_TYPE, AGENT_RELAY_STORAGE_PATH, AGENT_RELAY_STORAGE_URL)
- * 3. Default: SQLite at provided dbPath
+ * 3. Default: JSONL (no native dependencies)
  *
  * Fallback strategy:
- * - Prefer SQLite (or batched SQLite when requested)
- * - On SQLite failure, try JSONL append-only storage before dropping to in-memory
+ * - Default to JSONL (no native dependencies required)
+ * - SQLite available via --storage=sqlite flag (requires better-sqlite3 or Node 22+)
  * - If all durable adapters fail, keep daemon running via memory (non-persistent) with guidance
  *
  * Supported storage types:
- * - 'sqlite' (default): SQLite file-based storage
+ * - 'jsonl' (default): Append-only JSONL files (no native deps)
+ * - 'sqlite': SQLite file-based storage (requires better-sqlite3 or Node 22+)
  * - 'sqlite-batched': SQLite with buffered writes
- * - 'jsonl': Append-only JSONL files (durable fallback)
  * - 'none' or 'memory': In-memory storage (no persistence)
  * - 'postgres': PostgreSQL (requires AGENT_RELAY_STORAGE_URL) - future
  */
@@ -319,7 +319,7 @@ export async function createStorageAdapter(
   // Merge with env config, explicit config takes priority
   const envConfig = getStorageConfigFromEnv();
   const finalConfig: StorageConfig = {
-    type: config?.type ?? envConfig.type ?? 'sqlite',
+    type: config?.type ?? envConfig.type ?? 'jsonl',
     path: config?.path ?? envConfig.path ?? dbPath,
     url: config?.url ?? envConfig.url,
   };
@@ -329,7 +329,7 @@ export async function createStorageAdapter(
   switch (storageType) {
     case 'none':
     case 'memory': {
-      console.log('[storage] Using in-memory storage (no persistence)');
+      console.error('[storage] Using in-memory storage (no persistence)');
       const adapter = new MemoryStorageAdapter();
       await adapter.init();
       return adapter;
@@ -351,7 +351,7 @@ export async function createStorageAdapter(
     case 'sqlite-batched':
     case 'batched': {
       try {
-        console.log('[storage] Using batched SQLite storage');
+        console.error('[storage] Using batched SQLite storage');
         const { BatchedSqliteAdapter } = await import('./batched-sqlite-adapter.js');
         const adapter = new BatchedSqliteAdapter({
           dbPath: finalConfig.path!,
@@ -392,7 +392,7 @@ export async function createStorageAdapter(
     case 'jsonl': {
       const { JsonlStorageAdapter } = await import('./jsonl-adapter.js');
       const baseDir = path.dirname(finalConfig.path!);
-      console.log('[storage] Using JSONL storage');
+      console.error('[storage] Using JSONL storage');
       const adapter = new JsonlStorageAdapter({ baseDir });
       await adapter.init();
       return adapter;
