@@ -537,8 +537,14 @@ jobs:
           # Clean npx cache to simulate fresh usage
           rm -rf ~/.npm/_npx 2>/dev/null || true
 
-          # Run npx to populate cache
-          npx ${{ steps.pkg.outputs.spec }} --version >/dev/null 2>&1
+          # Run npx to populate cache (show output for debugging)
+          echo "Running: npx ${{ steps.pkg.outputs.spec }} --version"
+          if ! npx ${{ steps.pkg.outputs.spec }} --version; then
+            echo "ERROR: npx command failed with exit code $?"
+            echo "Package spec: ${{ steps.pkg.outputs.spec }}"
+            ls -la "${{ steps.pkg.outputs.spec }}" 2>/dev/null || echo "Spec is not a file path"
+            exit 1
+          fi
 
           # Find and test the darwin-arm64 binary
           NPX_CACHE=~/.npm/_npx
@@ -561,10 +567,24 @@ jobs:
           fi
 
           # Test binary works (important for macOS code signing)
+          echo "Testing binary: $FOUND_BINARY"
+          ls -la "$FOUND_BINARY"
+          file "$FOUND_BINARY"
+
+          # Check if binary is executable
+          if [ ! -x "$FOUND_BINARY" ]; then
+            echo "ERROR: Binary is not executable!"
+            echo "Attempting to fix permissions..."
+            chmod +x "$FOUND_BINARY"
+          fi
+
           if "$FOUND_BINARY" --help 2>&1 | grep -q "PTY wrapper"; then
             echo "npx macOS binary resolution PASSED"
           else
             echo "ERROR: Binary found but doesn't work (possible code signing issue)"
+            echo "Binary output:"
+            "$FOUND_BINARY" --help 2>&1 || echo "Exit code: $?"
+            echo "Code signing info:"
             codesign -dv "$FOUND_BINARY" 2>&1 || true
             exit 1
           fi
