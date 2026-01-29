@@ -9,6 +9,7 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sleep } from './utils.js';
+import { resolveCli } from './cli-resolution.js';
 import { getProjectPaths, getAgentOutboxTemplate } from '@agent-relay/config';
 import { resolveCommand } from '@agent-relay/utils/command-resolver';
 import { createTraceableError } from '@agent-relay/utils/error-tracking';
@@ -39,16 +40,6 @@ import type {
 
 // Logger instance for spawner (uses daemon log system instead of console)
 const log = createLogger('spawner');
-
-/**
- * CLI command mapping for providers
- * Maps provider names to actual CLI command names
- */
-const CLI_COMMAND_MAP: Record<string, string> = {
-  cursor: 'agent',  // Cursor CLI installs as 'agent'
-  google: 'gemini', // Google provider uses 'gemini' CLI
-  // Other providers use their name as the command (claude, codex, etc.)
-};
 
 function extractGhTokenFromHosts(content: string): string | null {
   const lines = content.split(/\r?\n/);
@@ -796,10 +787,10 @@ export class AgentSpawner {
     }
 
     try {
-      // Parse CLI command and apply mapping (e.g., cursor -> agent)
+      // Parse CLI command and resolve actual command (e.g., cursor -> agent or cursor-agent)
       const cliParts = cli.split(' ');
       const rawCommandName = cliParts[0];
-      const commandName = CLI_COMMAND_MAP[rawCommandName] || rawCommandName;
+      const commandName = resolveCli(rawCommandName);
       const args = cliParts.slice(1);
 
       if (commandName !== rawCommandName && debug) {
@@ -821,7 +812,7 @@ export class AgentSpawner {
       // Add auto-accept flags for non-interactive agents (normal spawns, not setup terminals)
       // When interactive=true (setup flows), we SKIP these flags so users can respond to prompts
       const isClaudeCli = commandName.startsWith('claude');
-      const isCursorCli = commandName === 'agent' || rawCommandName === 'cursor';
+      const isCursorCli = commandName === 'agent' || rawCommandName === 'cursor' || rawCommandName === 'cursor-agent';
 
       if (!interactive) {
         // Add --dangerously-skip-permissions for Claude agents
