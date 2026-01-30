@@ -64,6 +64,61 @@ const MAX_SOCKET_PATH_LENGTH = 107;
  */
 const MAX_OUTPUT_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB
 
+// ============================================================================
+// Activity Verification Constants
+// ============================================================================
+
+/**
+ * Activity patterns used to verify that a CLI has received and started processing
+ * an injected task. These patterns work across Claude Code, Codex, and Droid/Gemini.
+ *
+ * The problem we're solving: Rust confirms "delivered to PTY" but that doesn't mean
+ * the CLI processed it. The T-003 failure showed the CLI wasn't ready when input arrived.
+ *
+ * @see https://github.com/your-org/relay/issues/XXX for the original investigation
+ */
+const ACTIVITY_VERIFICATION = {
+  /** Time to wait for activity patterns after injection (ms) */
+  TIMEOUT_MS: 5000,
+  /** How often to check for activity patterns (ms) */
+  POLL_INTERVAL_MS: 200,
+  /** Maximum retries when no activity is detected */
+  MAX_RETRIES: 3,
+  /** Delay between retries (ms) */
+  RETRY_DELAY_MS: 500,
+
+  /**
+   * Patterns indicating the task was received and displayed.
+   * These are the primary verification patterns.
+   */
+  TASK_RECEIVED_PATTERNS: [
+    /\[Pasted text #\d+/,              // Claude Code shows "[Pasted text #1 +95 lines]"
+    /› Relay message from/,             // Codex shows "› Relay message from"
+    /Relay message from \w+ \[[\w-]+\]/, // Droid/Gemini shows "Relay message from Agent [id]:"
+  ],
+
+  /**
+   * Patterns indicating the CLI is thinking/processing.
+   * Secondary verification - proves the CLI is active.
+   */
+  THINKING_PATTERNS: [
+    /\(.*esc to (?:interrupt|stop)\)/i,  // All CLIs: "(esc to interrupt)" or "(Press ESC to stop)"
+    /[✻✶✳✢·✽⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,               // Spinner characters (Claude + Droid)
+    /Thinking\.\.\./,                    // Droid: "Thinking..."
+    /Working/,                           // Codex: "Working"
+    /Forming|Noodling|Manifesting/i,     // Claude Code thinking states
+  ],
+
+  /**
+   * Patterns indicating tool execution started.
+   * Tertiary verification - proves the CLI is working.
+   */
+  TOOL_EXECUTION_PATTERNS: [
+    /⏺\s*(Bash|Read|Write|Edit|Glob|Grep|Task|WebFetch)/, // Claude Code tool markers
+    /•\s*Running/,                       // Codex: "• Running: command"
+  ],
+} as const;
+
 function hashWorkspaceId(workspaceId: string): string {
   return createHash('sha256').update(workspaceId).digest('hex').slice(0, 12);
 }
@@ -213,6 +268,7 @@ export class RelayPtyOrchestrator extends BaseWrapper {
   private outputBuffer = '';
   private rawBuffer = '';
   private lastParsedLength = 0;
+  private bufferTrimCount = 0;
 
   // Interactive mode (show output to terminal)
   private isInteractive = false;
@@ -965,15 +1021,21 @@ export class RelayPtyOrchestrator extends BaseWrapper {
 
     // Trim buffers if they exceed max size to prevent RangeError: Invalid string length
     // Keep the most recent output (tail) as it's more relevant for pattern matching
+    let buffersTrimmed = false;
     if (this.rawBuffer.length > MAX_OUTPUT_BUFFER_SIZE) {
       const trimAmount = this.rawBuffer.length - MAX_OUTPUT_BUFFER_SIZE;
       this.rawBuffer = this.rawBuffer.slice(-MAX_OUTPUT_BUFFER_SIZE);
       // Adjust lastParsedLength to stay in sync with the trimmed buffer
       // This ensures parseRelayCommands() doesn't skip content or re-parse old content
       this.lastParsedLength = Math.max(0, this.lastParsedLength - trimAmount);
+      buffersTrimmed = true;
     }
     if (this.outputBuffer.length > MAX_OUTPUT_BUFFER_SIZE) {
       this.outputBuffer = this.outputBuffer.slice(-MAX_OUTPUT_BUFFER_SIZE);
+      buffersTrimmed = true;
+    }
+    if (buffersTrimmed) {
+      this.bufferTrimCount += 1;
     }
 
     // Feed to idle detector
@@ -2572,17 +2634,148 @@ Then output: \`->relay-file:spawn\`
   }
 
   /**
-   * Inject a task using the socket-based injection system with verification.
+   * Verify that the CLI shows activity after task injection.
+   * Checks output for patterns indicating the task was received and processing started.
+   *
+   * This catches the race condition where PTY write succeeds but CLI wasn't ready
+   * (the T-003 failure scenario where CLI showed bell characters instead of processing).
+   *
+   * @param outputBefore The output buffer content before injection
+   * @returns Promise resolving to true if activity detected, false otherwise
+   */
+  private async verifyActivityAfterInjection(outputBefore: string): Promise<boolean> {
+    const startTime = Date.now();
+    const { TIMEOUT_MS, POLL_INTERVAL_MS, TASK_RECEIVED_PATTERNS, THINKING_PATTERNS, TOOL_EXECUTION_PATTERNS } = ACTIVITY_VERIFICATION;
+    const trimCountBefore = this.bufferTrimCount;
+
+    while (Date.now() - startTime < TIMEOUT_MS) {
+      // If buffers were trimmed during verification, treat it as activity.
+      // Large output growth triggers trimming, which would otherwise make slice() return
+      // an empty string and falsely signal no activity.
+      if (this.bufferTrimCount !== trimCountBefore) {
+        this.log(` Activity verified: output buffer trimmed during verification (large output)`);
+        return true;
+      }
+
+      // Get new output since injection
+      const currentOutput = this.outputBuffer;
+      const newOutput = currentOutput.slice(outputBefore.length);
+
+      if (newOutput.length > 0) {
+        // REJECTION CHECK: Multiple BEL characters (0x07) indicate CLI rejected input
+        // The T-003 failure showed CLI producing 1000+ BELs when input was injected
+        // while the CLI wasn't ready (still initializing or in wrong mode)
+        const belCount = (newOutput.match(/\x07/g) || []).length;
+        if (belCount > 10) {
+          this.logError(` Input rejected: CLI produced ${belCount} BEL characters`);
+          return false; // Don't wait - immediately fail so retry can attempt
+        }
+
+        // Check for task received patterns (primary verification)
+        for (const pattern of TASK_RECEIVED_PATTERNS) {
+          if (pattern.test(newOutput)) {
+            this.log(` Activity verified: task received pattern matched`);
+            return true;
+          }
+        }
+
+        // Check for thinking/processing patterns (secondary verification)
+        for (const pattern of THINKING_PATTERNS) {
+          if (pattern.test(newOutput)) {
+            this.log(` Activity verified: thinking pattern matched`);
+            return true;
+          }
+        }
+
+        // Check for tool execution patterns (tertiary verification)
+        for (const pattern of TOOL_EXECUTION_PATTERNS) {
+          if (pattern.test(newOutput)) {
+            this.log(` Activity verified: tool execution pattern matched`);
+            return true;
+          }
+        }
+
+        // Fallback: If output grew significantly (>100 meaningful chars), assume activity
+        // This catches CLIs with unusual output patterns
+        // IMPORTANT: Strip out BEL (0x07) and other control characters - these are rejection
+        // signals not activity. The T-003 failure showed CLI producing 1000+ BELs when input
+        // was injected before it was ready.
+        const meaningfulOutput = newOutput.replace(/[\x00-\x1f]/g, ''); // Strip control chars
+        if (meaningfulOutput.length > 100) {
+          this.log(` Activity verified: significant output growth (${meaningfulOutput.length} meaningful chars)`);
+          return true;
+        }
+      }
+
+      await sleep(POLL_INTERVAL_MS);
+    }
+
+    // No activity detected within timeout
+    this.log(` No activity detected within ${TIMEOUT_MS}ms`);
+    return false;
+  }
+
+  /**
+   * Inject a task using the socket-based injection system with activity verification.
    * This is the preferred method for spawned agent task delivery.
+   *
+   * After socket confirms delivery, verifies the CLI shows activity (task received,
+   * thinking indicators, or tool execution). Retries if no activity is detected.
    *
    * @param task The task text to inject
    * @param from The sender name (default: "spawner")
-   * @returns Promise resolving to true if injection succeeded, false otherwise
+   * @returns Promise resolving to true if task was delivered AND activity verified, false otherwise
    */
   async injectTask(task: string, from = 'spawner'): Promise<boolean> {
+    const { MAX_RETRIES, RETRY_DELAY_MS } = ACTIVITY_VERIFICATION;
+
+    // Claude Code's TUI needs a stabilization delay after displaying the welcome screen
+    // before it's ready to accept stdin input. Without this, input may be silently dropped
+    // even though the CLI appears "idle" and doesn't reject with BELs.
+    // 1500ms is based on observed behavior - Claude Code typically needs 1-1.5s after
+    // its TUI renders before input handlers are fully initialized.
+    const STABILIZATION_DELAY_MS = 1500;
+    this.log(` Waiting ${STABILIZATION_DELAY_MS}ms for CLI stabilization before task injection`);
+    await sleep(STABILIZATION_DELAY_MS);
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        this.log(` Retry ${attempt}/${MAX_RETRIES} - waiting ${RETRY_DELAY_MS}ms before retry`);
+        await sleep(RETRY_DELAY_MS);
+      }
+
+      // Capture output buffer state before injection
+      const outputBefore = this.outputBuffer;
+
+      // Attempt delivery via socket
+      const delivered = await this.performTaskInjection(task, from);
+      if (!delivered) {
+        this.logError(` Task delivery failed on attempt ${attempt + 1}`);
+        continue; // Retry
+      }
+
+      // Verify CLI shows activity (task received, thinking, or tool execution)
+      const activityVerified = await this.verifyActivityAfterInjection(outputBefore);
+      if (activityVerified) {
+        this.log(` Task delivered and activity verified successfully`);
+        return true;
+      }
+
+      // Delivery succeeded but no activity - CLI might not have been ready
+      this.logError(` Task delivered but no activity detected (attempt ${attempt + 1})`);
+    }
+
+    this.logError(` Task injection failed after ${MAX_RETRIES + 1} attempts - no CLI activity detected`);
+    return false;
+  }
+
+  /**
+   * Perform a single task injection attempt (without retry logic).
+   * @returns true if the injection was sent successfully, false otherwise
+   */
+  private async performTaskInjection(task: string, from: string): Promise<boolean> {
     if (!this.socket || !this.socketConnected) {
       this.log(` Socket not connected for task injection, falling back to stdin write`);
-      // Fallback to direct write if socket not available
       try {
         await this.write(task + '\n');
         return true;
@@ -2606,7 +2799,7 @@ Then output: \`->relay-file:spawn\`
       priority: 0, // High priority for initial task
     };
 
-    // Send with timeout and verification
+    // Send with timeout and get socket confirmation
     return new Promise<boolean>((resolve) => {
       const timeout = setTimeout(() => {
         this.logError(` Task inject timeout for ${shortId} after 30s`);
