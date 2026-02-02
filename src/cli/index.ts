@@ -2422,7 +2422,10 @@ program
         team: spawnRequest.team,
         interactive: spawnRequest.interactive,
         cwd: spawnRequest.cwd,
+        shadowMode: spawnRequest.shadowMode,
         shadowOf: spawnRequest.shadowOf,
+        shadowAgent: spawnRequest.shadowAgent,
+        shadowTriggers: spawnRequest.shadowTriggers,
         shadowSpeakOn: spawnRequest.shadowSpeakOn,
       }, 30000);
 
