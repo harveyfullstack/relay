@@ -82,11 +82,11 @@ Bridge Mode - Multi-Project Orchestration
 ----------------------------------------
 Bridging 3 projects:
   - frontend (/Users/dev/frontend)
-    Lead: Lead, CLI: claude
+    Lead: Dashboard, CLI: claude
   - backend (/Users/dev/backend)
-    Lead: Lead, CLI: claude
+    Lead: Dashboard, CLI: claude
   - shared-libs (/Users/dev/shared-libs)
-    Lead: Lead, CLI: claude
+    Lead: Dashboard, CLI: claude
 
 Connected to all projects.
 
@@ -136,13 +136,13 @@ For persistent setups, create a bridge configuration file:
     {
       "id": "frontend",
       "path": "/Users/dev/frontend",
-      "leadName": "Lead",
+      "leadName": "Dashboard",
       "cli": "claude"
     },
     {
       "id": "backend",
       "path": "/Users/dev/backend",
-      "leadName": "Lead",
+      "leadName": "Dashboard",
       "cli": "claude"
     }
   ]
@@ -161,7 +161,7 @@ agent-relay bridge
 |-------|-------------|---------|
 | `id` | Project identifier (used in messaging) | Directory name |
 | `path` | Absolute path to the project | Required |
-| `leadName` | Name of the lead agent | `Lead` |
+| `leadName` | Name of the lead agent | `Dashboard` |
 | `cli` | Default CLI tool for the project | `claude` |
 
 ## CLI Override
@@ -187,15 +187,20 @@ The architect agent:
 - Coordinates work across boundaries
 - Uses Claude by default (specify CLI with `--architect codex`)
 
-## Bridge State
+## Bridge Dashboard
+
+Each project's dashboard shows bridge status when connected:
+
+- **Bridge Status** - Connected/Disconnected indicator
+- **Bridged Projects** - List of connected projects
+- **Project Leads** - Status of lead agents in each project
+- **Message Flow** - Cross-project messages
 
 The bridge state is written to each project's data directory:
 
 ```
 .relay/bridge-state.json
 ```
-
-Use `agent-relay status` to check bridge connectivity.
 
 ## Reconnection Handling
 
