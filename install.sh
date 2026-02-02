@@ -55,7 +55,7 @@ detect_platform() {
 # Get latest version from GitHub
 get_latest_version() {
     if [ "$VERSION" = "latest" ]; then
-        VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO_RELAY/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
+        VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO_RELAY/releases/latest" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
         if [ -z "$VERSION" ]; then
             error "Failed to fetch latest version"
         fi
