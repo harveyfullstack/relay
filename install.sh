@@ -234,7 +234,48 @@ Or use nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/instal
 
     # Install agent-relay globally
     info "Installing agent-relay..."
-    npm install -g agent-relay@"$VERSION" 2>/dev/null || npm install -g agent-relay
+
+    # Try installation with optional dependencies first
+    if npm install -g agent-relay@"$VERSION" 2>&1 | tee /tmp/npm-install-$$.log; then
+        : # Success
+    elif npm install -g agent-relay 2>&1 | tee -a /tmp/npm-install-$$.log; then
+        : # Success with latest
+    else
+        # Check if it's a native module compilation failure
+        if grep -q "Unable to detect compiler type\|node-gyp\|prebuild-install" /tmp/npm-install-$$.log 2>/dev/null; then
+            warn "Native module compilation failed. This is usually due to missing build tools."
+            echo ""
+            echo "Please install build tools and try again:"
+            echo ""
+            if [ "$OS" = "darwin" ]; then
+                echo "  xcode-select --install"
+            elif command -v apt-get &> /dev/null; then
+                echo "  sudo apt-get install build-essential python3"
+            elif command -v dnf &> /dev/null; then
+                echo "  sudo dnf install gcc gcc-c++ make python3"
+            elif command -v apk &> /dev/null; then
+                echo "  apk add build-base python3"
+            else
+                echo "  Install gcc, g++, make, and python3"
+            fi
+            echo ""
+            echo "Some features (like SSH tunneling) may not work without these tools."
+            echo "However, core agent-relay functionality should still work."
+            echo ""
+            # Try with --ignore-optional as last resort
+            info "Retrying installation with optional dependencies disabled..."
+            if npm install -g --ignore-optional agent-relay@"$VERSION" 2>/dev/null || npm install -g --ignore-optional agent-relay; then
+                warn "Installed with some optional features disabled"
+            else
+                rm -f /tmp/npm-install-$$.log
+                error "Installation failed. Please check the error messages above."
+            fi
+        else
+            rm -f /tmp/npm-install-$$.log
+            error "npm installation failed. Please check the error messages above."
+        fi
+    fi
+    rm -f /tmp/npm-install-$$.log
 
     # Install dashboard if not skipped
     if [ "${AGENT_RELAY_NO_DASHBOARD}" != "true" ]; then

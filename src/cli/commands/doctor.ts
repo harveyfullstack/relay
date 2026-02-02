@@ -66,6 +66,23 @@ function parseNodeVersion(): { major: number; minor: number; patch: number; raw:
 }
 
 async function checkBetterSqlite3(): Promise<CheckResult> {
+  // Allow tests to force better-sqlite3 availability status
+  if (process.env.AGENT_RELAY_DOCTOR_FORCE_BETTER_SQLITE3 === '1') {
+    return {
+      name: 'better-sqlite3',
+      ok: true,
+      message: 'Available (test mode)',
+    };
+  }
+  if (process.env.AGENT_RELAY_DOCTOR_FORCE_BETTER_SQLITE3 === '0') {
+    return {
+      name: 'better-sqlite3',
+      ok: false,
+      message: 'Not available',
+      remediation: 'npm rebuild better-sqlite3',
+    };
+  }
+
   try {
     // Use Function() constructor to avoid bundler trying to resolve this
     const mod = await (Function('return import("better-sqlite3")')() as Promise<any>);

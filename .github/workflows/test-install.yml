@@ -80,6 +80,12 @@ jobs:
             echo "Node.js not found (expected for no-node tests)"
           fi
 
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux' && matrix.node == 'with-node'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3
+
       - name: Test install script (dry run - check syntax)
         run: |
           # Just check the script syntax
