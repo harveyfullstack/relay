@@ -26,7 +26,6 @@ import { createStorageAdapter } from '@agent-relay/storage/adapter';
 import {
   initTelemetry,
   track,
-  isTelemetryEnabled,
   enableTelemetry,
   disableTelemetry,
   getStatus,
@@ -37,12 +36,53 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
-import { exec, spawn as spawnProcess } from 'node:child_process';
+import { exec, execSync, spawn as spawnProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 
 /**
- * Start dashboard via npx (downloads and runs if not installed).
+ * Find the dashboard binary if installed as standalone.
+ * Checks PATH and common installation locations.
+ */
+function findDashboardBinary(): string | null {
+  const binaryName = 'relay-dashboard-server';
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+
+  // Common locations to check
+  const searchPaths = [
+    // In PATH (using which/where)
+    binaryName,
+    // Common installation directories
+    path.join(homeDir, '.local', 'bin', binaryName),
+    path.join(homeDir, '.agent-relay', 'bin', binaryName),
+    '/usr/local/bin/' + binaryName,
+  ];
+
+  for (const searchPath of searchPaths) {
+    try {
+      // For absolute paths, check if file exists and is executable
+      if (path.isAbsolute(searchPath)) {
+        if (fs.existsSync(searchPath)) {
+          fs.accessSync(searchPath, fs.constants.X_OK);
+          return searchPath;
+        }
+      } else {
+        // For relative paths (just binary name), check if it's in PATH
+        const result = execSync(`which ${searchPath} 2>/dev/null || where ${searchPath} 2>nul`, { encoding: 'utf8' }).trim();
+        if (result) {
+          return result.split('\n')[0]; // Take first result
+        }
+      }
+    } catch {
+      // Continue to next path
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Start dashboard (prefers standalone binary, falls back to npx).
  * Returns the spawned child process, port, and a promise that resolves when ready.
  */
 function startDashboardViaNpx(options: {
@@ -51,23 +91,34 @@ function startDashboardViaNpx(options: {
   teamDir: string;
   projectRoot: string;
 }): { process: ReturnType<typeof spawnProcess>; port: number; ready: Promise<void> } {
-  console.log('Starting dashboard via npx (this may take a moment on first run)...');
+  const dashboardBinary = findDashboardBinary();
 
-  const dashboardProcess = spawnProcess('npx', [
-    '--yes',
-    '@agent-relay/dashboard-server',
+  let dashboardProcess: ReturnType<typeof spawnProcess>;
+  const args = [
     '--integrated',
     '--port', String(options.port),
     '--data-dir', options.dataDir,
     '--team-dir', options.teamDir,
     '--project-root', options.projectRoot,
-  ], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      // Pass any additional env vars needed
-    },
-  });
+  ];
+
+  if (dashboardBinary) {
+    console.log(`Starting dashboard using binary: ${dashboardBinary}`);
+    dashboardProcess = spawnProcess(dashboardBinary, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+  } else {
+    console.log('Starting dashboard via npx (this may take a moment on first run)...');
+    dashboardProcess = spawnProcess('npx', [
+      '--yes',
+      '@agent-relay/dashboard-server',
+      ...args,
+    ], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+  }
 
   // Promise that resolves when dashboard is ready (or after timeout)
   let resolveReady: () => void;
@@ -2349,13 +2400,13 @@ program
 
     // Try daemon socket first (preferred path)
     try {
-        const paths = getProjectPaths();
+        const _paths = getProjectPaths();
 
       // TODO: Re-enable daemon-based spawning when client.spawn() is implemented
       // See: docs/SDK-MIGRATION-PLAN.md for planned implementation
       // For now, fall through to HTTP API
       throw new Error('Daemon-based spawn not yet implemented');
-    } catch (daemonErr) {
+    } catch {
       // Fall through to HTTP API
       // console.log('Daemon not available, trying HTTP API...');
     }
@@ -2404,10 +2455,10 @@ program
 
     // Try daemon socket first (preferred path)
     try {
-        const paths = getProjectPaths();
+        const _paths = getProjectPaths();
 
-      const client = new RelayClient({
-        socketPath: paths.socketPath,
+      const _client = new RelayClient({
+        socketPath: _paths.socketPath,
         agentName: '__cli_releaser__',
         quiet: true,
         reconnect: false,
@@ -2420,7 +2471,7 @@ program
       // See: docs/SDK-MIGRATION-PLAN.md for planned implementation
       // For now, fall through to HTTP API
       throw new Error('Daemon-based release not yet implemented');
-    } catch (daemonErr) {
+    } catch {
       // Fall through to HTTP API
       // console.log('Daemon not available, trying HTTP API...');
     }
