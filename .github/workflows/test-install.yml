@@ -241,7 +241,7 @@ jobs:
 
             echo ""
             echo "=== Verifying ==="
-            which agent-relay && agent-relay --version || npm list -g agent-relay
+            command -v agent-relay && agent-relay --version || npm list -g agent-relay
           '
 
   test-install-fedora:
@@ -272,7 +272,7 @@ jobs:
 
             echo ""
             echo "=== Verifying ==="
-            which agent-relay && agent-relay --version || npm list -g agent-relay
+            command -v agent-relay && agent-relay --version || npm list -g agent-relay
           '
 
   # Test script syntax and edge cases
