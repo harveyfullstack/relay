@@ -187,12 +187,16 @@ fi
 run_test "Test 9: Live GitHub API test"
 
 if command -v curl &> /dev/null; then
-    LIVE_RESULT=$(curl -fsSL "https://api.github.com/repos/AgentWorkforce/relay/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || echo "")
+    # Disable set -e for this test to handle API failures gracefully
+    set +e
+    LIVE_RESULT=$(curl -fsSL "https://api.github.com/repos/AgentWorkforce/relay/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    CURL_EXIT=$?
+    set -e
 
-    if [[ "$LIVE_RESULT" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    if [[ $CURL_EXIT -ne 0 ]] || [[ -z "$LIVE_RESULT" ]]; then
+        echo -e "${YELLOW}[SKIP]${NC} Could not reach GitHub API (network issue or rate limited)"
+    elif [[ "$LIVE_RESULT" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+ ]]; then
         pass "Live API returned valid version: $LIVE_RESULT"
-    elif [[ -z "$LIVE_RESULT" ]]; then
-        echo -e "${YELLOW}[SKIP]${NC} Could not reach GitHub API (network issue)"
     else
         fail "Live API returned unexpected format" "v*.*.* pattern" "$LIVE_RESULT"
     fi
