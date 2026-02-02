@@ -92,6 +92,11 @@ jobs:
           bash -n install.sh
           echo "✓ Script syntax is valid"
 
+      - name: Run version parsing tests
+        run: |
+          ./install.test.sh
+          echo "✓ Version parsing tests passed"
+
       - name: Test install script with Node.js
         if: matrix.node == 'with-node'
         run: |
