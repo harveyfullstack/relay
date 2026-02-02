@@ -221,8 +221,8 @@ jobs:
             fi
 
             echo ""
-            echo "=== Installing Node.js ==="
-            apk add --no-cache nodejs npm
+            echo "=== Installing Node.js and build tools ==="
+            apk add --no-cache nodejs npm build-base python3
 
             echo ""
             echo "=== Testing with Node.js ==="
@@ -252,8 +252,8 @@ jobs:
             bash install.sh 2>&1 || true
 
             echo ""
-            echo "=== Installing Node.js ==="
-            dnf install -y nodejs npm
+            echo "=== Installing Node.js and build tools ==="
+            dnf install -y nodejs npm gcc gcc-c++ make python3
 
             echo ""
             echo "=== Testing with Node.js ==="

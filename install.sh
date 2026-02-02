@@ -235,14 +235,23 @@ Or use nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/instal
     # Install agent-relay globally
     info "Installing agent-relay..."
 
-    # Try installation with optional dependencies first
-    if npm install -g agent-relay@"$VERSION" 2>&1 | tee /tmp/npm-install-$$.log; then
-        : # Success
-    elif npm install -g agent-relay 2>&1 | tee -a /tmp/npm-install-$$.log; then
-        : # Success with latest
-    else
+    # Try installation - capture output and exit code separately
+    local npm_log="/tmp/npm-install-$$.log"
+    local npm_exit=0
+
+    npm install -g agent-relay@"$VERSION" > "$npm_log" 2>&1 || npm_exit=$?
+
+    if [ $npm_exit -ne 0 ]; then
+        # First attempt failed, try without version
+        npm install -g agent-relay >> "$npm_log" 2>&1 || npm_exit=$?
+    fi
+
+    if [ $npm_exit -ne 0 ]; then
+        # Show the error output
+        cat "$npm_log"
+
         # Check if it's a native module compilation failure
-        if grep -q "Unable to detect compiler type\|node-gyp\|prebuild-install" /tmp/npm-install-$$.log 2>/dev/null; then
+        if grep -q "Unable to detect compiler type\|node-gyp\|prebuild-install\|gyp ERR" "$npm_log" 2>/dev/null; then
             warn "Native module compilation failed. This is usually due to missing build tools."
             echo ""
             echo "Please install build tools and try again:"
@@ -259,23 +268,21 @@ Or use nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/instal
                 echo "  Install gcc, g++, make, and python3"
             fi
             echo ""
-            echo "Some features (like SSH tunneling) may not work without these tools."
-            echo "However, core agent-relay functionality should still work."
-            echo ""
-            # Try with --ignore-optional as last resort
-            info "Retrying installation with optional dependencies disabled..."
-            if npm install -g --ignore-optional agent-relay@"$VERSION" 2>/dev/null || npm install -g --ignore-optional agent-relay; then
-                warn "Installed with some optional features disabled"
+            echo "Retrying installation with optional native modules disabled..."
+            if npm install -g --ignore-scripts agent-relay@"$VERSION" 2>/dev/null || npm install -g --ignore-scripts agent-relay 2>/dev/null; then
+                warn "Installed with native module compilation skipped"
+                rm -f "$npm_log"
             else
-                rm -f /tmp/npm-install-$$.log
-                error "Installation failed. Please check the error messages above."
+                rm -f "$npm_log"
+                error "Installation failed. Please install build tools and try again."
             fi
         else
-            rm -f /tmp/npm-install-$$.log
+            rm -f "$npm_log"
             error "npm installation failed. Please check the error messages above."
         fi
+    else
+        rm -f "$npm_log"
     fi
-    rm -f /tmp/npm-install-$$.log
 
     # Install dashboard if not skipped
     if [ "${AGENT_RELAY_NO_DASHBOARD}" != "true" ]; then
