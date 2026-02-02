@@ -118,6 +118,7 @@ jobs:
   # Build standalone binaries using bun compile (cross-platform, no Node.js required)
   build-standalone:
     name: Build standalone (${{ matrix.target }})
+    needs: build  # Wait for version bump
     runs-on: ${{ matrix.os }}
     if: github.event.inputs.package == 'all' || github.event.inputs.package == 'main'
     strategy:
@@ -158,10 +159,6 @@ jobs:
       - name: Build TypeScript
         run: npm run build
 
-      - name: Get version
-        id: version
-        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
-
       - name: Build standalone binary
         run: |
           mkdir -p release-binaries
@@ -172,7 +169,7 @@ jobs:
             --target=${{ matrix.target }} \
             --external=better-sqlite3 \
             --external=ssh2 \
-            --define="process.env.AGENT_RELAY_VERSION=\"${{ steps.version.outputs.version }}\"" \
+            --define="process.env.AGENT_RELAY_VERSION=\"${{ needs.build.outputs.new_version }}\"" \
             ./dist/src/cli/index.js \
             --outfile release-binaries/${{ matrix.binary_name }}
 
