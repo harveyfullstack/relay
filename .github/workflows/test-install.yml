@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'install.sh'
+      - 'install.test.sh'
       - '.github/workflows/test-install.yml'
   pull_request:
     paths:
       - 'install.sh'
+      - 'install.test.sh'
       - '.github/workflows/test-install.yml'
   workflow_dispatch:
     inputs:
