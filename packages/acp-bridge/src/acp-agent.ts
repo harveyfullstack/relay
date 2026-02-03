@@ -62,6 +62,19 @@ export class RelayACPAgent implements acp.Agent {
       });
     };
 
+    // Handle channel messages (e.g., #general)
+    this.relayClient.onChannelMessage = (from, channel, body) => {
+      this.debug('Received channel message:', from, channel, body.substring(0, 50));
+
+      // Route channel messages to all sessions
+      this.handleRelayMessage({
+        id: `channel-${Date.now()}`,
+        from: `${from} [${channel}]`,
+        body,
+        timestamp: Date.now(),
+      });
+    };
+
     this.relayClient.onStateChange = (state) => {
       this.debug('Relay client state:', state);
     };
@@ -73,6 +86,10 @@ export class RelayACPAgent implements acp.Agent {
     try {
       await this.relayClient.connect();
       this.debug('Connected to relay daemon via SDK');
+
+      // Subscribe to #general channel to receive broadcast messages
+      this.relayClient.subscribe('#general');
+      this.debug('Subscribed to #general channel');
     } catch (err) {
       this.debug('Failed to connect to relay daemon via SDK:', err);
       // Continue anyway - we can still function without relay
