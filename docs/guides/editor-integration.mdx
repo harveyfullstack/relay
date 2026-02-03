@@ -47,30 +47,15 @@ When you send a prompt from your editor:
 3. Agents respond through the relay daemon
 4. The bridge streams responses back to the editor
 
-## Installation
+## Quick Start (Zed)
 
-<CodeGroup>
-```bash npm
-npm install -g @agent-relay/acp-bridge
-```
-
-```bash From source
-cd packages/acp-bridge
-npm install
-npm run build
-npm link
-```
-</CodeGroup>
-
-## Quick Start
-
-### 1. Start the Relay Daemon
-
-First, ensure the relay daemon is running:
+### 1. Start the Daemon and Configure Zed
 
 ```bash
-agent-relay up
+agent-relay up --zed
 ```
+
+This starts the relay daemon and auto-configures Zed's `~/.config/zed/settings.json` with the correct paths for your workspace.
 
 ### 2. Spawn Some Agents
 
@@ -84,149 +69,21 @@ agent-relay spawn Reviewer claude "Review code changes and suggest improvements"
 agent-relay spawn Architect claude "Help with system design and architecture decisions"
 ```
 
-### 3. Configure Your Editor
+### 3. Start Chatting
 
-<Tabs>
-  <Tab title="Zed">
-    Add to your Zed settings (`~/.config/zed/settings.json`):
+Open Zed's Agent Panel with `Cmd+?` (macOS) or `Ctrl+?` (Windows/Linux), select **"Agent Relay"**, and start typing. You can:
+- **Broadcast to all agents**: Just type your message
+- **Target specific agents**: Use `@AgentName` (e.g., `@Reviewer check this code`)
 
-    ```json
-    {
-      "agent": {
-        "custom_agents": [
-          {
-            "name": "Agent Relay",
-            "command": "relay-acp",
-            "args": ["--name", "zed-bridge"]
-          }
-        ]
-      }
-    }
-    ```
+## Run Relay Commands from Zed
 
-    Then open the Agent Panel with `Cmd+?` (macOS) or `Ctrl+?` (Windows/Linux) and select "Agent Relay".
-  </Tab>
+From the Zed Agent Panel you can issue relay CLI-style commands directly (the bridge intercepts them, no shell required):
 
-  <Tab title="Neovim">
-    If using an ACP-compatible Neovim plugin:
+- `agent-relay spawn Reviewer claude "Review the current changes"`
+- `agent-relay release Reviewer`
+- `agent-relay agents` (lists connected agents)
 
-    ```lua
-    require('acp').setup({
-      agents = {
-        {
-          name = "Agent Relay",
-          command = "relay-acp",
-          args = { "--name", "nvim-bridge" }
-        }
-      }
-    })
-    ```
-  </Tab>
-
-  <Tab title="Other Editors">
-    For any ACP-compatible editor, configure it to run:
-
-    ```bash
-    relay-acp --name my-editor-bridge
-    ```
-
-    The bridge communicates via stdio using newline-delimited JSON.
-  </Tab>
-</Tabs>
-
-### 4. Start Chatting
-
-Open your editor's AI panel and start typing. Your prompts will be broadcast to all connected relay agents, and their responses will stream back to you.
-
-## CLI Options
-
-```bash
-relay-acp [OPTIONS]
-
-Options:
-  --name <name>     Agent name for relay identification (default: relay-acp)
-  --socket <path>   Path to relay daemon socket
-  --debug           Enable debug logging to stderr
-  --help            Show help message
-  --version         Show version
-```
-
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `WORKSPACE_ID` | Used to determine default socket path |
-
-## How It Works
-
-### Session Management
-
-Each editor conversation creates a new ACP session. The bridge:
-
-1. Generates a unique session ID
-2. Maintains message history for the session
-3. Routes responses using the session ID as a thread identifier
-
-### Message Flow
-
-```mermaid
-sequenceDiagram
-    participant Editor
-    participant Bridge
-    participant Daemon
-    participant Agent1
-    participant Agent2
-
-    Editor->>Bridge: session/prompt
-    Bridge->>Daemon: Broadcast message
-    Daemon->>Agent1: DELIVER
-    Daemon->>Agent2: DELIVER
-    Agent1->>Daemon: Response
-    Daemon->>Bridge: DELIVER
-    Bridge->>Editor: session/update (stream)
-    Agent2->>Daemon: Response
-    Daemon->>Bridge: DELIVER
-    Bridge->>Editor: session/update (stream)
-    Bridge->>Editor: prompt complete
-```
-
-### Response Streaming
-
-Responses are streamed as they arrive from agents. Each response is formatted as:
-
-```
-**AgentName**: Response content here
-```
-
-This allows you to see which agent provided each response.
-
-## Programmatic Usage
-
-You can also use the bridge programmatically:
-
-```typescript
-import { RelayACPAgent } from '@agent-relay/acp-bridge';
-
-const agent = new RelayACPAgent({
-  agentName: 'my-custom-bridge',
-  socketPath: '/tmp/relay-daemon.sock',
-  debug: true,
-  capabilities: {
-    supportsSessionLoading: false,
-  },
-});
-
-await agent.start();
-```
-
-### Configuration Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `agentName` | string | `'relay-acp'` | Name used when connecting to relay daemon |
-| `socketPath` | string | auto | Path to relay daemon socket |
-| `debug` | boolean | `false` | Enable debug logging |
-| `capabilities` | object | - | ACP capabilities to advertise |
+Currently supported commands: spawn/create-agent, release, agents/who. All other messages are still broadcast to your connected agents. A quick help block is shown when a new conversation starts; type `agent-relay help` to see it again.
 
 ## Supported ACP Features
 
@@ -326,6 +183,103 @@ Then open http://localhost:3888 to see the message flow.
 | Setup complexity | Low | Medium |
 
 The ACP bridge is ideal when you want your editor to access multiple relay agents simultaneously.
+
+## Other Editors (Advanced)
+
+For editors other than Zed, you'll need to install the ACP bridge package and configure your editor manually.
+
+### Programmatic Usage
+
+You can use the bridge programmatically in your own tools:
+
+```typescript
+import { RelayACPAgent } from '@agent-relay/acp-bridge';
+
+const agent = new RelayACPAgent({
+  agentName: 'my-custom-bridge',
+  socketPath: '/tmp/relay-daemon.sock',
+  debug: true,
+  capabilities: {
+    supportsSessionLoading: false,
+  },
+});
+
+await agent.start();
+```
+
+#### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `agentName` | string | `'relay-acp'` | Name used when connecting to relay daemon |
+| `socketPath` | string | auto | Path to relay daemon socket |
+| `debug` | boolean | `false` | Enable debug logging |
+| `capabilities` | object | - | ACP capabilities to advertise |
+
+### Installation
+
+```bash
+npm install -g @agent-relay/acp-bridge
+```
+
+Or build from source:
+
+```bash
+cd packages/acp-bridge
+npm install
+npm run build
+npm link
+```
+
+### Neovim
+
+Requires an ACP-compatible Neovim plugin (e.g., [acp.nvim](https://github.com/acp-nvim/acp.nvim)):
+
+```lua
+require('acp').setup({
+  agents = {
+    {
+      name = "Agent Relay",
+      command = "relay-acp",
+      args = {
+        "--name", "nvim-bridge",
+        "--socket", "/path/to/your/project/.agent-relay/relay.sock"
+      }
+    }
+  }
+})
+```
+
+### Other ACP-Compatible Editors
+
+For any editor that supports the [Agent Client Protocol](https://agentclientprotocol.com), configure it to run:
+
+```bash
+relay-acp --name my-editor-bridge --socket /path/to/.agent-relay/relay.sock
+```
+
+The bridge communicates via stdio using newline-delimited JSON (ACP protocol).
+
+### Manual Zed Configuration
+
+If you prefer not to use `--zed`, add this to `~/.config/zed/settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "Agent Relay": {
+      "type": "custom",
+      "command": "relay-acp",
+      "args": [
+        "--name", "zed-bridge",
+        "--socket", "/path/to/your/project/.agent-relay/relay.sock",
+        "--debug"
+      ],
+      "env": {}
+    }
+  }
+}
+```
 
 ## Related
 

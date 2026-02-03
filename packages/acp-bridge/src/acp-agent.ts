@@ -6,7 +6,7 @@
 
 import { randomUUID } from 'node:crypto';
 import * as acp from '@agentclientprotocol/sdk';
-import { RelayClient, type RelayClientConfig } from './relay-client.js';
+import { RelayClient, type ClientConfig } from '@agent-relay/sdk';
 import type {
   ACPBridgeConfig,
   SessionState,
@@ -33,24 +33,48 @@ export class RelayACPAgent implements acp.Agent {
    */
   async start(): Promise<void> {
     // Connect to relay daemon
-    const socketPath = this.config.socketPath || this.getDefaultSocketPath();
-    this.relayClient = new RelayClient({
+    const relayConfig: Partial<ClientConfig> = {
       agentName: this.config.agentName,
-      socketPath,
-      debug: this.config.debug,
-    });
+      program: '@agent-relay/acp-bridge',
+      cli: 'acp-bridge',
+      quiet: true,
+    };
+
+    if (this.config.socketPath) {
+      relayConfig.socketPath = this.config.socketPath;
+    }
+
+    this.relayClient = new RelayClient(relayConfig);
+
+    // Set up message handlers
+    this.relayClient.onMessage = (from, payload, messageId) => {
+      if (typeof payload.body !== 'string') {
+        return;
+      }
+
+      this.handleRelayMessage({
+        id: messageId,
+        from,
+        body: payload.body,
+        thread: payload.thread,
+        timestamp: Date.now(),
+      });
+    };
+
+    this.relayClient.onStateChange = (state) => {
+      this.debug('Relay client state:', state);
+    };
+
+    this.relayClient.onError = (error) => {
+      this.debug('Relay client error:', error);
+    };
 
     try {
       await this.relayClient.connect();
-      this.debug('Connected to relay daemon');
+      this.debug('Connected to relay daemon via SDK');
     } catch (err) {
-      this.debug('Failed to connect to relay daemon:', err);
+      this.debug('Failed to connect to relay daemon via SDK:', err);
       // Continue anyway - we can still function without relay
-    }
-
-    // Set up message handler
-    if (this.relayClient) {
-      this.relayClient.onMessage((message) => this.handleRelayMessage(message));
     }
 
     // Create ACP connection over stdio using ndJsonStream
@@ -75,7 +99,8 @@ export class RelayACPAgent implements acp.Agent {
    * Stop the agent
    */
   async stop(): Promise<void> {
-    this.relayClient?.disconnect();
+    this.relayClient?.destroy();
+    this.relayClient = null;
     this.connection = null;
     this.debug('ACP agent stopped');
   }
@@ -119,6 +144,9 @@ export class RelayACPAgent implements acp.Agent {
     this.messageBuffer.set(sessionId, []);
 
     this.debug('Created new session:', sessionId);
+
+    // Show quick help in the editor panel
+    await this.sendTextUpdate(sessionId, this.getHelpText());
 
     return { sessionId };
   }
@@ -165,6 +193,12 @@ export class RelayACPAgent implements acp.Agent {
         timestamp: new Date(),
       });
 
+      // Handle agent-relay CLI-style commands locally before broadcasting
+      const handled = await this.tryHandleCliCommand(userMessage, params.sessionId);
+      if (handled) {
+        return { stopReason: 'end_turn' };
+      }
+
       // Send to relay agents
       const result = await this.bridgeToRelay(
         session,
@@ -199,6 +233,31 @@ export class RelayACPAgent implements acp.Agent {
   // =========================================================================
 
   /**
+   * Parse @mentions from a message.
+   * Returns { targets: string[], message: string } where targets are agent names
+   * and message is the text with @mentions removed.
+   *
+   * Examples:
+   *   "@Worker hello" -> { targets: ["Worker"], message: "hello" }
+   *   "@Worker @Reviewer review this" -> { targets: ["Worker", "Reviewer"], message: "review this" }
+   *   "hello everyone" -> { targets: [], message: "hello everyone" }
+   */
+  private parseAtMentions(text: string): { targets: string[]; message: string } {
+    const mentionRegex = /@(\w+)/g;
+    const targets: string[] = [];
+    let match;
+
+    while ((match = mentionRegex.exec(text)) !== null) {
+      targets.push(match[1]);
+    }
+
+    // Remove @mentions from message
+    const message = text.replace(/@\w+\s*/g, '').trim();
+
+    return { targets, message: message || text };
+  }
+
+  /**
    * Bridge a user prompt to relay agents and collect responses
    */
   private async bridgeToRelay(
@@ -216,7 +275,7 @@ export class RelayACPAgent implements acp.Agent {
       };
     }
 
-    if (!this.relayClient?.isConnected()) {
+    if (!this.relayClient || this.relayClient.state !== 'READY') {
       // If not connected to relay, return a helpful message
       await this.connection.sessionUpdate({
         sessionId,
@@ -240,22 +299,57 @@ export class RelayACPAgent implements acp.Agent {
     // Clear buffer
     this.messageBuffer.set(session.id, []);
 
-    // Send "thinking" indicator
+    // Parse @mentions to target specific agents
+    const { targets, message: cleanMessage } = this.parseAtMentions(userMessage);
+    const hasTargets = targets.length > 0;
+
+    // Send "thinking" indicator with target info
+    const targetInfo = hasTargets
+      ? `Sending to ${targets.map(t => `@${t}`).join(', ')}...\n\n`
+      : 'Broadcasting to all agents...\n\n';
+
     await this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: 'agent_message_chunk',
         content: {
           type: 'text',
-          text: 'Sending to relay agents...\n\n',
+          text: targetInfo,
         },
       },
     });
 
-    // Broadcast to all relay agents
-    await this.relayClient.broadcast(userMessage, {
-      thread: session.id,
-    });
+    // Send to specific agents or broadcast
+    let sent = false;
+    if (hasTargets) {
+      // Send to each mentioned agent
+      for (const target of targets) {
+        const result = this.relayClient.sendMessage(target, cleanMessage, 'message', undefined, session.id);
+        if (result) sent = true;
+      }
+    } else {
+      // Broadcast to all agents
+      sent = this.relayClient.sendMessage('*', userMessage, 'message', undefined, session.id);
+    }
+
+    if (!sent) {
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: {
+            type: 'text',
+            text: 'Failed to send message to relay agents. Please check the relay daemon connection.',
+          },
+        },
+      });
+
+      return {
+        success: false,
+        stopReason: 'error',
+        responses,
+      };
+    }
 
     // Wait for responses with timeout
     const responseTimeout = 30000; // 30 seconds
@@ -344,6 +438,213 @@ export class RelayACPAgent implements acp.Agent {
   }
 
   // =========================================================================
+  // CLI Command Handling (Zed Agent Panel)
+  // =========================================================================
+
+  /**
+   * Parse and handle agent-relay CLI-style commands coming from the editor.
+   */
+  private async tryHandleCliCommand(userMessage: string, sessionId: string): Promise<boolean> {
+    const tokens = this.parseCliArgs(userMessage);
+    if (tokens.length === 0) {
+      return false;
+    }
+
+    let command = tokens[0];
+    let args = tokens.slice(1);
+
+    // Support "agent-relay ..." and "relay ..." prefixes
+    if (command === 'agent-relay' || command === 'relay') {
+      if (args.length === 0) return false;
+      command = args[0];
+      args = args.slice(1);
+    } else if (command === 'create' && args[0] === 'agent') {
+      command = 'spawn';
+      args = args.slice(1);
+    }
+
+    switch (command) {
+      case 'spawn':
+      case 'create-agent':
+        return this.handleSpawnCommand(args, sessionId);
+      case 'release':
+        return this.handleReleaseCommand(args, sessionId);
+      case 'agents':
+      case 'who':
+        return this.handleListAgentsCommand(sessionId);
+      case 'help':
+        await this.sendTextUpdate(sessionId, this.getHelpText());
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async handleSpawnCommand(args: string[], sessionId: string): Promise<boolean> {
+    const [name, cli, ...taskParts] = args;
+    if (!name || !cli) {
+      await this.sendTextUpdate(sessionId, 'Usage: agent-relay spawn <name> <cli> "<task>"');
+      return true;
+    }
+
+    if (!this.relayClient || this.relayClient.state !== 'READY') {
+      await this.sendTextUpdate(sessionId, 'Relay daemon is not connected (cannot spawn).');
+      return true;
+    }
+
+    const task = taskParts.join(' ').trim() || undefined;
+    await this.sendTextUpdate(sessionId, `Spawning ${name} (${cli})${task ? `: ${task}` : ''}`);
+
+    try {
+      const result = await this.relayClient.spawn({
+        name,
+        cli,
+        task,
+        waitForReady: true,
+      });
+
+      if (result.success) {
+        const readyText = result.ready ? ' (ready)' : '';
+        await this.sendTextUpdate(sessionId, `Spawned ${name}${readyText}.`);
+      } else {
+        await this.sendTextUpdate(sessionId, `Failed to spawn ${name}: ${result.error || 'unknown error'}`);
+      }
+    } catch (err) {
+      await this.sendTextUpdate(sessionId, `Spawn error for ${name}: ${(err as Error).message}`);
+    }
+
+    return true;
+  }
+
+  private async handleReleaseCommand(args: string[], sessionId: string): Promise<boolean> {
+    const [name] = args;
+    if (!name) {
+      await this.sendTextUpdate(sessionId, 'Usage: agent-relay release <name>');
+      return true;
+    }
+
+    if (!this.relayClient || this.relayClient.state !== 'READY') {
+      await this.sendTextUpdate(sessionId, 'Relay daemon is not connected (cannot release).');
+      return true;
+    }
+
+    await this.sendTextUpdate(sessionId, `Releasing ${name}...`);
+
+    try {
+      const result = await this.relayClient.release(name);
+      if (result.success) {
+        await this.sendTextUpdate(sessionId, `Released ${name}.`);
+      } else {
+        await this.sendTextUpdate(sessionId, `Failed to release ${name}: ${result.error || 'unknown error'}`);
+      }
+    } catch (err) {
+      await this.sendTextUpdate(sessionId, `Release error for ${name}: ${(err as Error).message}`);
+    }
+
+    return true;
+  }
+
+  private async handleListAgentsCommand(sessionId: string): Promise<boolean> {
+    if (!this.relayClient || this.relayClient.state !== 'READY') {
+      await this.sendTextUpdate(sessionId, 'Relay daemon is not connected (cannot list agents).');
+      return true;
+    }
+
+    try {
+      const agents = await this.relayClient.listConnectedAgents();
+      if (!agents.length) {
+        await this.sendTextUpdate(sessionId, 'No agents are currently connected.');
+      } else {
+        const lines = agents.map((agent) => `- ${agent.name}${agent.cli ? ` (${agent.cli})` : ''}`);
+        await this.sendTextUpdate(sessionId, ['Connected agents:', ...lines].join('\n'));
+      }
+    } catch (err) {
+      await this.sendTextUpdate(sessionId, `Failed to list agents: ${(err as Error).message}`);
+    }
+
+    return true;
+  }
+
+  private async sendTextUpdate(sessionId: string, text: string): Promise<void> {
+    if (!this.connection) return;
+
+    await this.connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: {
+          type: 'text',
+          text,
+        },
+      },
+    });
+  }
+
+  private parseCliArgs(input: string): string[] {
+    const args: string[] = [];
+    let current = '';
+    let inQuote: '"' | "'" | null = null;
+    let escape = false;
+
+    for (const char of input.trim()) {
+      if (escape) {
+        current += char;
+        escape = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escape = true;
+        continue;
+      }
+
+      if (inQuote) {
+        if (char === inQuote) {
+          inQuote = null;
+        } else {
+          current += char;
+        }
+        continue;
+      }
+
+      if (char === '"' || char === "'") {
+        inQuote = char;
+        continue;
+      }
+
+      if (/\s/.test(char)) {
+        if (current) {
+          args.push(current);
+          current = '';
+        }
+        continue;
+      }
+
+      current += char;
+    }
+
+    if (current) {
+      args.push(current);
+    }
+
+    return args;
+  }
+
+  private getHelpText(): string {
+    return [
+      'Agent Relay (Zed)',
+      '',
+      'Commands:',
+      '- agent-relay spawn <name> <cli> "task"',
+      '- agent-relay release <name>',
+      '- agent-relay agents',
+      '- agent-relay help',
+      '',
+      'Other messages are broadcast to connected agents.',
+    ].join('\n');
+  }
+
+  // =========================================================================
   // Utility Methods
   // =========================================================================
 
@@ -355,17 +656,6 @@ export class RelayACPAgent implements acp.Agent {
       .filter((block): block is acp.ContentBlock & { type: 'text'; text: string } => block.type === 'text')
       .map((block) => block.text)
       .join('\n');
-  }
-
-  /**
-   * Get default socket path based on environment
-   */
-  private getDefaultSocketPath(): string {
-    const workspaceId = process.env.WORKSPACE_ID;
-    if (workspaceId) {
-      return `/tmp/relay/${workspaceId}/sockets/daemon.sock`;
-    }
-    return '/tmp/relay-daemon.sock';
   }
 
   /**

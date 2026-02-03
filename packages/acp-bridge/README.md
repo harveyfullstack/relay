@@ -66,9 +66,9 @@ relay-acp --socket /tmp/relay/my-workspace/sockets/daemon.sock
      "agent": {
        "custom_agents": [
          {
-           "name": "Agent Relay",
-           "command": "relay-acp",
-           "args": ["--name", "zed-bridge"]
+            "name": "Agent Relay",
+            "command": "relay-acp",
+            "args": ["--name", "zed-bridge"]
          }
        ]
      }
@@ -76,6 +76,26 @@ relay-acp --socket /tmp/relay/my-workspace/sockets/daemon.sock
    ```
 
 4. Open the Agent Panel in Zed (`Cmd+?` on macOS) and select "Agent Relay"
+
+Or let the CLI configure Zed for you (writes `agent_servers` with the correct socket path):
+
+```bash
+agent-relay up --zed
+```
+
+This adds an entry similar to:
+
+```json
+{
+  "agent_servers": {
+    "Agent Relay": {
+      "type": "custom",
+      "command": "relay-acp",
+      "args": ["--name", "zed-bridge", "--socket", "/path/to/project/.agent-relay/relay.sock"]
+    }
+  }
+}
+```
 
 ### Programmatic Usage
 
@@ -98,6 +118,17 @@ const agent = new RelayACPAgent({
 await agent.start();
 ```
 
+### Relay CLI commands from the Agent Panel
+
+The bridge intercepts basic `agent-relay` commands typed in the Zed Agent Panel, so you can manage agents without a shell:
+
+- `agent-relay spawn Worker claude "Review the current changes"`
+- `agent-relay release Worker`
+- `agent-relay agents` (list connected agents)
+
+Supported commands today: spawn/create-agent, release, agents/who. Others fall back to normal broadcast handling.
+The panel shows a help block on first message; type `agent-relay help` anytime to see it again.
+
 ## How it Works
 
 1. **Initialization**: When an editor connects, the bridge advertises its capabilities
@@ -113,6 +144,8 @@ await agent.start();
 | `socketPath` | string | auto | Path to relay daemon socket |
 | `debug` | boolean | `false` | Enable debug logging |
 | `capabilities` | object | - | ACP capabilities to advertise |
+
+Connections to the daemon go through `@agent-relay/sdk`, so socket discovery and reconnection match the rest of the Relay tooling. Provide `socketPath` to override detection when needed.
 
 ## Environment Variables
 
