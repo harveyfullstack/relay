@@ -181,9 +181,46 @@ jobs:
           done
           echo ""
 
-          # Phase 2: Spawn agent
+          # Phase 2: Test CLI Commands
           echo "========================================"
-          echo "  Phase 2: Spawning Claude Agent"
+          echo "  Phase 2: Testing CLI Commands"
+          echo "========================================"
+          echo ""
+
+          # Test version command
+          echo "Testing: agent-relay --version"
+          VERSION_OUTPUT=$(agent-relay --version)
+          if [ -z "$VERSION_OUTPUT" ]; then
+            echo "ERROR: --version returned empty output"
+            exit 1
+          fi
+          echo "  Output: $VERSION_OUTPUT"
+          echo ""
+
+          # Test status command
+          echo "Testing: agent-relay status"
+          if ! agent-relay status; then
+            echo "ERROR: status command failed"
+            exit 1
+          fi
+          echo ""
+
+          # Test agents command (should be empty initially)
+          echo "Testing: agent-relay agents"
+          agent-relay agents || true
+          echo ""
+
+          # Test who command
+          echo "Testing: agent-relay who"
+          agent-relay who || true
+          echo ""
+
+          echo "All CLI command tests passed!"
+          echo ""
+
+          # Phase 3: Spawn agent
+          echo "========================================"
+          echo "  Phase 3: Spawning Claude Agent"
           echo "========================================"
           echo ""
 
@@ -198,9 +235,9 @@ jobs:
           echo "Spawn command succeeded!"
           echo ""
 
-          # Phase 3: Wait for agent registration
+          # Phase 4: Wait for agent registration
           echo "========================================"
-          echo "  Phase 3: Verifying Agent Registration"
+          echo "  Phase 4: Verifying Agent Registration"
           echo "========================================"
           echo ""
 
@@ -211,16 +248,16 @@ jobs:
             CURRENT_TIME=$(date +%s)
             ELAPSED=$((CURRENT_TIME - START_TIME))
 
-            # Query daemon for connected agents
-            AGENTS=$(curl -s "http://127.0.0.1:${DASHBOARD_PORT}/api/agents" 2>/dev/null || echo "[]")
+            # Use CLI agents command to check registration (--json for parseable output)
+            AGENTS_OUTPUT=$(agent-relay agents --json 2>/dev/null || echo "[]")
 
             # Check if our agent is registered
-            if echo "$AGENTS" | grep -q "\"$AGENT_NAME\""; then
+            if echo "$AGENTS_OUTPUT" | grep -q "\"$AGENT_NAME\""; then
               echo ""
               echo "SUCCESS: Agent '$AGENT_NAME' registered after ${ELAPSED}s"
               echo ""
               echo "Connected agents:"
-              echo "$AGENTS" | jq . 2>/dev/null || echo "$AGENTS"
+              echo "$AGENTS_OUTPUT" | jq . 2>/dev/null || echo "$AGENTS_OUTPUT"
               break
             fi
 
@@ -232,7 +269,7 @@ jobs:
               echo "ERROR: Agent '$AGENT_NAME' did not register within ${SPAWN_TIMEOUT}s"
               echo ""
               echo "Connected agents:"
-              echo "$AGENTS" | jq . 2>/dev/null || echo "$AGENTS"
+              agent-relay agents 2>/dev/null || true
               exit 1
             fi
 
@@ -240,9 +277,9 @@ jobs:
           done
           echo ""
 
-          # Phase 4: Release agent
+          # Phase 5: Release agent
           echo "========================================"
-          echo "  Phase 4: Releasing Agent"
+          echo "  Phase 5: Releasing Agent"
           echo "========================================"
           echo ""
 
@@ -257,26 +294,27 @@ jobs:
           echo "Release command succeeded!"
           echo ""
 
-          # Phase 5: Verify agent was released
+          # Phase 6: Verify agent was released
           echo "========================================"
-          echo "  Phase 5: Verifying Agent Release"
+          echo "  Phase 6: Verifying Agent Release"
           echo "========================================"
           echo ""
 
           sleep 3
-          AGENTS_AFTER=$(curl -s "http://127.0.0.1:${DASHBOARD_PORT}/api/agents" 2>/dev/null || echo "[]")
+          AGENTS_AFTER=$(agent-relay agents --json 2>/dev/null || echo "[]")
 
           if echo "$AGENTS_AFTER" | grep -q "\"$AGENT_NAME\""; then
             echo "WARNING: Agent still appears in list after release (may be disconnecting)"
-            echo "Agents: $AGENTS_AFTER"
+            echo "Agents:"
+            agent-relay agents 2>/dev/null || true
           else
             echo "SUCCESS: Agent '$AGENT_NAME' no longer in agents list"
           fi
           echo ""
 
-          # Phase 6: Stop daemon
+          # Phase 7: Stop daemon
           echo "========================================"
-          echo "  Phase 6: Stopping Daemon"
+          echo "  Phase 7: Stopping Daemon"
           echo "========================================"
           echo ""
 
