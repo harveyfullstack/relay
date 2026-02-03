@@ -22,7 +22,21 @@ import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { homedir, freemem, totalmem } from 'node:os';
 import { execSync } from 'node:child_process';
-import { existsSync, unlinkSync, mkdirSync, symlinkSync, lstatSync, rmSync, watch, readdirSync, readlinkSync, writeFileSync, appendFileSync } from 'node:fs';
+import {
+  existsSync,
+  unlinkSync,
+  mkdirSync,
+  symlinkSync,
+  lstatSync,
+  rmSync,
+  watch,
+  readdirSync,
+  readlinkSync,
+  writeFileSync,
+  appendFileSync,
+  accessSync,
+  constants as fsConstants,
+} from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import { getProjectPaths } from '@agent-relay/config/project-namespace';
 import { getAgentOutboxTemplate } from '@agent-relay/config/relay-file-writer';
@@ -678,6 +692,12 @@ export class RelayPtyOrchestrator extends BaseWrapper {
     const binaryPath = this.findRelayPtyBinary();
     if (!binaryPath) {
       throw new Error('relay-pty binary not found. Build with: cd relay-pty && cargo build --release');
+    }
+
+    try {
+      accessSync(binaryPath, fsConstants.X_OK);
+    } catch (err: any) {
+      throw new Error(`relay-pty binary not executable at ${binaryPath}: ${err?.message ?? 'permission denied'}. Build with: cd relay-pty && cargo build --release, or ensure the binary has execute permissions.`);
     }
 
     this.log(` Using binary: ${binaryPath}`);
