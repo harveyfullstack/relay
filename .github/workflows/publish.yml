@@ -345,6 +345,7 @@ jobs:
           - sdk
           - daemon
           - telemetry
+          - acp-bridge
 
     steps:
       - name: Checkout code

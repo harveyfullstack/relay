@@ -37,6 +37,7 @@ import {
 import { installMcpConfig } from '@agent-relay/mcp';
 import fs from 'node:fs';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
 import { exec, execSync, spawn as spawnProcess } from 'node:child_process';
@@ -170,6 +171,197 @@ function startDashboardViaNpx(options: {
   });
 
   return { process: dashboardProcess, port: options.port, ready };
+}
+
+/**
+ * Strip JSONC comments while preserving strings that contain // or /* sequences.
+ * Uses a state machine to track whether we're inside a string literal.
+ */
+function stripJsonComments(content: string): string {
+  let result = '';
+  let inString = false;
+  let inSingleLineComment = false;
+  let inMultiLineComment = false;
+  let i = 0;
+
+  while (i < content.length) {
+    const char = content[i];
+    const nextChar = content[i + 1];
+
+    // Handle string state (only when not in a comment)
+    if (!inSingleLineComment && !inMultiLineComment) {
+      if (char === '"' && (i === 0 || content[i - 1] !== '\\')) {
+        inString = !inString;
+        result += char;
+        i++;
+        continue;
+      }
+
+      // If in string, just copy the character
+      if (inString) {
+        result += char;
+        i++;
+        continue;
+      }
+
+      // Check for single-line comment start
+      if (char === '/' && nextChar === '/') {
+        inSingleLineComment = true;
+        i += 2;
+        continue;
+      }
+
+      // Check for multi-line comment start
+      if (char === '/' && nextChar === '*') {
+        inMultiLineComment = true;
+        i += 2;
+        continue;
+      }
+
+      // Not in any comment or string, copy the character
+      result += char;
+      i++;
+      continue;
+    }
+
+    // Handle single-line comment end
+    if (inSingleLineComment) {
+      if (char === '\n') {
+        inSingleLineComment = false;
+        result += char; // Preserve newline
+      }
+      i++;
+      continue;
+    }
+
+    // Handle multi-line comment end
+    if (inMultiLineComment) {
+      if (char === '*' && nextChar === '/') {
+        inMultiLineComment = false;
+        i += 2;
+        continue;
+      }
+      i++;
+      continue;
+    }
+
+    i++;
+  }
+
+  return result;
+}
+
+function readJsonWithComments(filePath: string): Record<string, unknown> {
+  if (!fs.existsSync(filePath)) return {};
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const sanitized = stripJsonComments(raw).trim();
+    if (!sanitized) return {};
+    return JSON.parse(sanitized);
+  } catch (err) {
+    throw new Error(`Failed to read ${filePath}: ${(err as Error).message}`);
+  }
+}
+
+function writeJson(filePath: string, data: Record<string, unknown>): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+}
+
+function getZedSettingsPath(customPath?: string): string {
+  if (customPath) return path.resolve(customPath);
+  const configDir = process.env.ZED_CONFIG_DIR || process.env.ZED_HOME || path.join(homedir(), '.config', 'zed');
+  return path.join(configDir, 'settings.json');
+}
+
+function findLocalAcpBridge(projectRoot: string): string | null {
+  const candidates = [
+    path.join(projectRoot, 'packages', 'acp-bridge', 'dist', 'cli.js'),
+    path.join(projectRoot, 'node_modules', '@agent-relay', 'acp-bridge', 'dist', 'cli.js'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function buildZedAgentServerConfig(options: {
+  projectRoot: string;
+  socketPath: string;
+  bridgeName?: string;
+  enableDebug?: boolean;
+}): { command: string; args: string[]; env: Record<string, string> } {
+  const bridgeName = options.bridgeName || 'zed-bridge';
+  const baseArgs = ['--name', bridgeName, '--socket', options.socketPath];
+  if (options.enableDebug) baseArgs.push('--debug');
+
+  const localCli = findLocalAcpBridge(options.projectRoot);
+  if (localCli) {
+    return {
+      command: process.execPath,
+      args: [localCli, ...baseArgs],
+      env: {},
+    };
+  }
+
+  return {
+    command: 'relay-acp',
+    args: baseArgs,
+    env: {},
+  };
+}
+
+function configureZedAgentServer(options: {
+  settingsPath: string;
+  socketPath: string;
+  projectRoot: string;
+  agentServerName?: string;
+  enableDebug?: boolean;
+}): { updated: boolean; created: boolean; path: string; key: string } {
+  const key = options.agentServerName || 'Agent Relay';
+  const config = readJsonWithComments(options.settingsPath);
+  const created = !fs.existsSync(options.settingsPath);
+
+  // Ensure root object
+  const normalizedConfig = typeof config === 'object' && config !== null ? { ...config } : {};
+  const agentServers = (normalizedConfig.agent_servers && typeof normalizedConfig.agent_servers === 'object'
+    ? { ...(normalizedConfig.agent_servers as Record<string, unknown>) }
+    : {}) as Record<string, unknown>;
+
+  normalizedConfig.agent_servers = agentServers;
+
+  const serverConfig = buildZedAgentServerConfig({
+    projectRoot: options.projectRoot,
+    socketPath: options.socketPath,
+    bridgeName: 'zed-bridge',
+    enableDebug: options.enableDebug,
+  });
+
+  const targetEntry = {
+    type: 'custom',
+    command: serverConfig.command,
+    args: serverConfig.args,
+    env: serverConfig.env,
+  };
+
+  const existingEntry = agentServers[key];
+  const unchanged = existingEntry && JSON.stringify(existingEntry) === JSON.stringify(targetEntry);
+
+  if (!unchanged) {
+    agentServers[key] = targetEntry;
+    writeJson(options.settingsPath, normalizedConfig);
+  }
+
+  return {
+    updated: !unchanged,
+    created,
+    path: options.settingsPath,
+    key,
+  };
 }
 
 /**
@@ -527,6 +719,9 @@ program
   .option('--watch', 'Auto-restart daemon on crash (supervisor mode)')
   .option('--max-restarts <n>', 'Max restarts in 60s before giving up (default: 5)', '5')
   .option('--verbose', 'Enable verbose logging (show debug output in console)')
+  .option('--zed', 'Add Agent Relay entry to Zed agent_servers for this workspace')
+  .option('--zed-config <path>', 'Custom path to Zed settings.json (defaults to ~/.config/zed/settings.json)')
+  .option('--zed-name <name>', 'Display name for the Zed agent server (default: Agent Relay)')
   .action(async (options) => {
     // If --watch is specified, run in supervisor mode
     if (options.watch) {
@@ -547,6 +742,9 @@ program
         if (options.spawn === true) args.push('--spawn');
         if (options.spawn === false) args.push('--no-spawn');
         if (options.verbose) args.push('--verbose');
+        if (options.zed) args.push('--zed');
+        if (options.zedConfig) args.push('--zed-config', options.zedConfig);
+        if (options.zedName) args.push('--zed-name', options.zedName);
 
         console.log(`[supervisor] Starting daemon...`);
         child = spawnProcess(process.execPath, [process.argv[1], ...args], {
@@ -629,6 +827,25 @@ program
         console.log(`Note: Could not auto-install snippets: ${err.message}`);
       }
       console.log('');
+    }
+
+    // Optionally configure Zed agent_servers with the ACP bridge
+    if (options.zed) {
+      try {
+        const zedSettingsPath = getZedSettingsPath(options.zedConfig);
+        const zedDebug = options.verbose === undefined ? true : Boolean(options.verbose);
+        const result = configureZedAgentServer({
+          settingsPath: zedSettingsPath,
+          socketPath,
+          projectRoot: paths.projectRoot,
+          agentServerName: options.zedName,
+          enableDebug: zedDebug,
+        });
+        const status = result.updated ? (result.created ? 'created' : 'updated') : 'already configured';
+        console.log(`[zed] ${status}: ${result.path} (${result.key})`);
+      } catch (err: any) {
+        console.log(`[zed] Failed to configure Zed agent_servers: ${err.message}`);
+      }
     }
 
     // Set up log file to avoid console output polluting TUI terminals
@@ -1054,6 +1271,228 @@ program
         console.error(`Error stopping daemon: ${err.message}`);
       }
     }
+  });
+
+// uninstall - Remove agent-relay from the current project
+program
+  .command('uninstall')
+  .description('Remove agent-relay data and configuration from the current project')
+  .option('--keep-data', 'Keep message history and database (only remove runtime files)')
+  .option('--zed', 'Also remove Zed editor configuration')
+  .option('--zed-name <name>', 'Name of the Zed agent server entry to remove (default: Agent Relay)')
+  .option('--snippets', 'Also remove agent-relay snippets from CLAUDE.md, GEMINI.md, AGENTS.md')
+  .option('--force', 'Skip confirmation prompt')
+  .option('--dry-run', 'Show what would be removed without actually removing')
+  .action(async (options: { keepData?: boolean; zed?: boolean; zedName?: string; snippets?: boolean; force?: boolean; dryRun?: boolean }) => {
+    const paths = getProjectPaths();
+    const readline = await import('node:readline');
+
+    const filesToRemove: string[] = [];
+    const dirsToRemove: string[] = [];
+    const actions: string[] = [];
+
+    // Check if .agent-relay directory exists
+    if (!fs.existsSync(paths.dataDir)) {
+      console.log('Agent Relay is not installed in this project.');
+      console.log(`(No ${paths.dataDir} directory found)`);
+      return;
+    }
+
+    // Stop daemon if running
+    const pidPath = pidFilePathForSocket(paths.socketPath);
+    if (fs.existsSync(pidPath)) {
+      const pid = Number(fs.readFileSync(pidPath, 'utf-8').trim());
+      try {
+        process.kill(pid, 0); // Check if running
+        actions.push(`Stop daemon (pid: ${pid})`);
+        if (!options.dryRun) {
+          try {
+            process.kill(pid, 'SIGTERM');
+            // Wait briefly for graceful shutdown
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } catch { /* ignore */ }
+        }
+      } catch { /* not running */ }
+    }
+
+    // Collect files to remove
+    if (options.keepData) {
+      // Only remove runtime files, keep database
+      const runtimeFiles = ['relay.sock', 'runtime.json', 'daemon.pid', '.project'];
+      for (const file of runtimeFiles) {
+        const filePath = path.join(paths.dataDir, file);
+        if (fs.existsSync(filePath)) {
+          filesToRemove.push(filePath);
+        }
+      }
+      // Remove mcp-identity-* files
+      try {
+        const files = fs.readdirSync(paths.dataDir);
+        for (const file of files) {
+          if (file.startsWith('mcp-identity')) {
+            filesToRemove.push(path.join(paths.dataDir, file));
+          }
+        }
+      } catch { /* ignore */ }
+      actions.push('Remove runtime files (keeping database and message history)');
+    } else {
+      // Remove entire .agent-relay directory
+      dirsToRemove.push(paths.dataDir);
+      actions.push(`Remove ${paths.dataDir}/ directory (including message history)`);
+    }
+
+    // Zed configuration
+    if (options.zed) {
+      const zedSettingsPath = getZedSettingsPath();
+      if (fs.existsSync(zedSettingsPath)) {
+        const zedNameToRemove = options.zedName || 'Agent Relay';
+        actions.push(`Remove "${zedNameToRemove}" (and any relay-acp entries) from Zed settings`);
+      }
+    }
+
+    // Snippets
+    if (options.snippets) {
+      const snippetFiles = ['CLAUDE.md', 'GEMINI.md', 'AGENTS.md'];
+      for (const file of snippetFiles) {
+        const filePath = path.join(paths.projectRoot, file);
+        if (fs.existsSync(filePath)) {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          if (content.includes('agent-relay-snippet') || content.includes('agent-relay-protocol')) {
+            actions.push(`Remove agent-relay snippets from ${file}`);
+          }
+        }
+      }
+    }
+
+    // Show what will be done
+    console.log('');
+    console.log('Agent Relay Uninstall');
+    console.log('=====================');
+    console.log('');
+    console.log('The following actions will be performed:');
+    console.log('');
+    for (const action of actions) {
+      console.log(`  • ${action}`);
+    }
+    console.log('');
+
+    if (options.dryRun) {
+      console.log('[dry-run] No changes made.');
+      return;
+    }
+
+    // Confirm unless --force
+    if (!options.force) {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const answer = await new Promise<string>(resolve => {
+        rl.question('Continue? [y/N] ', resolve);
+      });
+      rl.close();
+
+      if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
+        console.log('Aborted.');
+        return;
+      }
+    }
+
+    // Perform removal
+    console.log('');
+
+    // Remove files
+    for (const file of filesToRemove) {
+      try {
+        fs.unlinkSync(file);
+        console.log(`  ✓ Removed ${path.relative(paths.projectRoot, file)}`);
+      } catch (err: any) {
+        console.log(`  ✗ Failed to remove ${path.relative(paths.projectRoot, file)}: ${err.message}`);
+      }
+    }
+
+    // Remove directories
+    for (const dir of dirsToRemove) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        console.log(`  ✓ Removed ${path.relative(paths.projectRoot, dir)}/`);
+      } catch (err: any) {
+        console.log(`  ✗ Failed to remove ${path.relative(paths.projectRoot, dir)}/: ${err.message}`);
+      }
+    }
+
+    // Remove Zed config
+    if (options.zed) {
+      const zedSettingsPath = getZedSettingsPath();
+      if (fs.existsSync(zedSettingsPath)) {
+        try {
+          const config = readJsonWithComments(zedSettingsPath);
+          const agentServers = config.agent_servers as Record<string, unknown> | undefined;
+          if (agentServers) {
+            const removedEntries: string[] = [];
+            const zedNameToRemove = options.zedName || 'Agent Relay';
+
+            // Remove the specified entry by name
+            if (agentServers[zedNameToRemove]) {
+              delete agentServers[zedNameToRemove];
+              removedEntries.push(zedNameToRemove);
+            }
+
+            // Also scan for any entries that look like relay-acp bridge
+            // (command/args contain 'acp-bridge' or 'relay-acp')
+            for (const [key, value] of Object.entries(agentServers)) {
+              if (key === zedNameToRemove) continue; // Already handled
+              if (typeof value === 'object' && value !== null) {
+                const entry = value as Record<string, unknown>;
+                const command = entry.command as string | undefined;
+                const args = entry.args as string[] | undefined;
+                const isRelayAcp =
+                  (command && (command.includes('acp-bridge') || command.includes('relay-acp'))) ||
+                  (args && args.some(arg => arg.includes('acp-bridge') || arg.includes('relay-acp')));
+                if (isRelayAcp) {
+                  delete agentServers[key];
+                  removedEntries.push(key);
+                }
+              }
+            }
+
+            if (removedEntries.length > 0) {
+              writeJson(zedSettingsPath, config);
+              for (const entry of removedEntries) {
+                console.log(`  ✓ Removed "${entry}" from Zed settings`);
+              }
+            }
+          }
+        } catch (err: any) {
+          console.log(`  ✗ Failed to update Zed settings: ${err.message}`);
+        }
+      }
+    }
+
+    // Remove snippets
+    if (options.snippets) {
+      const snippetFiles = ['CLAUDE.md', 'GEMINI.md', 'AGENTS.md'];
+      for (const file of snippetFiles) {
+        const filePath = path.join(paths.projectRoot, file);
+        if (fs.existsSync(filePath)) {
+          try {
+            let content = fs.readFileSync(filePath, 'utf-8');
+            const originalLength = content.length;
+
+            // Remove prpm snippet blocks
+            content = content.replace(/<!-- prpm:snippet:start @agent-relay\/agent-relay-snippet.*?<!-- prpm:snippet:end @agent-relay\/agent-relay-snippet[^\n]*\n?/gs, '');
+            content = content.replace(/<!-- prpm:snippet:start @agent-relay\/agent-relay-protocol.*?<!-- prpm:snippet:end @agent-relay\/agent-relay-protocol[^\n]*\n?/gs, '');
+
+            if (content.length !== originalLength) {
+              fs.writeFileSync(filePath, content);
+              console.log(`  ✓ Removed agent-relay snippets from ${file}`);
+            }
+          } catch (err: any) {
+            console.log(`  ✗ Failed to update ${file}: ${err.message}`);
+          }
+        }
+      }
+    }
+
+    console.log('');
+    console.log('Uninstall complete.');
   });
 
 program
@@ -2046,7 +2485,7 @@ function loadAgents(agentsPath: string): RegistryAgent[] {
 const STALE_THRESHOLD_MS = 30_000;
 
 // Internal agents that should be hidden from `agents` and `who` by default
-const INTERNAL_AGENTS = new Set(['cli', 'Dashboard']);
+const INTERNAL_AGENTS = new Set(['cli', 'Dashboard', 'zed-bridge']);
 
 function isInternalAgent(name: string | undefined): boolean {
   if (!name) return true;
