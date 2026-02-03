@@ -37,6 +37,7 @@ import {
 import { installMcpConfig } from '@agent-relay/mcp';
 import fs from 'node:fs';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
 import { exec, execSync, spawn as spawnProcess } from 'node:child_process';
@@ -170,6 +171,126 @@ function startDashboardViaNpx(options: {
   });
 
   return { process: dashboardProcess, port: options.port, ready };
+}
+
+/**
+ * Lightweight JSONC stripper (// and /* *​/ comments).
+ */
+function stripJsonComments(content: string): string {
+  return content.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+function readJsonWithComments(filePath: string): Record<string, unknown> {
+  if (!fs.existsSync(filePath)) return {};
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const sanitized = stripJsonComments(raw).trim();
+    if (!sanitized) return {};
+    return JSON.parse(sanitized);
+  } catch (err) {
+    throw new Error(`Failed to read ${filePath}: ${(err as Error).message}`);
+  }
+}
+
+function writeJson(filePath: string, data: Record<string, unknown>): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+}
+
+function getZedSettingsPath(customPath?: string): string {
+  if (customPath) return path.resolve(customPath);
+  const configDir = process.env.ZED_CONFIG_DIR || process.env.ZED_HOME || path.join(homedir(), '.config', 'zed');
+  return path.join(configDir, 'settings.json');
+}
+
+function findLocalAcpBridge(projectRoot: string): string | null {
+  const candidates = [
+    path.join(projectRoot, 'packages', 'acp-bridge', 'dist', 'cli.js'),
+    path.join(projectRoot, 'node_modules', '@agent-relay', 'acp-bridge', 'dist', 'cli.js'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function buildZedAgentServerConfig(options: {
+  projectRoot: string;
+  socketPath: string;
+  bridgeName?: string;
+  enableDebug?: boolean;
+}): { command: string; args: string[]; env: Record<string, string> } {
+  const bridgeName = options.bridgeName || 'zed-bridge';
+  const baseArgs = ['--name', bridgeName, '--socket', options.socketPath];
+  if (options.enableDebug) baseArgs.push('--debug');
+
+  const localCli = findLocalAcpBridge(options.projectRoot);
+  if (localCli) {
+    return {
+      command: process.execPath,
+      args: [localCli, ...baseArgs],
+      env: {},
+    };
+  }
+
+  return {
+    command: 'relay-acp',
+    args: baseArgs,
+    env: {},
+  };
+}
+
+function configureZedAgentServer(options: {
+  settingsPath: string;
+  socketPath: string;
+  projectRoot: string;
+  agentServerName?: string;
+  enableDebug?: boolean;
+}): { updated: boolean; created: boolean; path: string; key: string } {
+  const key = options.agentServerName || 'Agent Relay';
+  const config = readJsonWithComments(options.settingsPath);
+  const created = !fs.existsSync(options.settingsPath);
+
+  // Ensure root object
+  const normalizedConfig = typeof config === 'object' && config !== null ? { ...config } : {};
+  const agentServers = (normalizedConfig.agent_servers && typeof normalizedConfig.agent_servers === 'object'
+    ? { ...(normalizedConfig.agent_servers as Record<string, unknown>) }
+    : {}) as Record<string, unknown>;
+
+  normalizedConfig.agent_servers = agentServers;
+
+  const serverConfig = buildZedAgentServerConfig({
+    projectRoot: options.projectRoot,
+    socketPath: options.socketPath,
+    bridgeName: 'zed-bridge',
+    enableDebug: options.enableDebug,
+  });
+
+  const targetEntry = {
+    type: 'custom',
+    command: serverConfig.command,
+    args: serverConfig.args,
+    env: serverConfig.env,
+  };
+
+  const existingEntry = agentServers[key];
+  const unchanged = existingEntry && JSON.stringify(existingEntry) === JSON.stringify(targetEntry);
+
+  if (!unchanged) {
+    agentServers[key] = targetEntry;
+    writeJson(options.settingsPath, normalizedConfig);
+  }
+
+  return {
+    updated: !unchanged,
+    created,
+    path: options.settingsPath,
+    key,
+  };
 }
 
 /**
@@ -527,6 +648,9 @@ program
   .option('--watch', 'Auto-restart daemon on crash (supervisor mode)')
   .option('--max-restarts <n>', 'Max restarts in 60s before giving up (default: 5)', '5')
   .option('--verbose', 'Enable verbose logging (show debug output in console)')
+  .option('--zed', 'Add Agent Relay entry to Zed agent_servers for this workspace')
+  .option('--zed-config <path>', 'Custom path to Zed settings.json (defaults to ~/.config/zed/settings.json)')
+  .option('--zed-name <name>', 'Display name for the Zed agent server (default: Agent Relay)')
   .action(async (options) => {
     // If --watch is specified, run in supervisor mode
     if (options.watch) {
@@ -547,6 +671,9 @@ program
         if (options.spawn === true) args.push('--spawn');
         if (options.spawn === false) args.push('--no-spawn');
         if (options.verbose) args.push('--verbose');
+        if (options.zed) args.push('--zed');
+        if (options.zedConfig) args.push('--zed-config', options.zedConfig);
+        if (options.zedName) args.push('--zed-name', options.zedName);
 
         console.log(`[supervisor] Starting daemon...`);
         child = spawnProcess(process.execPath, [process.argv[1], ...args], {
@@ -629,6 +756,25 @@ program
         console.log(`Note: Could not auto-install snippets: ${err.message}`);
       }
       console.log('');
+    }
+
+    // Optionally configure Zed agent_servers with the ACP bridge
+    if (options.zed) {
+      try {
+        const zedSettingsPath = getZedSettingsPath(options.zedConfig);
+        const zedDebug = options.verbose === undefined ? true : Boolean(options.verbose);
+        const result = configureZedAgentServer({
+          settingsPath: zedSettingsPath,
+          socketPath,
+          projectRoot: paths.projectRoot,
+          agentServerName: options.zedName,
+          enableDebug: zedDebug,
+        });
+        const status = result.updated ? (result.created ? 'created' : 'updated') : 'already configured';
+        console.log(`[zed] ${status}: ${result.path} (${result.key})`);
+      } catch (err: any) {
+        console.log(`[zed] Failed to configure Zed agent_servers: ${err.message}`);
+      }
     }
 
     // Set up log file to avoid console output polluting TUI terminals
@@ -2046,7 +2192,7 @@ function loadAgents(agentsPath: string): RegistryAgent[] {
 const STALE_THRESHOLD_MS = 30_000;
 
 // Internal agents that should be hidden from `agents` and `who` by default
-const INTERNAL_AGENTS = new Set(['cli', 'Dashboard']);
+const INTERNAL_AGENTS = new Set(['cli', 'Dashboard', 'zed-bridge']);
 
 function isInternalAgent(name: string | undefined): boolean {
   if (!name) return true;
