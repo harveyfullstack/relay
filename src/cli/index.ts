@@ -216,7 +216,7 @@ export async function installRelaySnippets(options?: { silent?: boolean }): Prom
   return { success: installed.length > 0, installed };
 }
 
-dotenvConfig();
+dotenvConfig({ quiet: true });
 
 const DEFAULT_DASHBOARD_PORT = process.env.AGENT_RELAY_DASHBOARD_PORT || '3888';
 
