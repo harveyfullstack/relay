@@ -7,6 +7,7 @@ on:
       - 'src/**'
       - 'packages/**'
       - 'relay-pty/**'
+      - 'scripts/e2e-test.sh'
       - 'package.json'
       - '.github/workflows/e2e-tests.yml'
   pull_request:
@@ -15,6 +16,7 @@ on:
       - 'src/**'
       - 'packages/**'
       - 'relay-pty/**'
+      - 'scripts/e2e-test.sh'
       - 'package.json'
       - '.github/workflows/e2e-tests.yml'
   # Allow manual trigger for on-demand testing
@@ -70,6 +72,26 @@ jobs:
       - name: Verify CLI is available
         run: agent-relay --version
 
+      - name: Cache Claude CLI
+        id: cache-claude
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm-global
+          key: claude-cli-${{ runner.os }}-${{ hashFiles('.github/workflows/e2e-tests.yml') }}
+
+      - name: Install Claude CLI
+        if: steps.cache-claude.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.npm-global
+          npm config set prefix '~/.npm-global'
+          npm install -g @anthropic-ai/claude-code
+
+      - name: Add Claude CLI to PATH
+        run: |
+          echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
+          export PATH="$HOME/.npm-global/bin:$PATH"
+          claude --version || echo "Claude CLI ready"
+
       - name: Download dashboard binary
         run: |
           # Determine platform and architecture
@@ -119,225 +141,12 @@ jobs:
         id: e2e-test
         if: steps.check-key.outputs.has_key == 'true'
         timeout-minutes: 5
-        run: |
-          #!/bin/bash
-          set -e
-
-          # Configuration
-          AGENT_NAME="e2e-test-agent"
-          DASHBOARD_PORT=3888
-          SPAWN_TIMEOUT=120
-
-          echo "========================================"
-          echo "  E2E Test: Full Agent Lifecycle"
-          echo "========================================"
-          echo ""
-          echo "Configuration:"
-          echo "  Agent name:     $AGENT_NAME"
-          echo "  Dashboard port: $DASHBOARD_PORT"
-          echo "  OS:             ${{ matrix.os }}"
-          echo ""
-
-          # Cleanup function
-          cleanup() {
-            echo ""
-            echo "========================================"
-            echo "  Cleanup"
-            echo "========================================"
-
-            # Try to release agent if it exists
-            agent-relay release "$AGENT_NAME" --port "$DASHBOARD_PORT" 2>/dev/null || true
-
-            # Stop daemon
-            echo "Stopping daemon..."
-            agent-relay down --force --timeout 10000 || true
-
-            echo "Cleanup complete."
-          }
-          trap cleanup EXIT
-
-          # Phase 1: Start daemon with dashboard
-          echo "========================================"
-          echo "  Phase 1: Starting Daemon"
-          echo "========================================"
-          echo ""
-
-          agent-relay up --dashboard --port "$DASHBOARD_PORT" &
-          DAEMON_PID=$!
-          echo "Daemon started (PID: $DAEMON_PID)"
-
-          # Wait for daemon to be ready (check health endpoint)
-          echo "Waiting for daemon to be ready..."
-          for i in $(seq 1 30); do
-            if curl -s "http://127.0.0.1:${DASHBOARD_PORT}/health" > /dev/null 2>&1; then
-              echo "Daemon is ready!"
-              break
-            fi
-            if [ $i -eq 30 ]; then
-              echo "ERROR: Daemon failed to start within 30 seconds"
-              exit 1
-            fi
-            sleep 1
-          done
-          echo ""
-
-          # Phase 2: Spawn agent
-          echo "========================================"
-          echo "  Phase 2: Spawning Claude Agent"
-          echo "========================================"
-          echo ""
-
-          echo "Spawning agent '$AGENT_NAME'..."
-          agent-relay spawn "$AGENT_NAME" claude "Say hello and then immediately exit. Do not do any work." --port "$DASHBOARD_PORT"
-
-          SPAWN_EXIT_CODE=$?
-          if [ $SPAWN_EXIT_CODE -ne 0 ]; then
-            echo "ERROR: Spawn command failed with exit code $SPAWN_EXIT_CODE"
-            exit 1
-          fi
-          echo "Spawn command succeeded!"
-          echo ""
-
-          # Phase 3: Wait for agent registration
-          echo "========================================"
-          echo "  Phase 3: Verifying Agent Registration"
-          echo "========================================"
-          echo ""
-
-          echo "Polling for agent registration (timeout: ${SPAWN_TIMEOUT}s)..."
-          START_TIME=$(date +%s)
-
-          while true; do
-            CURRENT_TIME=$(date +%s)
-            ELAPSED=$((CURRENT_TIME - START_TIME))
-
-            # Query daemon for connected agents
-            AGENTS=$(curl -s "http://127.0.0.1:${DASHBOARD_PORT}/api/agents" 2>/dev/null || echo "[]")
-
-            # Check if our agent is registered
-            if echo "$AGENTS" | grep -q "\"$AGENT_NAME\""; then
-              echo ""
-              echo "SUCCESS: Agent '$AGENT_NAME' registered after ${ELAPSED}s"
-              echo ""
-              echo "Connected agents:"
-              echo "$AGENTS" | jq . 2>/dev/null || echo "$AGENTS"
-              break
-            fi
-
-            echo "[$(date +%T)] +${ELAPSED}s: Waiting for agent registration..."
-
-            # Check timeout
-            if [ $ELAPSED -ge $SPAWN_TIMEOUT ]; then
-              echo ""
-              echo "ERROR: Agent '$AGENT_NAME' did not register within ${SPAWN_TIMEOUT}s"
-              echo ""
-              echo "Connected agents:"
-              echo "$AGENTS" | jq . 2>/dev/null || echo "$AGENTS"
-              exit 1
-            fi
-
-            sleep 2
-          done
-          echo ""
-
-          # Phase 4: Release agent
-          echo "========================================"
-          echo "  Phase 4: Releasing Agent"
-          echo "========================================"
-          echo ""
-
-          echo "Releasing agent '$AGENT_NAME'..."
-          agent-relay release "$AGENT_NAME" --port "$DASHBOARD_PORT"
-
-          RELEASE_EXIT_CODE=$?
-          if [ $RELEASE_EXIT_CODE -ne 0 ]; then
-            echo "ERROR: Release command failed with exit code $RELEASE_EXIT_CODE"
-            exit 1
-          fi
-          echo "Release command succeeded!"
-          echo ""
-
-          # Phase 5: Verify agent was released
-          echo "========================================"
-          echo "  Phase 5: Verifying Agent Release"
-          echo "========================================"
-          echo ""
-
-          sleep 3
-          AGENTS_AFTER=$(curl -s "http://127.0.0.1:${DASHBOARD_PORT}/api/agents" 2>/dev/null || echo "[]")
-
-          if echo "$AGENTS_AFTER" | grep -q "\"$AGENT_NAME\""; then
-            echo "WARNING: Agent still appears in list after release (may be disconnecting)"
-            echo "Agents: $AGENTS_AFTER"
-          else
-            echo "SUCCESS: Agent '$AGENT_NAME' no longer in agents list"
-          fi
-          echo ""
-
-          # Phase 6: Stop daemon
-          echo "========================================"
-          echo "  Phase 6: Stopping Daemon"
-          echo "========================================"
-          echo ""
-
-          echo "Stopping daemon..."
-          agent-relay down --timeout 10000
-
-          DOWN_EXIT_CODE=$?
-          if [ $DOWN_EXIT_CODE -ne 0 ]; then
-            echo "WARNING: Down command exited with code $DOWN_EXIT_CODE (may already be stopped)"
-          else
-            echo "Daemon stopped successfully!"
-          fi
-          echo ""
-
-          echo "========================================"
-          echo "  E2E TEST PASSED"
-          echo "========================================"
+        run: ./scripts/e2e-test.sh --port 3888
 
       - name: Run daemon-only test (no API key)
         if: steps.check-key.outputs.has_key == 'false'
         timeout-minutes: 2
-        run: |
-          #!/bin/bash
-          set -e
-
-          echo "========================================"
-          echo "  Daemon-Only Test (No API Key)"
-          echo "========================================"
-          echo ""
-          echo "Note: Full E2E test skipped - ANTHROPIC_API_KEY not configured"
-          echo ""
-
-          # Cleanup function
-          cleanup() {
-            echo "Stopping daemon..."
-            agent-relay down --force --timeout 5000 || true
-          }
-          trap cleanup EXIT
-
-          # Start daemon
-          echo "Starting daemon..."
-          agent-relay up --dashboard --port 3888 &
-          sleep 3
-
-          # Check health
-          echo "Checking daemon health..."
-          if curl -s "http://127.0.0.1:3888/health" | grep -q "ok"; then
-            echo "Daemon health check passed!"
-          else
-            echo "ERROR: Daemon health check failed"
-            exit 1
-          fi
-
-          # Stop daemon
-          echo "Stopping daemon..."
-          agent-relay down --timeout 5000
-
-          echo ""
-          echo "========================================"
-          echo "  DAEMON TEST PASSED"
-          echo "========================================"
+        run: ./scripts/e2e-test.sh --daemon-only --port 3888
 
       - name: Test Summary
         if: always()
