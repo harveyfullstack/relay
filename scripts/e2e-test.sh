@@ -55,6 +55,34 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_phase() { echo -e "\n${CYAN}========================================${NC}"; echo -e "${CYAN}  $1${NC}"; echo -e "${CYAN}========================================${NC}\n"; }
 
+# Cross-platform timeout function (macOS doesn't have timeout by default)
+# Returns 124 on timeout (like GNU timeout)
+run_with_timeout() {
+  local timeout_sec=$1
+  shift
+  if command -v timeout &> /dev/null; then
+    timeout "$timeout_sec" "$@"
+  elif command -v gtimeout &> /dev/null; then
+    gtimeout "$timeout_sec" "$@"
+  else
+    # Fallback: run without timeout but with a background monitor
+    "$@" &
+    local pid=$!
+    local count=0
+    while kill -0 $pid 2>/dev/null; do
+      sleep 1
+      count=$((count + 1))
+      if [ $count -ge $timeout_sec ]; then
+        kill -9 $pid 2>/dev/null
+        wait $pid 2>/dev/null
+        return 124
+      fi
+    done
+    wait $pid
+    return $?
+  fi
+}
+
 # Ensure we're in the project directory
 cd "$PROJECT_DIR"
 
@@ -95,12 +123,12 @@ cleanup() {
 
   # Try to release agent if it exists
   if [ "$DAEMON_ONLY" = false ]; then
-    timeout 5 "$CLI_CMD" release "$AGENT_NAME" --port "$DASHBOARD_PORT" 2>/dev/null || true
+    run_with_timeout 5 "$CLI_CMD" release "$AGENT_NAME" --port "$DASHBOARD_PORT" 2>/dev/null || true
   fi
 
   # Stop daemon (with timeout to prevent hanging)
   log_info "Ensuring daemon is stopped..."
-  timeout 10 "$CLI_CMD" down --force --timeout 5000 2>/dev/null || true
+  run_with_timeout 10 "$CLI_CMD" down --force --timeout 5000 2>/dev/null || true
 
   # Force kill any remaining processes if timeout occurred
   pkill -9 -f "relay-dashboard-server.*--port.*$DASHBOARD_PORT" 2>/dev/null || true
@@ -123,7 +151,7 @@ fi
 log_phase "Phase 1: Starting Daemon"
 
 # Kill any existing daemon (with timeout to prevent hanging)
-timeout 10 "$CLI_CMD" down --force --timeout 5000 2>/dev/null || true
+run_with_timeout 10 "$CLI_CMD" down --force --timeout 5000 2>/dev/null || true
 
 # Kill any process using our target port (ensures dashboard can bind)
 if command -v lsof &> /dev/null; then
@@ -190,7 +218,7 @@ fi
 
 # Test status command (with timeout to ensure it doesn't hang)
 log_info "Testing: agent-relay status (with 10s timeout)"
-if ! timeout 10 "$CLI_CMD" status; then
+if ! run_with_timeout 10 "$CLI_CMD" status; then
   EXIT_CODE=$?
   if [ $EXIT_CODE -eq 124 ]; then
     log_error "status command timed out (hung for >10s)"
@@ -380,7 +408,7 @@ fi
 log_phase "Phase 7: Stopping Daemon"
 
 log_info "Testing: agent-relay down (with 15s timeout)"
-if ! timeout 15 "$CLI_CMD" down --timeout 10000; then
+if ! run_with_timeout 15 "$CLI_CMD" down --timeout 10000; then
   EXIT_CODE=$?
   if [ $EXIT_CODE -eq 124 ]; then
     log_error "down command timed out (hung for >15s)"
