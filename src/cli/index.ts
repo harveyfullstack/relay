@@ -791,8 +791,15 @@ program
       startDaemon();
       return;
     }
-    const { ensureProjectDir } = await import('@agent-relay/config');
+    const { ensureProjectDir, findProjectRoot } = await import('@agent-relay/config');
     const { loadTeamsConfig } = await import('@agent-relay/config');
+
+    // Warn if not a git repository
+    const projectRoot = findProjectRoot();
+    if (!fs.existsSync(path.join(projectRoot, '.git'))) {
+      console.warn('Warning: No git repository found. Some features may not work.');
+      console.warn(`Project root: ${projectRoot} (searched from: ${process.cwd()})`);
+    }
 
     const paths = ensureProjectDir();
     const socketPath = paths.socketPath;

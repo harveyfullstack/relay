@@ -194,6 +194,21 @@ export function findRelayPtyBinary(callerDirname: string): string | null {
     );
   }
 
+  // Bash installer locations (curl | bash install method)
+  // install.sh puts relay-pty at $INSTALL_DIR/bin/ (default: ~/.agent-relay/bin/)
+  const bashInstallerDir = process.env.AGENT_RELAY_INSTALL_DIR
+    ? path.join(process.env.AGENT_RELAY_INSTALL_DIR, 'bin')
+    : home ? path.join(home, '.agent-relay', 'bin') : null;
+  const bashInstallerBinDir = process.env.AGENT_RELAY_BIN_DIR
+    || (home ? path.join(home, '.local', 'bin') : null);
+
+  // Universal: derive global node_modules from Node's own executable path.
+  // This covers ALL Node installations regardless of version manager
+  // (nvm, volta, fnm, mise, asdf, n, system, Homebrew, direct download, etc.)
+  // Node binary is at <prefix>/bin/node, global modules at <prefix>/lib/node_modules/
+  const nodePrefix = path.resolve(path.dirname(process.execPath), '..');
+  packageRoots.push(path.join(nodePrefix, 'lib', 'node_modules', 'agent-relay'));
+
   // Homebrew npm (macOS)
   packageRoots.push('/usr/local/lib/node_modules/agent-relay');
   packageRoots.push('/opt/homebrew/lib/node_modules/agent-relay');
@@ -223,6 +238,22 @@ export function findRelayPtyBinary(callerDirname: string): string | null {
     candidates.push(path.join(devRoot, 'relay-pty', 'target', 'debug', 'relay-pty'));
   }
   candidates.push(path.join(process.cwd(), 'relay-pty', 'target', 'release', 'relay-pty'));
+
+  // Bash installer paths (curl | bash install method)
+  // install.sh downloads relay-pty to ~/.agent-relay/bin/relay-pty
+  if (bashInstallerDir) {
+    if (platformBinary) {
+      candidates.push(path.join(bashInstallerDir, platformBinary));
+    }
+    candidates.push(path.join(bashInstallerDir, 'relay-pty'));
+  }
+  // install.sh also uses ~/.local/bin as the BIN_DIR
+  if (bashInstallerBinDir) {
+    if (platformBinary) {
+      candidates.push(path.join(bashInstallerBinDir, platformBinary));
+    }
+    candidates.push(path.join(bashInstallerBinDir, 'relay-pty'));
+  }
 
   // Docker container (CI tests)
   candidates.push('/app/bin/relay-pty');
