@@ -134,17 +134,23 @@ function handleSidebarInput(
 
   const pos = interactive.indexOf(current);
 
-  if (key.upArrow) {
-    store.setSidebarIndex(interactive[Math.max(0, pos - 1)]);
-  } else if (key.downArrow) {
-    store.setSidebarIndex(interactive[Math.min(interactive.length - 1, pos + 1)]);
-  } else if (key.return) {
-    const target = getSidebarTarget(store.sidebarIndex, store.agents, store.channels);
+  const selectIndex = (idx: number) => {
+    store.setSidebarIndex(idx);
+    const target = getSidebarTarget(idx, store.agents, store.channels);
     if (target.type === 'agent') {
       store.setSelectedTarget({ type: 'agent', name: target.name });
     } else if (target.type === 'channel') {
       store.setSelectedTarget({ type: 'channel', name: target.name });
-    } else if (target.type === 'action') {
+    }
+  };
+
+  if (key.upArrow) {
+    selectIndex(interactive[Math.max(0, pos - 1)]);
+  } else if (key.downArrow) {
+    selectIndex(interactive[Math.min(interactive.length - 1, pos + 1)]);
+  } else if (key.return) {
+    const target = getSidebarTarget(store.sidebarIndex, store.agents, store.channels);
+    if (target.type === 'action') {
       store.setModal('spawn');
     }
   } else if (input === 's' || input === 'S') {
