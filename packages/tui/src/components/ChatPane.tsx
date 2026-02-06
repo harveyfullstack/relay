@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { Message } from './Message.js';
 import { colors, symbols } from '../utils/theme.js';
-import { useScroll } from '../hooks/use-scroll.js';
+import { useScroll, estimateMessageLines } from '../hooks/use-scroll.js';
 import type { TuiMessage, SelectedTarget } from '../types.js';
 
 interface ChatPaneProps {
@@ -66,10 +66,17 @@ export function ChatPane({
 
   // Reserve lines for header + scroll indicators + borders
   const messageAreaHeight = Math.max(1, height - 4);
+  // Content width available for text (minus borders and padding)
+  const contentWidth = Math.max(10, width - 4);
+  const lineEstimates = useMemo(
+    () => filtered.map((msg) => estimateMessageLines(msg.body, contentWidth)),
+    [filtered, contentWidth],
+  );
   const { visibleMessages, aboveCount, belowCount } = useScroll(
     filtered,
     messageAreaHeight,
     scrollOffset,
+    lineEstimates,
   );
 
   // Header
