@@ -150,7 +150,9 @@ function handleSidebarInput(
     selectIndex(interactive[Math.min(interactive.length - 1, pos + 1)]);
   } else if (key.return) {
     const target = getSidebarTarget(store.sidebarIndex, store.agents, store.channels);
-    if (target.type === 'action') {
+    if (target.type === 'agent' || target.type === 'channel') {
+      store.setFocusedPane('chat');
+    } else if (target.type === 'action') {
       store.setModal('spawn');
     }
   } else if (input === 's' || input === 'S') {
