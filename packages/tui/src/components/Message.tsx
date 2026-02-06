@@ -44,11 +44,23 @@ export const Message = memo(function Message({ message, isDirect, isInThread }: 
 
   const nameColor = isYou ? colors.you : colors.agent;
 
+  // Status indicator for user's own messages
+  let statusIcon: string | null = null;
+  let statusColor: string | undefined;
+  if (isYou && message.status) {
+    switch (message.status) {
+      case 'sending': statusIcon = '○'; statusColor = undefined; break;
+      case 'sent':    statusIcon = '✓'; statusColor = colors.success; break;
+      case 'failed':  statusIcon = '✗'; statusColor = colors.error; break;
+    }
+  }
+
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text>
         <Text bold color={nameColor}>{message.from}</Text>
         <Text dimColor>{` ${time}`}</Text>
+        {statusIcon ? <Text dimColor={!statusColor} color={statusColor}>{` ${statusIcon}`}</Text> : null}
         {isInThread ? <Text dimColor>{' [thread]'}</Text> : null}
       </Text>
       <Text wrap="wrap">{message.body}</Text>

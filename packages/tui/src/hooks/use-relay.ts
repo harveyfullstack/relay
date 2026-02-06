@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useCallback } from 'react';
+import fs from 'node:fs';
+import path from 'node:path';
 import { RelayClient } from '@agent-relay/sdk';
 import type { SendPayload, SendMeta, AgentReadyPayload, ChannelMessagePayload, Envelope } from '@agent-relay/protocol';
 import type { TuiStore } from '../store.js';
@@ -14,6 +16,7 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const statusPollRef = useRef<NodeJS.Timeout | null>(null);
   const messagePollRef = useRef<NodeJS.Timeout | null>(null);
+  const processingPollRef = useRef<NodeJS.Timeout | null>(null);
   const lastMessageTsRef = useRef<number>(0);
 
   useEffect(() => {
@@ -100,6 +103,14 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
       pollNewMessages(client, store, lastMessageTsRef);
     }, 2000);
 
+    // Poll processing state every 1s (reads daemon's processing-state.json)
+    const processingStatePath = resolveProcessingStatePath(config);
+    if (processingStatePath) {
+      processingPollRef.current = setInterval(() => {
+        pollProcessingState(processingStatePath, store);
+      }, 1000);
+    }
+
     // Load initial data once connected
     const readyCheck = setInterval(() => {
       if (client.state === 'READY') {
@@ -113,6 +124,7 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
       if (pollRef.current) clearInterval(pollRef.current);
       if (statusPollRef.current) clearInterval(statusPollRef.current);
       if (messagePollRef.current) clearInterval(messagePollRef.current);
+      if (processingPollRef.current) clearInterval(processingPollRef.current);
       client.destroy();
       clientRef.current = null;
     };
@@ -121,38 +133,40 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
   const sendMessage = useCallback((to: string, body: string, thread?: string) => {
     const client = clientRef.current;
     if (!client) return false;
+    const msgId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    // Show message immediately with 'sending' status
+    store.addMessage({
+      id: msgId,
+      from: 'You',
+      to,
+      body,
+      timestamp: Date.now(),
+      kind: 'message',
+      thread,
+      status: 'sending',
+    });
     const sent = client.sendMessage(to, body, 'message', undefined, thread);
-    if (sent) {
-      // Add our own message to the store
-      store.addMessage({
-        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        from: 'You',
-        to,
-        body,
-        timestamp: Date.now(),
-        kind: 'message',
-        thread,
-      });
-    }
+    store.updateMessageStatus(msgId, sent ? 'sent' : 'failed');
     return sent;
   }, []);
 
   const sendChannelMessage = useCallback((channel: string, body: string, thread?: string) => {
     const client = clientRef.current;
     if (!client) return false;
+    const msgId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    store.addMessage({
+      id: msgId,
+      from: 'You',
+      to: `#${channel}`,
+      body,
+      timestamp: Date.now(),
+      kind: 'message',
+      channel,
+      thread,
+      status: 'sending',
+    });
     const sent = client.sendChannelMessage(channel, body, { thread });
-    if (sent) {
-      store.addMessage({
-        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        from: 'You',
-        to: `#${channel}`,
-        body,
-        timestamp: Date.now(),
-        kind: 'message',
-        channel,
-        thread,
-      });
-    }
+    store.updateMessageStatus(msgId, sent ? 'sent' : 'failed');
     return sent;
   }, []);
 
@@ -203,6 +217,36 @@ function toTuiMessage(m: { id: string; from: string; body: string; timestamp: nu
     channel: m.channel,
     thread: m.thread,
   };
+}
+
+/**
+ * Derive the path to processing-state.json from TUI config.
+ * The daemon writes this file to the same directory as the socket.
+ */
+function resolveProcessingStatePath(config: TuiConfig): string | null {
+  if (config.dataDir) {
+    return path.join(config.dataDir, 'team', 'processing-state.json');
+  }
+  if (config.socketPath) {
+    return path.join(path.dirname(config.socketPath), 'team', 'processing-state.json');
+  }
+  return null;
+}
+
+/**
+ * Read the daemon's processing-state.json and update the store.
+ */
+function pollProcessingState(filePath: string, store: TuiStore): void {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(content) as {
+      processingAgents?: Record<string, unknown>;
+    };
+    const names = Object.keys(parsed.processingAgents ?? {}).sort();
+    store.setProcessingAgents(names);
+  } catch {
+    // File may not exist yet or be mid-write — ignore
+  }
 }
 
 async function refreshAgents(client: RelayClient, store: TuiStore) {

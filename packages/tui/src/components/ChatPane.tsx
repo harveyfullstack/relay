@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { Message } from './Message.js';
+import { TypingIndicator } from './TypingIndicator.js';
 import { colors, symbols } from '../utils/theme.js';
 import { useScroll, estimateMessageLines } from '../hooks/use-scroll.js';
 import type { TuiMessage, SelectedTarget } from '../types.js';
@@ -13,6 +14,7 @@ interface ChatPaneProps {
   focused: boolean;
   width: number;
   height: number;
+  processingAgents: string[];
 }
 
 /**
@@ -30,6 +32,7 @@ export function ChatPane({
   focused,
   width,
   height,
+  processingAgents,
 }: ChatPaneProps) {
   const borderColor = focused ? colors.borderFocused : colors.border;
 
@@ -132,6 +135,10 @@ export function ChatPane({
             isInThread={!!activeThread && msg.id !== activeThread}
           />
         ))}
+        {selectedTarget?.type === 'agent' &&
+          processingAgents.includes(selectedTarget.name) && (
+            <TypingIndicator agentName={selectedTarget.name} />
+          )}
       </Box>
 
       {/* Scroll down indicator */}

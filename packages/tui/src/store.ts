@@ -29,6 +29,9 @@ export interface TuiState {
   // Channels the TUI has joined
   channels: string[];
 
+  // Processing state (agents currently thinking)
+  processingAgents: string[];
+
   // UI state
   focusedPane: FocusedPane;
   selectedTarget: SelectedTarget | null;
@@ -50,6 +53,10 @@ export interface TuiActions {
   // Messages
   addMessage: (msg: TuiMessage) => void;
   loadMessages: (msgs: TuiMessage[]) => void;
+  updateMessageStatus: (id: string, status: 'sending' | 'sent' | 'failed') => void;
+
+  // Processing
+  setProcessingAgents: (agents: string[]) => void;
 
   // Logs
   addLog: (entry: LogEntry) => void;
@@ -82,6 +89,7 @@ export function createTuiStore() {
     messages: [],
     logs: {},
     channels: [],
+    processingAgents: [],
     focusedPane: 'sidebar',
     selectedTarget: null,
     sidebarIndex: 0,
@@ -111,6 +119,28 @@ export function createTuiStore() {
 
     loadMessages: (msgs) =>
       set({ messages: msgs.slice(-MAX_MESSAGES) }),
+
+    updateMessageStatus: (id, status) =>
+      set((state) => {
+        const idx = state.messages.findIndex((m) => m.id === id);
+        if (idx === -1) return state;
+        const messages = [...state.messages];
+        messages[idx] = { ...messages[idx], status };
+        return { messages };
+      }),
+
+    // Processing
+    setProcessingAgents: (agents) =>
+      set((state) => {
+        // Skip update if unchanged
+        if (
+          agents.length === state.processingAgents.length &&
+          agents.every((a, i) => a === state.processingAgents[i])
+        ) {
+          return state;
+        }
+        return { processingAgents: agents };
+      }),
 
     // Logs
     addLog: (entry) =>

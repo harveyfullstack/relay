@@ -35,6 +35,7 @@ export function Layout({ store, dimensions, onSendMessage, onSpawnAgent }: Layou
     logsVisible,
     modal,
     scrollOffset,
+    processingAgents,
   } = store;
 
   // Layout dimensions
@@ -84,6 +85,7 @@ export function Layout({ store, dimensions, onSendMessage, onSpawnAgent }: Layou
             focused={focusedPane === 'chat'}
             width={chatWidth}
             height={chatHeight}
+            processingAgents={processingAgents}
           />
           <InputBar
             selectedTarget={selectedTarget}

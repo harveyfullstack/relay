@@ -10,6 +10,7 @@ export interface TuiMessage {
   thread?: string;
   channel?: string;
   data?: Record<string, unknown>;
+  status?: 'sending' | 'sent' | 'failed';
 }
 
 export interface LogEntry {
