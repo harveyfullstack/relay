@@ -1505,17 +1505,21 @@ export class Router {
         continue;
       }
 
+      // Use the original envelope ID for delivery so that real-time messages
+      // and persisted messages share the same ID (prevents duplicate rendering
+      // when clients also poll for messages).
+      const deliverEnvelope: Envelope<ChannelMessagePayload> = {
+        v: PROTOCOL_VERSION,
+        type: 'CHANNEL_MESSAGE',
+        id: envelope.id,
+        ts: envelope.ts,
+        from: senderName,
+        payload: envelope.payload,
+      };
+
       // Check for agent connection first
       const agentConn = this.agents.get(memberName);
       if (agentConn) {
-        const deliverEnvelope: Envelope<ChannelMessagePayload> = {
-          v: PROTOCOL_VERSION,
-          type: 'CHANNEL_MESSAGE',
-          id: generateId(),
-          ts: Date.now(),
-          from: senderName,
-          payload: envelope.payload,
-        };
         const sent = agentConn.send(deliverEnvelope);
         if (sent) {
           deliveredCount++;
@@ -1532,14 +1536,6 @@ export class Router {
       if (userConnections && userConnections.size > 0) {
         let anyDelivered = false;
         for (const userConn of userConnections) {
-          const deliverEnvelope: Envelope<ChannelMessagePayload> = {
-            v: PROTOCOL_VERSION,
-            type: 'CHANNEL_MESSAGE',
-            id: generateId(),
-            ts: Date.now(),
-            from: senderName,
-            payload: envelope.payload,
-          };
           const sent = userConn.send(deliverEnvelope);
           if (sent) {
             anyDelivered = true;

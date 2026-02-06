@@ -168,6 +168,10 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
     if (!client) return false;
     const store = storeApi.getState();
     const msgId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    // Parse @mentions from the message body
+    const mentions = parseAtMentions(body);
+
     store.addMessage({
       id: msgId,
       from: 'You',
@@ -179,7 +183,10 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
       thread,
       status: 'sending',
     });
-    const sent = client.sendChannelMessage(channel, body, { thread });
+    const sent = client.sendChannelMessage(channel, body, {
+      thread,
+      mentions: mentions.length > 0 ? mentions : undefined,
+    });
     store.updateMessageStatus(msgId, sent ? 'sent' : 'failed');
     return sent;
   }, [storeApi]);
@@ -213,6 +220,17 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
   return { sendMessage, sendChannelMessage, joinChannel, leaveChannel, spawnAgent };
 }
 
+/** Extract @name mentions from message text. */
+function parseAtMentions(text: string): string[] {
+  const mentions: string[] = [];
+  const regex = /@(\w+)/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    mentions.push(match[1]);
+  }
+  return mentions;
+}
+
 /** Map daemon-stored 'TUI' sender back to 'You' for display. */
 function normalizeSender(from: string): string {
   return from === 'TUI' ? 'You' : from;
@@ -224,7 +242,7 @@ function toTuiMessage(m: { id: string; from: string; body: string; timestamp: nu
   return {
     id: m.id,
     from: normalizeSender(m.from),
-    to: (raw.to as string) ?? (m.channel ? `#${m.channel}` : ''),
+    to: m.channel ? `#${m.channel}` : ((raw.to as string) ?? ''),
     body: m.body,
     timestamp: m.timestamp,
     kind: 'message',
@@ -335,6 +353,10 @@ async function loadInitialData(
     // Load daemon status
     const status = await client.getStatus();
     store.setDaemonStatus(status);
+
+    // Join the default 'all' channel (daemon auto-joins everyone)
+    client.joinChannel('all');
+    store.addChannel('all');
 
     // Start fresh — only show messages that arrive during this session.
     // Set timestamp to now so polling only picks up new traffic.

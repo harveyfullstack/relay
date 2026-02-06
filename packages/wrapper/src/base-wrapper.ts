@@ -435,9 +435,10 @@ export abstract class BaseWrapper extends EventEmitter {
       if (oldest) this.receivedMessageIds.delete(oldest);
     }
 
-    // Queue the message with channel indicator in the body
-    // Format: "Relay message from Alice [abc123] [#general]: message body"
-    // This lets the agent know to reply to the channel, not the sender
+    // Queue the message with channel metadata.
+    // Set originalTo with '#' prefix so the injection hint (e.g., "[#all] (reply to #all)")
+    // is included when the message is formatted for the agent.
+    const normalizedChannel = channel.startsWith('#') ? channel : `#${channel}`;
     const queuedMsg: QueuedMessage = {
       from,
       body,
@@ -448,7 +449,7 @@ export abstract class BaseWrapper extends EventEmitter {
         _channel: channel,
         _mentions: envelope.payload.mentions,
       },
-      originalTo: channel, // Set channel as the reply target
+      originalTo: normalizedChannel,
     };
 
     console.error(`[base-wrapper] Received channel message: from=${from} channel=${channel} id=${messageId.substring(0, 8)}`);
@@ -501,16 +502,17 @@ export abstract class BaseWrapper extends EventEmitter {
 
     // Check if target is a channel (starts with #)
     if (cmd.to.startsWith('#')) {
-      // Use CHANNEL_MESSAGE protocol for channel targets
-      console.error(`[base-wrapper] Sending CHANNEL_MESSAGE to ${cmd.to}`);
-      const success = this.client.sendChannelMessage(cmd.to, cmd.body, {
+      // Strip '#' prefix — the daemon stores channels without it (e.g., 'all' not '#all')
+      const channelName = cmd.to.slice(1);
+      console.error(`[base-wrapper] Sending CHANNEL_MESSAGE to ${channelName}`);
+      const success = this.client.sendChannelMessage(channelName, cmd.body, {
         thread: cmd.thread,
         data: cmd.data,
       });
       if (success) {
         markSent();
       } else {
-        console.error(`[base-wrapper] sendChannelMessage failed for ${cmd.to}`);
+        console.error(`[base-wrapper] sendChannelMessage failed for ${channelName}`);
       }
     } else {
       // Use SEND protocol for direct messages and broadcasts

@@ -492,7 +492,7 @@ describe('BaseWrapper', () => {
       // Should use channel message, not regular message
       expect(wrapper.testClient.sentChannelMessages).toHaveLength(1);
       expect(wrapper.testClient.sentMessages).toHaveLength(0);
-      expect(wrapper.testClient.sentChannelMessages[0].channel).toBe('#general');
+      expect(wrapper.testClient.sentChannelMessages[0].channel).toBe('general');
       expect(wrapper.testClient.sentChannelMessages[0].body).toBe('Hello channel!');
     });
 

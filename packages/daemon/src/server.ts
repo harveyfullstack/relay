@@ -1026,8 +1026,8 @@ export class Daemon {
           team: connection.team,
         });
 
-        // Auto-join all agents to #general channel
-        this.router.autoJoinChannel(connection.agentName, '#general');
+        // Auto-join all agents to the 'all' channel
+        this.router.autoJoinChannel(connection.agentName, 'all');
 
         // Record session start
         if (this.storage?.startSession) {
@@ -1334,7 +1334,7 @@ export class Daemon {
               id: m.id,
               from: m.from,
               body: m.body,
-              channel: (m.data as { channel?: string })?.channel,
+              channel: (m.data as { _channel?: string })?._channel,
               thread: m.thread,
               timestamp: m.ts,
             }));
@@ -1380,7 +1380,7 @@ export class Daemon {
               from: m.from,
               to: m.to,
               body: m.body,
-              channel: (m.data as { channel?: string })?.channel,
+              channel: (m.data as { _channel?: string })?._channel,
               thread: m.thread,
               timestamp: m.ts,
               status: m.status,

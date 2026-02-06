@@ -391,10 +391,10 @@ export function buildInjectionString(msg: QueuedMessage): string {
         : '';
 
   // Channel indicator for channel messages and broadcasts
-  // originalTo will be '*' for broadcasts or the channel name (e.g., '#general') for channel messages
+  // originalTo will be '*' for broadcasts or the channel name (e.g., '#all') for channel messages
   // Make it clear that replies should go to the channel, not the sender
   const channelHint = msg.originalTo === '*'
-    ? ' [#general] (reply to #general, not sender)'
+    ? ' [#all] (reply to #all, not sender)'
     : msg.originalTo?.startsWith('#')
       ? ` [${msg.originalTo}] (reply to ${msg.originalTo}, not sender)`
       : '';

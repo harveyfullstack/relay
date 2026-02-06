@@ -63,13 +63,13 @@ describe('Router', () => {
       router.register(connection);
 
       // Join a channel using autoJoinChannel
-      router.autoJoinChannel('TestAgent', '#general', { persist: false });
-      expect(router.getChannelMembers('#general')).toContain('TestAgent');
+      router.autoJoinChannel('TestAgent', 'all', { persist: false });
+      expect(router.getChannelMembers('all')).toContain('TestAgent');
 
       router.forceRemoveAgent('TestAgent');
 
       // Verify channel membership is cleaned up
-      expect(router.getChannelMembers('#general')).not.toContain('TestAgent');
+      expect(router.getChannelMembers('all')).not.toContain('TestAgent');
     });
 
     it('should clean up shadow relationships without throwing', () => {

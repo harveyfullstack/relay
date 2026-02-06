@@ -18,10 +18,12 @@ interface ChatPaneProps {
 }
 
 /**
- * Check if a message is "direct" — involves You/TUI as sender or recipient.
+ * Check if a message should render in full color.
+ * Direct messages (to/from You) and channel messages (group conversations) are full color.
+ * Only agent-to-agent DMs render dimmed.
  */
 function isDirectMessage(msg: TuiMessage): boolean {
-  return msg.from === 'You' || msg.to === 'TUI' || msg.to === 'You';
+  return msg.from === 'You' || msg.to === 'TUI' || msg.to === 'You' || !!msg.channel;
 }
 
 export const ChatPane = memo(function ChatPane({
