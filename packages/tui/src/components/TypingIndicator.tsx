@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { memo, useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { colors } from '../utils/theme.js';
 
@@ -9,7 +9,7 @@ interface TypingIndicatorProps {
   agentName: string;
 }
 
-export function TypingIndicator({ agentName }: TypingIndicatorProps) {
+export const TypingIndicator = memo(function TypingIndicator({ agentName }: TypingIndicatorProps) {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
@@ -20,10 +20,10 @@ export function TypingIndicator({ agentName }: TypingIndicatorProps) {
   }, []);
 
   return (
-    <Box paddingX={1} marginBottom={1}>
+    <Box paddingX={1}>
       <Text color={colors.agent} dimColor>
         {agentName} is thinking {FRAMES[frame]}
       </Text>
     </Box>
   );
-}
+});

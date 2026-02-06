@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { Message } from './Message.js';
 import { TypingIndicator } from './TypingIndicator.js';
@@ -24,7 +24,7 @@ function isDirectMessage(msg: TuiMessage): boolean {
   return msg.from === 'You' || msg.to === 'TUI' || msg.to === 'You';
 }
 
-export function ChatPane({
+export const ChatPane = memo(function ChatPane({
   messages,
   selectedTarget,
   activeThread,
@@ -69,8 +69,13 @@ export function ChatPane({
     return msgs;
   }, [messages, selectedTarget, activeThread]);
 
-  // Reserve lines for header + scroll indicators + borders
-  const messageAreaHeight = Math.max(1, height - 4);
+  // Is the typing indicator visible right now?
+  const showTyping =
+    selectedTarget?.type === 'agent' &&
+    processingAgents.includes(selectedTarget.name);
+
+  // Reserve lines for header (1) + borders (2) + buffer (1) + typing indicator (1 when visible)
+  const messageAreaHeight = Math.max(1, height - 4 - (showTyping ? 1 : 0));
   // Content width available for text (minus borders and padding)
   const contentWidth = Math.max(10, width - 4);
   const lineEstimates = useMemo(
@@ -149,4 +154,4 @@ export function ChatPane({
       )}
     </Box>
   );
-}
+});

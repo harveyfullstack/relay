@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { Box, Text } from 'ink';
 import { colors } from '../utils/theme.js';
 import type { AgentInfo } from '../types.js';
@@ -10,7 +10,7 @@ interface HeaderProps {
   width: number;
 }
 
-export function Header({ projectRoot, agents, connected, width }: HeaderProps) {
+export const Header = memo(function Header({ projectRoot, agents, connected, width }: HeaderProps) {
   const projectName = projectRoot
     ? projectRoot.split('/').pop() ?? 'relay'
     : 'relay';
@@ -35,4 +35,4 @@ export function Header({ projectRoot, agents, connected, width }: HeaderProps) {
       </Box>
     </Box>
   );
-}
+});

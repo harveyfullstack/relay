@@ -1,6 +1,5 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback } from 'react';
 import { useInput, useApp } from 'ink';
-import { useStore } from 'zustand';
 import { Layout } from './components/Layout.js';
 import { useDimensions } from './hooks/use-dimensions.js';
 import { useRelay } from './hooks/use-relay.js';
@@ -15,15 +14,15 @@ interface AppProps {
 }
 
 export function App({ storeApi, config }: AppProps) {
-  const store = useStore(storeApi);
   const dimensions = useDimensions();
   const { exit } = useApp();
 
-  const { sendMessage, sendChannelMessage, joinChannel, spawnAgent } = useRelay(store, config);
+  const { sendMessage, sendChannelMessage, joinChannel, spawnAgent } = useRelay(storeApi, config);
 
   // Handle sending a message from the input bar
   const handleSendMessage = useCallback(
     (text: string) => {
+      const store = storeApi.getState();
       const target = store.selectedTarget;
       if (!target) return;
 
@@ -36,7 +35,7 @@ export function App({ storeApi, config }: AppProps) {
       // Auto-scroll to bottom on send
       store.setScrollOffset(0);
     },
-    [store.selectedTarget, store.activeThread, sendMessage, sendChannelMessage],
+    [storeApi, sendMessage, sendChannelMessage],
   );
 
   // Handle spawning an agent
@@ -49,8 +48,9 @@ export function App({ storeApi, config }: AppProps) {
     [spawnAgent],
   );
 
-  // Global keyboard handling
+  // Global keyboard handling — reads state imperatively at keypress time
   useInput((input, key) => {
+    const store = storeApi.getState();
     const { focusedPane, modal } = store;
 
     // If a modal is open, let it handle input
@@ -90,7 +90,7 @@ export function App({ storeApi, config }: AppProps) {
 
   return (
     <Layout
-      store={store}
+      storeApi={storeApi}
       dimensions={dimensions}
       onSendMessage={handleSendMessage}
       onSpawnAgent={handleSpawnAgent}

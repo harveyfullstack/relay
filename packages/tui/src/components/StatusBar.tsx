@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { Box, Text } from 'ink';
 import { colors, symbols } from '../utils/theme.js';
 import { formatUptime } from '../utils/format.js';
@@ -11,7 +11,7 @@ interface StatusBarProps {
   width: number;
 }
 
-export function StatusBar({ connected, daemonStatus, agents, width }: StatusBarProps) {
+export const StatusBar = memo(function StatusBar({ connected, daemonStatus, agents, width }: StatusBarProps) {
   const daemonLabel = connected ? 'running' : 'disconnected';
   const daemonColor = connected ? colors.success : colors.error;
   const uptime = daemonStatus?.uptime ? formatUptime(daemonStatus.uptime) : '--';
@@ -44,4 +44,4 @@ export function StatusBar({ connected, daemonStatus, agents, width }: StatusBarP
       <Text dimColor>Tab:focus  Ctrl+L:logs  ?:help  Ctrl+C:quit</Text>
     </Box>
   );
-}
+});

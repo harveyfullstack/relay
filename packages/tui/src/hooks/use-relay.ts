@@ -4,14 +4,18 @@ import path from 'node:path';
 import { RelayClient } from '@agent-relay/sdk';
 import type { SendPayload, SendMeta, AgentReadyPayload, ChannelMessagePayload, Envelope } from '@agent-relay/protocol';
 import type { TuiStore } from '../store.js';
+import type { StoreApi } from 'zustand';
 import type { TuiMessage, TuiConfig } from '../types.js';
 import { formatUptime } from '../utils/format.js';
 
 /**
  * Connect a RelayClient to the daemon and wire events into the Zustand store.
  * Returns helpers for sending messages and spawning agents.
+ *
+ * Takes `storeApi` instead of a store snapshot so polling callbacks always
+ * read the latest state via `storeApi.getState()` (avoids stale closures).
  */
-export function useRelay(store: TuiStore, config: TuiConfig) {
+export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
   const clientRef = useRef<RelayClient | null>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const statusPollRef = useRef<NodeJS.Timeout | null>(null);
@@ -37,6 +41,7 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
 
     // Wire event handlers
     client.onMessage = (from: string, payload: SendPayload, messageId: string, _meta?: SendMeta, originalTo?: string) => {
+      const store = storeApi.getState();
       // Check if this is a log-like message via structured data
       if (payload.data && (payload.data as Record<string, unknown>)._isLog) {
         store.addLog({
@@ -60,6 +65,7 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
     };
 
     client.onChannelMessage = (from: string, channel: string, body: string, envelope: Envelope<ChannelMessagePayload>) => {
+      const store = storeApi.getState();
       const msg: TuiMessage = {
         id: envelope.id,
         from,
@@ -74,12 +80,12 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
     };
 
     client.onStateChange = (state) => {
-      store.setConnected(state === 'READY');
+      storeApi.getState().setConnected(state === 'READY');
     };
 
     client.onAgentReady = (_info: AgentReadyPayload) => {
       // Refresh agent list when a new agent connects
-      refreshAgents(client, store);
+      refreshAgents(client, storeApi);
     };
 
     // Connect
@@ -89,18 +95,18 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
 
     // Poll connected agents every 2s
     pollRef.current = setInterval(() => {
-      refreshAgents(client, store);
+      refreshAgents(client, storeApi);
     }, 2000);
 
     // Poll daemon status every 5s
     statusPollRef.current = setInterval(() => {
-      refreshStatus(client, store);
+      refreshStatus(client, storeApi);
     }, 5000);
 
     // Poll ALL messages every 2s to catch agent-to-agent traffic
     // (onMessage only fires for messages addressed to TUI)
     messagePollRef.current = setInterval(() => {
-      pollNewMessages(client, store, lastMessageTsRef);
+      pollNewMessages(client, storeApi, lastMessageTsRef);
     }, 2000);
 
     // Poll processing state every 1s (reads daemon's processing-state.json)
@@ -110,9 +116,9 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
     const prevProcessingRef = { current: new Set<string>() };
     if (processingStatePath) {
       processingPollRef.current = setInterval(() => {
-        const cleared = pollProcessingState(processingStatePath, store, prevProcessingRef);
+        const cleared = pollProcessingState(processingStatePath, storeApi, prevProcessingRef);
         if (cleared && client.state === 'READY') {
-          pollNewMessages(client, store, lastMessageTsRef);
+          pollNewMessages(client, storeApi, lastMessageTsRef);
         }
       }, 1000);
     }
@@ -121,7 +127,7 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
     const readyCheck = setInterval(() => {
       if (client.state === 'READY') {
         clearInterval(readyCheck);
-        loadInitialData(client, store, lastMessageTsRef);
+        loadInitialData(client, storeApi, lastMessageTsRef);
       }
     }, 200);
 
@@ -139,6 +145,7 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
   const sendMessage = useCallback((to: string, body: string, thread?: string) => {
     const client = clientRef.current;
     if (!client) return false;
+    const store = storeApi.getState();
     const msgId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     // Show message immediately with 'sending' status
     store.addMessage({
@@ -154,11 +161,12 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
     const sent = client.sendMessage(to, body, 'message', undefined, thread);
     store.updateMessageStatus(msgId, sent ? 'sent' : 'failed');
     return sent;
-  }, []);
+  }, [storeApi]);
 
   const sendChannelMessage = useCallback((channel: string, body: string, thread?: string) => {
     const client = clientRef.current;
     if (!client) return false;
+    const store = storeApi.getState();
     const msgId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     store.addMessage({
       id: msgId,
@@ -174,27 +182,27 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
     const sent = client.sendChannelMessage(channel, body, { thread });
     store.updateMessageStatus(msgId, sent ? 'sent' : 'failed');
     return sent;
-  }, []);
+  }, [storeApi]);
 
   const joinChannel = useCallback((channel: string) => {
     const client = clientRef.current;
     if (!client) return false;
     const joined = client.joinChannel(channel);
     if (joined) {
-      store.addChannel(channel);
+      storeApi.getState().addChannel(channel);
     }
     return joined;
-  }, []);
+  }, [storeApi]);
 
   const leaveChannel = useCallback((channel: string) => {
     const client = clientRef.current;
     if (!client) return false;
     const left = client.leaveChannel(channel);
     if (left) {
-      store.removeChannel(channel);
+      storeApi.getState().removeChannel(channel);
     }
     return left;
-  }, []);
+  }, [storeApi]);
 
   const spawnAgent = useCallback(async (name: string, cli: string, task?: string) => {
     const client = clientRef.current;
@@ -241,11 +249,11 @@ function resolveProcessingStatePath(config: TuiConfig): string | null {
 
 /**
  * Read the daemon's processing-state.json and update the store.
- * Returns true if any agent transitioned from processing → idle (reply likely available).
+ * Returns true if any agent transitioned from processing -> idle (reply likely available).
  */
 function pollProcessingState(
   filePath: string,
-  store: TuiStore,
+  storeApi: StoreApi<TuiStore>,
   prevRef: { current: Set<string> },
 ): boolean {
   try {
@@ -266,7 +274,7 @@ function pollProcessingState(
     }
     prevRef.current = nameSet;
 
-    store.setProcessingAgents(names);
+    storeApi.getState().setProcessingAgents(names);
     return cleared;
   } catch {
     // File may not exist yet or be mid-write — ignore
@@ -274,11 +282,12 @@ function pollProcessingState(
   }
 }
 
-async function refreshAgents(client: RelayClient, store: TuiStore) {
+async function refreshAgents(client: RelayClient, storeApi: StoreApi<TuiStore>) {
   try {
     if (client.state !== 'READY') return;
     const agents = await client.listConnectedAgents({});
     const filtered = agents.filter((a) => a.name !== 'TUI');
+    const store = storeApi.getState();
     // Skip update if agent list hasn't changed (prevents unnecessary re-renders)
     const current = store.agents;
     if (
@@ -293,10 +302,11 @@ async function refreshAgents(client: RelayClient, store: TuiStore) {
   }
 }
 
-async function refreshStatus(client: RelayClient, store: TuiStore) {
+async function refreshStatus(client: RelayClient, storeApi: StoreApi<TuiStore>) {
   try {
     if (client.state !== 'READY') return;
     const status = await client.getStatus();
+    const store = storeApi.getState();
     // Skip update if nothing visible has changed (prevents layout shifts)
     const current = store.daemonStatus;
     if (current) {
@@ -313,10 +323,11 @@ async function refreshStatus(client: RelayClient, store: TuiStore) {
 
 async function loadInitialData(
   client: RelayClient,
-  store: TuiStore,
+  storeApi: StoreApi<TuiStore>,
   lastTsRef: React.MutableRefObject<number>,
 ) {
   try {
+    const store = storeApi.getState();
     // Load connected agents
     const agents = await client.listConnectedAgents({});
     store.setAgents(agents.filter((a) => a.name !== 'TUI'));
@@ -339,7 +350,7 @@ async function loadInitialData(
  */
 async function pollNewMessages(
   client: RelayClient,
-  store: TuiStore,
+  storeApi: StoreApi<TuiStore>,
   lastTsRef: React.MutableRefObject<number>,
 ) {
   try {
@@ -351,6 +362,7 @@ async function pollNewMessages(
       sinceTs,
     });
 
+    const store = storeApi.getState();
     for (const m of result) {
       // Skip our own messages — they're already in the store from the local add on send
       if (m.from === 'TUI') continue;

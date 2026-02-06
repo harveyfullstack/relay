@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { Box, Text } from 'ink';
 import { colors, symbols } from '../utils/theme.js';
 import { truncate } from '../utils/format.js';
@@ -14,7 +14,7 @@ interface SidebarProps {
   height: number;
 }
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
   agents,
   channels,
   selectedTarget,
@@ -78,7 +78,7 @@ export function Sidebar({
       ))}
     </Box>
   );
-}
+});
 
 interface SidebarItem {
   type: 'header' | 'agent' | 'channel' | 'separator' | 'action' | 'empty';

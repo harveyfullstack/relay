@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Box } from 'ink';
+import { useStore } from 'zustand';
 import { Header } from './Header.js';
 import { StatusBar } from './StatusBar.js';
 import { Sidebar } from './Sidebar.js';
@@ -9,16 +10,17 @@ import { LogPane } from './LogPane.js';
 import { SpawnDialog } from './SpawnDialog.js';
 import { HelpOverlay } from './HelpOverlay.js';
 import type { TuiStore } from '../store.js';
+import type { StoreApi } from 'zustand';
 import type { Dimensions } from '../hooks/use-dimensions.js';
 
 interface LayoutProps {
-  store: TuiStore;
+  storeApi: StoreApi<TuiStore>;
   dimensions: Dimensions;
   onSendMessage: (text: string) => void;
   onSpawnAgent: (name: string, cli: string, task?: string) => void;
 }
 
-export function Layout({ store, dimensions, onSendMessage, onSpawnAgent }: LayoutProps) {
+export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent }: LayoutProps) {
   const { width, height } = dimensions;
 
   const {
@@ -36,7 +38,10 @@ export function Layout({ store, dimensions, onSendMessage, onSpawnAgent }: Layou
     modal,
     scrollOffset,
     processingAgents,
-  } = store;
+    setModal,
+  } = useStore(storeApi);
+
+  const closeModal = useCallback(() => setModal(null), [setModal]);
 
   // Layout dimensions
   const sidebarWidth = Math.max(18, Math.floor(width * 0.2));
@@ -120,13 +125,13 @@ export function Layout({ store, dimensions, onSendMessage, onSpawnAgent }: Layou
         <Box position="absolute" marginLeft={Math.floor(width / 2) - 22} marginTop={Math.floor(height / 3)}>
           <SpawnDialog
             onSpawn={onSpawnAgent}
-            onClose={() => store.setModal(null)}
+            onClose={closeModal}
           />
         </Box>
       )}
       {modal === 'help' && (
         <Box position="absolute" marginLeft={Math.floor(width / 2) - 25} marginTop={Math.floor(height / 4)}>
-          <HelpOverlay onClose={() => store.setModal(null)} />
+          <HelpOverlay onClose={closeModal} />
         </Box>
       )}
     </Box>
