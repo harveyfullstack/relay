@@ -46,6 +46,7 @@
     "@agent-relay/storage",
     "@agent-relay/telemetry",
     "@agent-relay/trajectory",
+    "@agent-relay/tui",
     "@agent-relay/user-directory",
     "@agent-relay/utils",
     "@agent-relay/wrapper"
@@ -80,6 +81,7 @@
     "build:api-types": "cd packages/api-types && npm run build",
     "build:spawner": "cd packages/spawner && npm run build",
     "build:telemetry": "cd packages/telemetry && npm run build",
+    "build:tui": "cd packages/tui && npm run build",
     "build:benchmark": "cd packages/benchmark && npm run build",
     "build:cjs": "node ./scripts/build-cjs.mjs",
     "postbuild": "chmod +x dist/src/cli/index.js && npm run build:cjs",
@@ -148,6 +150,7 @@
     "@agent-relay/storage": "2.1.20",
     "@agent-relay/telemetry": "2.1.20",
     "@agent-relay/trajectory": "2.1.20",
+    "@agent-relay/tui": "2.1.20",
     "@agent-relay/user-directory": "2.1.20",
     "@agent-relay/utils": "2.1.20",
     "@agent-relay/wrapper": "2.1.20",
@@ -214,6 +217,7 @@
     "@agent-relay/storage",
     "@agent-relay/telemetry",
     "@agent-relay/trajectory",
+    "@agent-relay/tui",
     "@agent-relay/user-directory",
     "@agent-relay/utils",
     "@agent-relay/wrapper"

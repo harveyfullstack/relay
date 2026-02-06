@@ -710,7 +710,8 @@ program
 // up - Start daemon (dashboard disabled by default)
 program
   .command('up')
-  .description('Start daemon (use --dashboard to enable web dashboard)')
+  .description('Start daemon (use --tui for terminal chat UI, --dashboard for web UI)')
+  .option('--tui', 'Launch interactive terminal chat UI')
   .option('--dashboard', 'Enable web dashboard (disabled by default)')
   .option('--port <port>', 'Dashboard port (requires --dashboard)', DEFAULT_DASHBOARD_PORT)
   .option('--storage <type>', 'Storage type: jsonl (default), sqlite, sqlite-batched, memory', 'jsonl')
@@ -734,6 +735,7 @@ program
       const startDaemon = (): void => {
         // Build args without --watch to prevent infinite recursion
         const args = ['up'];
+        if (options.tui) args.push('--tui');
         if (options.dashboard === true) {
           args.push('--dashboard');
           if (options.port) args.push('--port', options.port);
@@ -1071,8 +1073,37 @@ program
         console.warn('Warning: --spawn specified but no teams.json found');
       }
 
-      console.log('Press Ctrl+C to stop.');
-      await new Promise(() => {});
+      // Launch TUI if requested
+      if (options.tui) {
+        try {
+          const tuiModuleName = '@agent-relay/tui';
+          const { startTui } = await import(/* webpackIgnore: true */ tuiModuleName) as {
+            startTui: (config: { socketPath?: string; dataDir?: string; projectRoot?: string }) => Promise<void>;
+          };
+          await startTui({
+            socketPath: paths.socketPath,
+            dataDir: paths.dataDir,
+            projectRoot: paths.projectRoot,
+          });
+          // TUI exited, clean up
+          if (spawner) {
+            await spawner.releaseAll();
+          }
+          await daemon.stop();
+          process.exit(0);
+        } catch (tuiErr: any) {
+          if (tuiErr.code === 'ERR_MODULE_NOT_FOUND' || tuiErr.code === 'MODULE_NOT_FOUND') {
+            console.error('TUI package not found. Make sure @agent-relay/tui is built.');
+            console.error('Run: npm run build:tui');
+          } else {
+            console.error('TUI failed:', tuiErr.message);
+          }
+          process.exit(1);
+        }
+      } else {
+        console.log('Press Ctrl+C to stop.');
+        await new Promise(() => {});
+      }
     } catch (err) {
       console.error('Failed:', err);
       process.exit(1);
