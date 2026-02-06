@@ -104,10 +104,16 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
     }, 2000);
 
     // Poll processing state every 1s (reads daemon's processing-state.json)
+    // When an agent stops processing, immediately poll messages so the reply
+    // appears at the same moment the typing indicator vanishes.
     const processingStatePath = resolveProcessingStatePath(config);
+    const prevProcessingRef = { current: new Set<string>() };
     if (processingStatePath) {
       processingPollRef.current = setInterval(() => {
-        pollProcessingState(processingStatePath, store);
+        const cleared = pollProcessingState(processingStatePath, store, prevProcessingRef);
+        if (cleared && client.state === 'READY') {
+          pollNewMessages(client, store, lastMessageTsRef);
+        }
       }, 1000);
     }
 
@@ -235,17 +241,36 @@ function resolveProcessingStatePath(config: TuiConfig): string | null {
 
 /**
  * Read the daemon's processing-state.json and update the store.
+ * Returns true if any agent transitioned from processing → idle (reply likely available).
  */
-function pollProcessingState(filePath: string, store: TuiStore): void {
+function pollProcessingState(
+  filePath: string,
+  store: TuiStore,
+  prevRef: { current: Set<string> },
+): boolean {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(content) as {
       processingAgents?: Record<string, unknown>;
     };
     const names = Object.keys(parsed.processingAgents ?? {}).sort();
+    const nameSet = new Set(names);
+
+    // Detect if any previously-processing agent has stopped
+    let cleared = false;
+    for (const prev of prevRef.current) {
+      if (!nameSet.has(prev)) {
+        cleared = true;
+        break;
+      }
+    }
+    prevRef.current = nameSet;
+
     store.setProcessingAgents(names);
+    return cleared;
   } catch {
     // File may not exist yet or be mid-write — ignore
+    return false;
   }
 }
 
