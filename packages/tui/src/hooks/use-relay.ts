@@ -44,6 +44,7 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
     // Wire event handlers
     client.onMessage = (from: string, payload: SendPayload, messageId: string, _meta?: SendMeta, originalTo?: string) => {
       const store = storeApi.getState();
+      store.markAgentReady(from);
       // Check if this is a log-like message via structured data
       if (payload.data && (payload.data as Record<string, unknown>)._isLog) {
         store.addLog({
@@ -68,6 +69,7 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
 
     client.onChannelMessage = (from: string, channel: string, body: string, envelope: Envelope<ChannelMessagePayload>) => {
       const store = storeApi.getState();
+      store.markAgentReady(from);
       const msg: TuiMessage = {
         id: envelope.id,
         from,
@@ -393,6 +395,7 @@ async function pollNewMessages(
     for (const m of result) {
       // Skip our own messages — they're already in the store from the local add on send
       if (m.from === displayName) continue;
+      store.markAgentReady(m.from);
       store.addMessage(toTuiMessage(m, displayName));
     }
 

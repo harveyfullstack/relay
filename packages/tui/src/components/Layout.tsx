@@ -40,6 +40,7 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSa
     modal,
     scrollOffset,
     processingAgents,
+    readyAgents,
     settings,
     setModal,
   } = useStore(storeApi);
@@ -81,6 +82,8 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSa
           focused={focusedPane === 'sidebar'}
           width={sidebarWidth}
           height={contentHeight}
+          processingAgents={processingAgents}
+          readyAgents={readyAgents}
         />
 
         {/* Chat + Input */}

@@ -34,6 +34,9 @@ export interface TuiState {
   // Processing state (agents currently thinking)
   processingAgents: string[];
 
+  // Agents that have sent at least one message (finished booting)
+  readyAgents: string[];
+
   // Settings
   settings: TuiSettings;
 
@@ -62,6 +65,7 @@ export interface TuiActions {
 
   // Processing
   setProcessingAgents: (agents: string[]) => void;
+  markAgentReady: (name: string) => void;
 
   // Logs
   addLog: (entry: LogEntry) => void;
@@ -99,6 +103,7 @@ export function createTuiStore() {
     channels: ['all'],
     settings: { ...DEFAULT_SETTINGS },
     processingAgents: [],
+    readyAgents: [],
     focusedPane: 'chat',
     selectedTarget: { type: 'channel', name: 'all' },
     sidebarIndex: 0,
@@ -149,6 +154,12 @@ export function createTuiStore() {
           return state;
         }
         return { processingAgents: agents };
+      }),
+
+    markAgentReady: (name) =>
+      set((state) => {
+        if (state.readyAgents.includes(name)) return state;
+        return { readyAgents: [...state.readyAgents, name] };
       }),
 
     // Logs

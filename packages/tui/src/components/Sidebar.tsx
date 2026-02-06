@@ -12,6 +12,8 @@ interface SidebarProps {
   focused: boolean;
   width: number;
   height: number;
+  processingAgents: string[];
+  readyAgents: string[];
 }
 
 export const Sidebar = memo(function Sidebar({
@@ -22,6 +24,8 @@ export const Sidebar = memo(function Sidebar({
   focused,
   width,
   height,
+  processingAgents,
+  readyAgents,
 }: SidebarProps) {
   const borderColor = focused ? colors.borderFocused : colors.border;
   const innerWidth = width - 2; // account for border
@@ -37,6 +41,8 @@ export const Sidebar = memo(function Sidebar({
       label: agent.name,
       cli: agent.cli,
       selected: selectedTarget?.type === 'agent' && selectedTarget.name === agent.name,
+      processing: processingAgents.includes(agent.name),
+      ready: readyAgents.includes(agent.name),
     });
   }
   if (agents.length === 0) {
@@ -85,6 +91,8 @@ interface SidebarItem {
   label?: string;
   cli?: string;
   selected?: boolean;
+  processing?: boolean;
+  ready?: boolean;
 }
 
 function SidebarRow({ item, isHighlighted, width }: { item: SidebarItem; isHighlighted: boolean; width: number }) {
@@ -124,7 +132,9 @@ function SidebarRow({ item, isHighlighted, width }: { item: SidebarItem; isHighl
 
   const prefix = item.selected ? symbols.selected : symbols.unselected;
   const indicator = item.type === 'agent' ? symbols.online : '';
-  const indicatorColor = item.type === 'agent' ? colors.online : colors.channel;
+  const indicatorColor = item.type === 'agent'
+    ? (item.ready && !item.processing ? colors.online : colors.accent)
+    : colors.channel;
   const labelColor = item.selected ? colors.primary : colors.text;
   const bgColor = isHighlighted ? 'gray' : undefined;
 
