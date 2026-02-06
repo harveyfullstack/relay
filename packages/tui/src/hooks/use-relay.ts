@@ -3,6 +3,7 @@ import { RelayClient } from '@agent-relay/sdk';
 import type { SendPayload, SendMeta, AgentReadyPayload, ChannelMessagePayload, Envelope } from '@agent-relay/protocol';
 import type { TuiStore } from '../store.js';
 import type { TuiMessage, TuiConfig } from '../types.js';
+import { formatUptime } from '../utils/format.js';
 
 /**
  * Connect a RelayClient to the daemon and wire events into the Zustand store.
@@ -208,7 +209,16 @@ async function refreshAgents(client: RelayClient, store: TuiStore) {
   try {
     if (client.state !== 'READY') return;
     const agents = await client.listConnectedAgents({});
-    store.setAgents(agents.filter((a) => a.name !== 'TUI'));
+    const filtered = agents.filter((a) => a.name !== 'TUI');
+    // Skip update if agent list hasn't changed (prevents unnecessary re-renders)
+    const current = store.agents;
+    if (
+      filtered.length === current.length &&
+      filtered.every((a, i) => a.name === current[i]?.name)
+    ) {
+      return;
+    }
+    store.setAgents(filtered);
   } catch {
     // Ignore polling errors
   }
@@ -218,6 +228,14 @@ async function refreshStatus(client: RelayClient, store: TuiStore) {
   try {
     if (client.state !== 'READY') return;
     const status = await client.getStatus();
+    // Skip update if nothing visible has changed (prevents layout shifts)
+    const current = store.daemonStatus;
+    if (current) {
+      const sameUptime = formatUptime(status.uptime ?? 0) === formatUptime(current.uptime ?? 0);
+      const sameAgentCount = status.agentCount === current.agentCount;
+      const sameCloud = status.cloudConnected === current.cloudConnected;
+      if (sameUptime && sameAgentCount && sameCloud) return;
+    }
     store.setDaemonStatus(status);
   } catch {
     // Ignore
