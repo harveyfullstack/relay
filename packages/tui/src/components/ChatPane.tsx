@@ -97,6 +97,7 @@ export function ChatPane({
       height={height}
       borderStyle="single"
       borderColor={borderColor}
+      overflow="hidden"
     >
       {/* Chat header */}
       <Box paddingX={1} justifyContent="space-between">

@@ -52,7 +52,7 @@ export function Layout({ store, dimensions, onSendMessage, onSpawnAgent }: Layou
   const logWidth = logsVisible ? mainContentWidth - chatWidth : 0;
 
   return (
-    <Box flexDirection="column" width={width} height={height}>
+    <Box flexDirection="column" width={width} height={height} overflow="hidden">
       {/* Header */}
       <Header
         projectRoot={undefined}
