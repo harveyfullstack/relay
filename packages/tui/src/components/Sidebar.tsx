@@ -144,12 +144,29 @@ function SidebarRow({ item, isHighlighted, width }: { item: SidebarItem; isHighl
 }
 
 /**
- * Count total navigable items in the sidebar.
+ * Get the indices of interactive (selectable) sidebar items.
+ * Skips headers, separators, and empty placeholders.
  */
-export function getSidebarItemCount(agents: AgentInfo[], channels: string[]): number {
-  // header + agents (or 1 empty) + separator + header + channels + separator + action
-  const agentItems = agents.length > 0 ? agents.length : 1;
-  return 1 + agentItems + 1 + 1 + channels.length + 1 + 1;
+export function getSidebarInteractiveIndices(agents: AgentInfo[], channels: string[]): number[] {
+  const indices: number[] = [];
+  const agentCount = agents.length > 0 ? agents.length : 1; // 1 for "empty" placeholder
+  // 0: header "AGENTS"
+  // 1..agentCount: agents (interactive) or empty (not interactive)
+  if (agents.length > 0) {
+    for (let i = 0; i < agents.length; i++) {
+      indices.push(1 + i);
+    }
+  }
+  // agentCount+1: separator
+  // agentCount+2: header "CHANNELS"
+  const channelStart = 1 + agentCount + 2;
+  for (let i = 0; i < channels.length; i++) {
+    indices.push(channelStart + i);
+  }
+  // channelStart+channels.length: separator
+  // channelStart+channels.length+1: action
+  indices.push(channelStart + channels.length + 1);
+  return indices;
 }
 
 /**
