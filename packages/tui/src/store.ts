@@ -97,11 +97,12 @@ export function createTuiStore() {
     // Agents
     setAgents: (agents) => set({ agents }),
 
-    // Messages
+    // Messages (deduplicate by ID)
     addMessage: (msg) =>
       set((state) => {
+        // Skip if we already have this message
+        if (state.messages.some((m) => m.id === msg.id)) return state;
         const messages = [...state.messages, msg];
-        // Cap at MAX_MESSAGES
         if (messages.length > MAX_MESSAGES) {
           return { messages: messages.slice(messages.length - MAX_MESSAGES) };
         }

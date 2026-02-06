@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { RelayClient } from '@agent-relay/sdk';
 import type { SendPayload, SendMeta, AgentReadyPayload, ChannelMessagePayload, Envelope } from '@agent-relay/protocol';
 import type { TuiStore } from '../store.js';
@@ -12,6 +12,8 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
   const clientRef = useRef<RelayClient | null>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const statusPollRef = useRef<NodeJS.Timeout | null>(null);
+  const messagePollRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMessageTsRef = useRef<number>(0);
 
   useEffect(() => {
     const client = new RelayClient({
@@ -91,11 +93,17 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
       refreshStatus(client, store);
     }, 5000);
 
+    // Poll ALL messages every 2s to catch agent-to-agent traffic
+    // (onMessage only fires for messages addressed to TUI)
+    messagePollRef.current = setInterval(() => {
+      pollNewMessages(client, store, lastMessageTsRef);
+    }, 2000);
+
     // Load initial data once connected
     const readyCheck = setInterval(() => {
       if (client.state === 'READY') {
         clearInterval(readyCheck);
-        loadInitialData(client, store);
+        loadInitialData(client, store, lastMessageTsRef);
       }
     }, 200);
 
@@ -103,6 +111,7 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
       clearInterval(readyCheck);
       if (pollRef.current) clearInterval(pollRef.current);
       if (statusPollRef.current) clearInterval(statusPollRef.current);
+      if (messagePollRef.current) clearInterval(messagePollRef.current);
       client.destroy();
       clientRef.current = null;
     };
@@ -175,6 +184,26 @@ export function useRelay(store: TuiStore, config: TuiConfig) {
   return { sendMessage, sendChannelMessage, joinChannel, leaveChannel, spawnAgent };
 }
 
+/** Map daemon-stored 'TUI' sender back to 'You' for display. */
+function normalizeSender(from: string): string {
+  return from === 'TUI' ? 'You' : from;
+}
+
+/** Convert a raw queryMessages result into a TuiMessage. */
+function toTuiMessage(m: { id: string; from: string; body: string; timestamp: number; channel?: string; thread?: string }): TuiMessage {
+  const raw = m as Record<string, unknown>;
+  return {
+    id: m.id,
+    from: normalizeSender(m.from),
+    to: (raw.to as string) ?? (m.channel ? `#${m.channel}` : ''),
+    body: m.body,
+    timestamp: m.timestamp,
+    kind: 'message',
+    channel: m.channel,
+    thread: m.thread,
+  };
+}
+
 async function refreshAgents(client: RelayClient, store: TuiStore) {
   try {
     if (client.state !== 'READY') return;
@@ -195,7 +224,11 @@ async function refreshStatus(client: RelayClient, store: TuiStore) {
   }
 }
 
-async function loadInitialData(client: RelayClient, store: TuiStore) {
+async function loadInitialData(
+  client: RelayClient,
+  store: TuiStore,
+  lastTsRef: React.MutableRefObject<number>,
+) {
   try {
     // Load connected agents
     const agents = await client.listConnectedAgents({});
@@ -205,20 +238,42 @@ async function loadInitialData(client: RelayClient, store: TuiStore) {
     const status = await client.getStatus();
     store.setDaemonStatus(status);
 
-    // Load recent messages
-    const result = await client.queryMessages({ limit: 100, order: 'asc' });
-    const messages: TuiMessage[] = result.map((m) => ({
-      id: m.id,
-      from: m.from,
-      to: m.channel ? `#${m.channel}` : 'TUI',
-      body: m.body,
-      timestamp: m.timestamp,
-      kind: 'message',
-      channel: m.channel,
-      thread: m.thread,
-    }));
-    store.loadMessages(messages);
+    // Start fresh — only show messages that arrive during this session.
+    // Set timestamp to now so polling only picks up new traffic.
+    lastTsRef.current = Date.now();
   } catch {
     // Will retry on next poll
+  }
+}
+
+/**
+ * Poll for new messages since last known timestamp.
+ * This catches agent-to-agent messages that onMessage doesn't deliver to TUI.
+ */
+async function pollNewMessages(
+  client: RelayClient,
+  store: TuiStore,
+  lastTsRef: React.MutableRefObject<number>,
+) {
+  try {
+    if (client.state !== 'READY') return;
+    const sinceTs = lastTsRef.current > 0 ? lastTsRef.current + 1 : undefined;
+    const result = await client.queryMessages({
+      limit: 50,
+      order: 'asc',
+      sinceTs,
+    });
+
+    for (const m of result) {
+      // Skip our own messages — they're already in the store from the local add on send
+      if (m.from === 'TUI') continue;
+      store.addMessage(toTuiMessage(m));
+    }
+
+    if (result.length > 0) {
+      lastTsRef.current = result[result.length - 1].timestamp;
+    }
+  } catch {
+    // Ignore polling errors
   }
 }

@@ -15,6 +15,13 @@ interface ChatPaneProps {
   height: number;
 }
 
+/**
+ * Check if a message is "direct" — involves You/TUI as sender or recipient.
+ */
+function isDirectMessage(msg: TuiMessage): boolean {
+  return msg.from === 'You' || msg.to === 'TUI' || msg.to === 'You';
+}
+
 export function ChatPane({
   messages,
   selectedTarget,
@@ -34,9 +41,15 @@ export function ChatPane({
     if (selectedTarget.type === 'channel') {
       msgs = messages.filter((m) => m.channel === selectedTarget.name);
     } else {
+      // Show all messages involving this agent:
+      // - Messages from the agent (to anyone)
+      // - Messages to the agent (from anyone, including You)
+      const name = selectedTarget.name;
       msgs = messages.filter(
         (m) =>
-          (m.from === selectedTarget.name || m.to === selectedTarget.name) &&
+          (m.from === name || m.to === name ||
+           // Our messages to this agent (locally added as from: 'You', to: agentName)
+           (m.from === 'You' && m.to === name)) &&
           !m.channel,
       );
     }
@@ -51,7 +64,7 @@ export function ChatPane({
     return msgs;
   }, [messages, selectedTarget, activeThread]);
 
-  // Reserve 2 lines for header + scroll indicator
+  // Reserve lines for header + scroll indicators + borders
   const messageAreaHeight = Math.max(1, height - 4);
   const { visibleMessages, aboveCount, belowCount } = useScroll(
     filtered,
@@ -96,19 +109,16 @@ export function ChatPane({
       {/* Messages */}
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
         {!selectedTarget && (
-          <Box justifyContent="center" alignItems="center" flexGrow={1}>
-            <Text dimColor>Select an agent or channel from the sidebar</Text>
-          </Box>
+          <Text dimColor>Select an agent or channel from the sidebar</Text>
         )}
         {selectedTarget && visibleMessages.length === 0 && (
-          <Box justifyContent="center" alignItems="center" flexGrow={1}>
-            <Text dimColor>No messages yet. Say hello!</Text>
-          </Box>
+          <Text dimColor>No messages yet. Say hello!</Text>
         )}
         {visibleMessages.map((msg) => (
           <Message
             key={msg.id}
             message={msg}
+            isDirect={isDirectMessage(msg)}
             isInThread={!!activeThread && msg.id !== activeThread}
           />
         ))}
