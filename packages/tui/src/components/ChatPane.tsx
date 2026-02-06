@@ -15,6 +15,7 @@ interface ChatPaneProps {
   width: number;
   height: number;
   processingAgents: string[];
+  displayName: string;
 }
 
 /**
@@ -22,8 +23,8 @@ interface ChatPaneProps {
  * Direct messages (to/from You) and channel messages (group conversations) are full color.
  * Only agent-to-agent DMs render dimmed.
  */
-function isDirectMessage(msg: TuiMessage): boolean {
-  return msg.from === 'You' || msg.to === 'Boss' || msg.to === 'You' || !!msg.channel;
+function isDirectMessage(msg: TuiMessage, displayName: string): boolean {
+  return msg.from === 'You' || msg.to === displayName || msg.to === 'You' || !!msg.channel;
 }
 
 export const ChatPane = memo(function ChatPane({
@@ -35,6 +36,7 @@ export const ChatPane = memo(function ChatPane({
   width,
   height,
   processingAgents,
+  displayName,
 }: ChatPaneProps) {
   const borderColor = focused ? colors.borderFocused : colors.border;
 
@@ -56,7 +58,7 @@ export const ChatPane = memo(function ChatPane({
            // Our messages to this agent (locally added as from: 'You', to: agentName)
            (m.from === 'You' && m.to === name) ||
            // System errors addressed to us (show in current view)
-           (m.from === '_system' && (m.to === 'Boss' || m.to === 'You'))) &&
+           (m.from === '_system' && (m.to === displayName || m.to === 'You'))) &&
           !m.channel),
       );
     }
@@ -138,7 +140,7 @@ export const ChatPane = memo(function ChatPane({
           <Message
             key={msg.id}
             message={msg}
-            isDirect={isDirectMessage(msg)}
+            isDirect={isDirectMessage(msg, displayName)}
             isInThread={!!activeThread && msg.id !== activeThread}
           />
         ))}

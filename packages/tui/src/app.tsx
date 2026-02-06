@@ -4,9 +4,10 @@ import { Layout } from './components/Layout.js';
 import { useDimensions } from './hooks/use-dimensions.js';
 import { useRelay } from './hooks/use-relay.js';
 import { getSidebarItemCount, getSidebarTarget } from './components/Sidebar.js';
-import type { TuiConfig } from './types.js';
+import type { TuiConfig, TuiSettings } from './types.js';
 import type { TuiStore } from './store.js';
 import type { StoreApi } from 'zustand';
+import { saveSettings } from './settings.js';
 
 interface AppProps {
   storeApi: StoreApi<TuiStore>;
@@ -36,6 +37,15 @@ export function App({ storeApi, config }: AppProps) {
       store.setScrollOffset(0);
     },
     [storeApi, sendMessage, sendChannelMessage],
+  );
+
+  // Handle saving settings
+  const handleSaveSettings = useCallback(
+    (settings: TuiSettings) => {
+      storeApi.getState().setSettings(settings);
+      saveSettings(settings, config.dataDir);
+    },
+    [storeApi, config.dataDir],
   );
 
   // Handle spawning an agent
@@ -78,6 +88,11 @@ export function App({ storeApi, config }: AppProps) {
       return;
     }
 
+    if (input === ',' && focusedPane !== 'chat') {
+      store.setModal('settings');
+      return;
+    }
+
     // Pane-specific input
     if (focusedPane === 'sidebar') {
       handleSidebarInput(input, key, store);
@@ -94,6 +109,7 @@ export function App({ storeApi, config }: AppProps) {
       dimensions={dimensions}
       onSendMessage={handleSendMessage}
       onSpawnAgent={handleSpawnAgent}
+      onSaveSettings={handleSaveSettings}
     />
   );
 }

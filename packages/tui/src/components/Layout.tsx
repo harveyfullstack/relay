@@ -9,6 +9,7 @@ import { InputBar } from './InputBar.js';
 import { LogPane } from './LogPane.js';
 import { SpawnDialog } from './SpawnDialog.js';
 import { HelpOverlay } from './HelpOverlay.js';
+import { SettingsModal } from './SettingsModal.js';
 import type { TuiStore } from '../store.js';
 import type { StoreApi } from 'zustand';
 import type { Dimensions } from '../hooks/use-dimensions.js';
@@ -18,9 +19,10 @@ interface LayoutProps {
   dimensions: Dimensions;
   onSendMessage: (text: string) => void;
   onSpawnAgent: (name: string, cli: string, task?: string) => void;
+  onSaveSettings: (settings: import('../types.js').TuiSettings) => void;
 }
 
-export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent }: LayoutProps) {
+export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSaveSettings }: LayoutProps) {
   const { width, height } = dimensions;
 
   const {
@@ -38,6 +40,7 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent }: La
     modal,
     scrollOffset,
     processingAgents,
+    settings,
     setModal,
   } = useStore(storeApi);
 
@@ -91,6 +94,7 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent }: La
             width={chatWidth}
             height={chatHeight}
             processingAgents={processingAgents}
+            displayName={settings.displayName}
           />
           <InputBar
             selectedTarget={selectedTarget}
@@ -132,6 +136,15 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent }: La
       {modal === 'help' && (
         <Box position="absolute" marginLeft={Math.floor(width / 2) - 25} marginTop={Math.floor(height / 4)}>
           <HelpOverlay onClose={closeModal} />
+        </Box>
+      )}
+      {modal === 'settings' && (
+        <Box position="absolute" marginLeft={Math.floor(width / 2) - 22} marginTop={Math.floor(height / 3)}>
+          <SettingsModal
+            settings={settings}
+            onSave={onSaveSettings}
+            onClose={closeModal}
+          />
         </Box>
       )}
     </Box>

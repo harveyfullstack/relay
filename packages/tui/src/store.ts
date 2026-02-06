@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import type {
   TuiMessage,
+  TuiSettings,
   LogEntry,
   FocusedPane,
   ModalType,
@@ -8,6 +9,7 @@ import type {
   AgentInfo,
   StatusResponsePayload,
 } from './types.js';
+import { DEFAULT_SETTINGS } from './settings.js';
 
 const MAX_MESSAGES = 2000;
 const MAX_LOGS_PER_AGENT = 500;
@@ -31,6 +33,9 @@ export interface TuiState {
 
   // Processing state (agents currently thinking)
   processingAgents: string[];
+
+  // Settings
+  settings: TuiSettings;
 
   // UI state
   focusedPane: FocusedPane;
@@ -65,6 +70,9 @@ export interface TuiActions {
   addChannel: (channel: string) => void;
   removeChannel: (channel: string) => void;
 
+  // Settings
+  setSettings: (settings: TuiSettings) => void;
+
   // UI
   setFocusedPane: (pane: FocusedPane) => void;
   cycleFocus: () => void;
@@ -89,6 +97,7 @@ export function createTuiStore() {
     messages: [],
     logs: {},
     channels: ['all'],
+    settings: { ...DEFAULT_SETTINGS },
     processingAgents: [],
     focusedPane: 'chat',
     selectedTarget: { type: 'channel', name: 'all' },
@@ -165,6 +174,9 @@ export function createTuiStore() {
       set((state) => ({
         channels: state.channels.filter((c) => c !== channel),
       })),
+
+    // Settings
+    setSettings: (settings) => set({ settings }),
 
     // UI
     setFocusedPane: (pane) => set({ focusedPane: pane }),

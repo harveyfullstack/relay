@@ -24,9 +24,11 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
   const lastMessageTsRef = useRef<number>(0);
 
   useEffect(() => {
+    const { displayName } = storeApi.getState().settings;
+
     const client = new RelayClient({
       socketPath: config.socketPath,
-      agentName: 'Boss',
+      agentName: displayName,
       entityType: 'user',
       cli: 'tui',
       quiet: true,
@@ -53,7 +55,7 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
         const msg: TuiMessage = {
           id: messageId,
           from,
-          to: originalTo ?? 'Boss',
+          to: originalTo ?? displayName,
           body: payload.body,
           timestamp: Date.now(),
           kind: payload.kind ?? 'message',
@@ -231,17 +233,17 @@ function parseAtMentions(text: string): string[] {
   return mentions;
 }
 
-/** Map daemon-stored 'Boss' sender back to 'You' for display. */
-function normalizeSender(from: string): string {
-  return from === 'Boss' ? 'You' : from;
+/** Map daemon-stored sender name back to 'You' for display. */
+function normalizeSender(from: string, displayName: string): string {
+  return from === displayName ? 'You' : from;
 }
 
 /** Convert a raw queryMessages result into a TuiMessage. */
-function toTuiMessage(m: { id: string; from: string; body: string; timestamp: number; channel?: string; thread?: string }): TuiMessage {
+function toTuiMessage(m: { id: string; from: string; body: string; timestamp: number; channel?: string; thread?: string }, displayName: string): TuiMessage {
   const raw = m as Record<string, unknown>;
   return {
     id: m.id,
-    from: normalizeSender(m.from),
+    from: normalizeSender(m.from, displayName),
     to: m.channel ? `#${m.channel}` : ((raw.to as string) ?? ''),
     body: m.body,
     timestamp: m.timestamp,
@@ -304,7 +306,8 @@ async function refreshAgents(client: RelayClient, storeApi: StoreApi<TuiStore>) 
   try {
     if (client.state !== 'READY') return;
     const agents = await client.listConnectedAgents({});
-    const filtered = agents.filter((a) => a.name !== 'Boss');
+    const { displayName } = storeApi.getState().settings;
+    const filtered = agents.filter((a) => a.name !== displayName);
     const store = storeApi.getState();
     // Skip update if agent list hasn't changed (prevents unnecessary re-renders)
     const current = store.agents;
@@ -348,7 +351,8 @@ async function loadInitialData(
     const store = storeApi.getState();
     // Load connected agents
     const agents = await client.listConnectedAgents({});
-    store.setAgents(agents.filter((a) => a.name !== 'Boss'));
+    const { displayName } = store.settings;
+    store.setAgents(agents.filter((a) => a.name !== displayName));
 
     // Load daemon status
     const status = await client.getStatus();
@@ -385,10 +389,11 @@ async function pollNewMessages(
     });
 
     const store = storeApi.getState();
+    const { displayName } = store.settings;
     for (const m of result) {
       // Skip our own messages — they're already in the store from the local add on send
-      if (m.from === 'Boss') continue;
-      store.addMessage(toTuiMessage(m));
+      if (m.from === displayName) continue;
+      store.addMessage(toTuiMessage(m, displayName));
     }
 
     if (result.length > 0) {
