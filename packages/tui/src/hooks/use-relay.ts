@@ -26,7 +26,7 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
   useEffect(() => {
     const client = new RelayClient({
       socketPath: config.socketPath,
-      agentName: 'TUI',
+      agentName: 'Boss',
       entityType: 'user',
       cli: 'tui',
       quiet: true,
@@ -53,7 +53,7 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
         const msg: TuiMessage = {
           id: messageId,
           from,
-          to: originalTo ?? 'TUI',
+          to: originalTo ?? 'Boss',
           body: payload.body,
           timestamp: Date.now(),
           kind: payload.kind ?? 'message',
@@ -231,9 +231,9 @@ function parseAtMentions(text: string): string[] {
   return mentions;
 }
 
-/** Map daemon-stored 'TUI' sender back to 'You' for display. */
+/** Map daemon-stored 'Boss' sender back to 'You' for display. */
 function normalizeSender(from: string): string {
-  return from === 'TUI' ? 'You' : from;
+  return from === 'Boss' ? 'You' : from;
 }
 
 /** Convert a raw queryMessages result into a TuiMessage. */
@@ -304,7 +304,7 @@ async function refreshAgents(client: RelayClient, storeApi: StoreApi<TuiStore>) 
   try {
     if (client.state !== 'READY') return;
     const agents = await client.listConnectedAgents({});
-    const filtered = agents.filter((a) => a.name !== 'TUI');
+    const filtered = agents.filter((a) => a.name !== 'Boss');
     const store = storeApi.getState();
     // Skip update if agent list hasn't changed (prevents unnecessary re-renders)
     const current = store.agents;
@@ -348,7 +348,7 @@ async function loadInitialData(
     const store = storeApi.getState();
     // Load connected agents
     const agents = await client.listConnectedAgents({});
-    store.setAgents(agents.filter((a) => a.name !== 'TUI'));
+    store.setAgents(agents.filter((a) => a.name !== 'Boss'));
 
     // Load daemon status
     const status = await client.getStatus();
@@ -387,7 +387,7 @@ async function pollNewMessages(
     const store = storeApi.getState();
     for (const m of result) {
       // Skip our own messages — they're already in the store from the local add on send
-      if (m.from === 'TUI') continue;
+      if (m.from === 'Boss') continue;
       store.addMessage(toTuiMessage(m));
     }
 
