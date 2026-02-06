@@ -21,6 +21,16 @@ interface MessageProps {
 export const Message = memo(function Message({ message, isDirect, isInThread }: MessageProps) {
   const isYou = message.from === 'You';
   const time = formatTime(message.timestamp);
+  const isSystemError = message.from === '_system' && message.data?._isSystemError;
+
+  // System error: render as a warning notification
+  if (isSystemError) {
+    return (
+      <Box marginBottom={1}>
+        <Text color={colors.error} wrap="wrap">{`  [!] ${message.body}`}</Text>
+      </Box>
+    );
+  }
 
   if (!isDirect) {
     const route = `${message.from} \u2192 ${message.to}`;

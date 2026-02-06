@@ -593,7 +593,10 @@ export class Router {
       this.broadcastToUsers(senderName, envelope);
     } else if (to) {
       // Direct message
-      this.sendDirect(senderName, to, envelope);
+      const delivered = this.sendDirect(senderName, to, envelope);
+      if (!delivered && !isCrossMachine) {
+        this.sendUnknownTargetError(from, senderName, to);
+      }
     }
 
     // Route copies to shadows of the sender (outgoing messages)
@@ -754,6 +757,40 @@ export class Router {
       this.setProcessing(to, deliver.id);
     }
     return sent;
+  }
+
+  /**
+   * Notify the sender that the target agent was not found, listing available agents.
+   */
+  private sendUnknownTargetError(
+    senderConn: RoutableConnection,
+    senderName: string,
+    targetName: string,
+  ): void {
+    const available = this.getAgents().filter((a) => a !== senderName);
+    const list = available.length > 0
+      ? `Available agents: ${available.join(', ')}`
+      : 'No other agents are currently connected.';
+    const body = `Agent "${targetName}" not found. ${list}`;
+
+    const deliver: DeliverEnvelope = {
+      v: PROTOCOL_VERSION,
+      type: 'DELIVER',
+      id: generateId(),
+      ts: Date.now(),
+      from: '_system',
+      to: senderName,
+      payload: {
+        body,
+        kind: 'message',
+        data: { _isSystemError: true },
+      },
+      delivery: {
+        seq: senderConn.getNextSeq('default', '_system'),
+        session_id: senderConn.sessionId,
+      },
+    };
+    senderConn.send(deliver);
   }
 
   /**

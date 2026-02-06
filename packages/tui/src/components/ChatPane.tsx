@@ -47,10 +47,12 @@ export function ChatPane({
       const name = selectedTarget.name;
       msgs = messages.filter(
         (m) =>
-          (m.from === name || m.to === name ||
+          ((m.from === name || m.to === name ||
            // Our messages to this agent (locally added as from: 'You', to: agentName)
-           (m.from === 'You' && m.to === name)) &&
-          !m.channel,
+           (m.from === 'You' && m.to === name) ||
+           // System errors addressed to us (show in current view)
+           (m.from === '_system' && (m.to === 'TUI' || m.to === 'You'))) &&
+          !m.channel),
       );
     }
 
