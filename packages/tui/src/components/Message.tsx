@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Text } from 'ink';
+import { Box, Text } from 'ink';
 import { colors } from '../utils/theme.js';
 import { formatTime } from '../utils/format.js';
 import type { TuiMessage } from '../types.js';
@@ -14,30 +14,34 @@ interface MessageProps {
  * Render a single chat message.
  * Direct messages (to/from You) render in full color.
  * Indirect messages (agent-to-agent) render dimmed with a [from -> to] prefix.
+ *
+ * Uses Box+Text instead of \n in a single Text — Ink's wrap="wrap"
+ * does not reliably honour \n, causing header/body to run together.
  */
 export const Message = memo(function Message({ message, isDirect, isInThread }: MessageProps) {
   const isYou = message.from === 'You';
   const time = formatTime(message.timestamp);
 
   if (!isDirect) {
-    // Indirect: agent-to-agent traffic, show dimmed with routing info
-    const route = `${message.from} -> ${message.to}`;
+    const route = `${message.from} \u2192 ${message.to}`;
     return (
-      <Text dimColor wrap="wrap">
-        {`  ${route}  ${time}\n  ${message.body}\n`}
-      </Text>
+      <Box flexDirection="column" marginBottom={1}>
+        <Text dimColor>{`  ${route}  ${time}`}</Text>
+        <Text dimColor wrap="wrap">{`  ${message.body}`}</Text>
+      </Box>
     );
   }
 
-  // Direct message: full color
   const nameColor = isYou ? colors.you : colors.agent;
 
   return (
-    <Text wrap="wrap">
-      <Text bold color={nameColor}>{message.from}</Text>
-      <Text dimColor>{` ${time}`}</Text>
-      {isInThread ? <Text dimColor>{' [thread]'}</Text> : null}
-      {`\n${message.body}\n`}
-    </Text>
+    <Box flexDirection="column" marginBottom={1}>
+      <Text>
+        <Text bold color={nameColor}>{message.from}</Text>
+        <Text dimColor>{` ${time}`}</Text>
+        {isInThread ? <Text dimColor>{' [thread]'}</Text> : null}
+      </Text>
+      <Text wrap="wrap">{message.body}</Text>
+    </Box>
   );
 });
