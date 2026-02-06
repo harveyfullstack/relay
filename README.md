@@ -25,15 +25,25 @@ npm install -g agent-relay
 
 ## Getting Started
 
+**Terminal UI (recommended):**
+```bash
+agent-relay up --tui
+```
+
+A full-screen chat hub right in your terminal:
+- Chat directly with connected agents
+- Real-time agent presence and status
+- Spawn new agents (Claude, Codex, Gemini, Aider, Goose)
+- Channel messaging and threaded conversations
+- Live log streaming per agent
+- Keyboard-driven — Tab to navigate, Ctrl+L for logs, ? for help
+
+**Web dashboard:**
 ```bash
 agent-relay up --dashboard
 ```
 
-Navigate to **http://localhost:3888** to:
-- 🤖 Spawn and chat with agents using your locally installed CLI tools
-- 👀 View real-time agent presence and status
-- 💬 Message history and threading
-- 📜 Log streaming from all agents
+Navigate to **http://localhost:3888** for browser-based monitoring and chat.
 
 ---
 
@@ -42,7 +52,8 @@ Navigate to **http://localhost:3888** to:
 | Command | Description |
 |---------|-------------|
 | `agent-relay <cli>` | Start daemon + coordinator (claude, codex, gemini, etc.) |
-| `agent-relay up` | Start daemon + dashboard |
+| `agent-relay up --tui` | Start daemon + terminal chat UI |
+| `agent-relay up --dashboard` | Start daemon + web dashboard |
 | `agent-relay down` | Stop daemon |
 | `agent-relay status` | Check daemon status |
 | `agent-relay spawn <name> <cli> "task"` | Spawn a worker agent |
@@ -65,10 +76,11 @@ Define roles by adding markdown files to your project:
 
 Names automatically match roles (case-insensitive). Create agents using either method:
 
-**Option A: Dashboard (recommended for interactive use)**
-1. Open http://localhost:3888
-2. Click "Spawn Agent"
-3. Enter name "Lead" and select CLI "claude"
+**Option A: TUI (recommended for interactive use)**
+```bash
+agent-relay up --tui
+# Press S in the sidebar to spawn, or use the CLI below
+```
 
 **Option B: CLI (for scripting/automation)**
 ```bash
