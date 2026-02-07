@@ -11,6 +11,7 @@ import { SpawnDialog } from './SpawnDialog.js';
 import { HelpOverlay } from './HelpOverlay.js';
 import { SettingsModal } from './SettingsModal.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
+import { TeamInitDialog } from './TeamInitDialog.js';
 import type { TuiStore } from '../store.js';
 import type { StoreApi } from 'zustand';
 import type { Dimensions } from '../hooks/use-dimensions.js';
@@ -20,10 +21,11 @@ interface LayoutProps {
   dimensions: Dimensions;
   onSendMessage: (text: string) => void;
   onSpawnAgent: (name: string, cli: string, task?: string) => void;
+  onSpawnTeam: (members: { name: string; cli: string }[]) => void;
   onSaveSettings: (settings: import('../types.js').TuiSettings) => void;
 }
 
-export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSaveSettings }: LayoutProps) {
+export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSpawnTeam, onSaveSettings }: LayoutProps) {
   const { width, height } = dimensions;
 
   const {
@@ -151,6 +153,17 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSa
         <Box position="absolute" marginLeft={Math.floor(width / 2) - 22} marginTop={Math.floor(height / 3)}>
           <ConfirmDialog
             message={`Release agent "${releaseTarget}"? This will kill the process.`}
+          />
+        </Box>
+      )}
+      {modal === 'team-init' && (
+        <Box position="absolute" marginLeft={Math.floor(width / 2) - 26} marginTop={Math.floor(height / 4)}>
+          <TeamInitDialog
+            onSpawnTeam={(members) => {
+              closeModal();
+              onSpawnTeam(members);
+            }}
+            onSkip={closeModal}
           />
         </Box>
       )}

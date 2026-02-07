@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { useInput, useApp } from 'ink';
 import { Layout } from './components/Layout.js';
 import { useDimensions } from './hooks/use-dimensions.js';
@@ -68,6 +68,40 @@ export function App({ storeApi, config }: AppProps) {
     [releaseAgent],
   );
 
+  // Handle spawning a whole team at once
+  const handleSpawnTeam = useCallback(
+    (members: { name: string; cli: string }[]) => {
+      for (const member of members) {
+        spawnAgent(member.name, member.cli).catch(() => {
+          // TODO: show error in status bar
+        });
+      }
+    },
+    [spawnAgent],
+  );
+
+  // Auto-show team init dialog when TUI starts with no agents online.
+  // Uses a ref to ensure we only trigger this once, and waits for the
+  // initial connection + agent list to settle.
+  const teamInitShown = useRef(false);
+  useEffect(() => {
+    if (teamInitShown.current) return;
+    const store = storeApi.getState();
+    if (!store.connected) return;
+    // Wait a tick for the agent list to populate
+    const timer = setTimeout(() => {
+      const current = storeApi.getState();
+      if (!teamInitShown.current && current.connected && current.agents.length === 0 && !current.modal) {
+        teamInitShown.current = true;
+        current.setModal('team-init');
+      } else {
+        // Agents already present or modal already open — don't show
+        teamInitShown.current = true;
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [storeApi, storeApi.getState().connected]);
+
   // Global keyboard handling — reads state imperatively at keypress time
   useInput((input, key) => {
     const store = storeApi.getState();
@@ -89,6 +123,14 @@ export function App({ storeApi, config }: AppProps) {
           store.setModal(null);
         } else if (key.escape || input === 'n' || input === 'N') {
           store.setReleaseTarget(null);
+          store.setModal(null);
+        }
+        return;
+      }
+      // team-init handles its own input via useInput in the component;
+      // only Escape dismisses it from the global handler
+      if (modal === 'team-init') {
+        if (key.escape) {
           store.setModal(null);
         }
         return;
@@ -161,6 +203,7 @@ export function App({ storeApi, config }: AppProps) {
       dimensions={dimensions}
       onSendMessage={handleSendMessage}
       onSpawnAgent={handleSpawnAgent}
+      onSpawnTeam={handleSpawnTeam}
       onSaveSettings={handleSaveSettings}
     />
   );
