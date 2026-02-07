@@ -7,17 +7,33 @@ const CLI_OPTIONS = ['amp', 'claude', 'cursor'] as const;
 interface TeamMember {
   role: string;
   name: string;
+  task: string;
   enabled: boolean;
 }
 
 const DEFAULT_TEAM: TeamMember[] = [
-  { role: 'Product Manager', name: 'PM', enabled: true },
-  { role: 'Software Engineer', name: 'Engineer', enabled: true },
-  { role: 'UX Designer', name: 'Designer', enabled: true },
+  {
+    role: 'Product Manager',
+    name: 'PM',
+    task: 'You are the Product Manager. Own requirements, prioritize work, write specs, and coordinate between Designer and Engineer. Focus on the "what" and "why" — not implementation details.',
+    enabled: true,
+  },
+  {
+    role: 'Software Engineer',
+    name: 'Engineer',
+    task: 'You are the Software Engineer. Implement features, write code, fix bugs, and handle architecture decisions. Coordinate with PM for requirements and Designer for UI specs.',
+    enabled: true,
+  },
+  {
+    role: 'UX Designer',
+    name: 'Designer',
+    task: 'You are the UX Designer. Own user experience, design interfaces, create component specs, and ensure accessibility. Coordinate with PM for requirements and Engineer for feasibility.',
+    enabled: true,
+  },
 ];
 
 interface TeamInitDialogProps {
-  onSpawnTeam: (members: { name: string; cli: string }[]) => void;
+  onSpawnTeam: (members: { name: string; cli: string; task: string }[]) => void;
   onSkip: () => void;
 }
 
@@ -69,7 +85,7 @@ export function TeamInitDialog({ onSpawnTeam, onSkip }: TeamInitDialogProps) {
         return;
       }
       const cli = CLI_OPTIONS[cliIndex];
-      onSpawnTeam(selected.map((m) => ({ name: m.name, cli })));
+      onSpawnTeam(selected.map((m) => ({ name: m.name, cli, task: m.task })));
       return;
     }
   });
