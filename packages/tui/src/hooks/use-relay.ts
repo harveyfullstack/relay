@@ -221,7 +221,13 @@ export function useRelay(storeApi: StoreApi<TuiStore>, config: TuiConfig) {
     return client.spawn({ name, cli, task, waitForReady: true });
   }, []);
 
-  return { sendMessage, sendChannelMessage, joinChannel, leaveChannel, spawnAgent };
+  const releaseAgent = useCallback(async (name: string) => {
+    const client = clientRef.current;
+    if (!client) throw new Error('Not connected');
+    return client.release(name);
+  }, []);
+
+  return { sendMessage, sendChannelMessage, joinChannel, leaveChannel, spawnAgent, releaseAgent };
 }
 
 /** Extract @name mentions from message text. */

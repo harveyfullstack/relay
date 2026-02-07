@@ -18,7 +18,7 @@ export function App({ storeApi, config }: AppProps) {
   const dimensions = useDimensions();
   const { exit } = useApp();
 
-  const { sendMessage, sendChannelMessage, joinChannel, spawnAgent } = useRelay(storeApi, config);
+  const { sendMessage, sendChannelMessage, joinChannel, spawnAgent, releaseAgent } = useRelay(storeApi, config);
 
   // Handle sending a message from the input bar
   const handleSendMessage = useCallback(
@@ -58,6 +58,16 @@ export function App({ storeApi, config }: AppProps) {
     [spawnAgent],
   );
 
+  // Handle releasing (killing) an agent
+  const handleReleaseAgent = useCallback(
+    (name: string) => {
+      releaseAgent(name).catch(() => {
+        // TODO: show error in status bar
+      });
+    },
+    [releaseAgent],
+  );
+
   // Global keyboard handling — reads state imperatively at keypress time
   useInput((input, key) => {
     const store = storeApi.getState();
@@ -65,6 +75,24 @@ export function App({ storeApi, config }: AppProps) {
 
     // If a modal is open, handle dismiss keys
     if (modal) {
+      if (modal === 'confirm-release') {
+        if (input === 'y' || input === 'Y') {
+          const target = store.releaseTarget;
+          if (target) {
+            handleReleaseAgent(target);
+            // If we were viewing this agent, clear selection
+            if (store.selectedTarget?.type === 'agent' && store.selectedTarget.name === target) {
+              store.setSelectedTarget({ type: 'channel', name: 'all' });
+            }
+          }
+          store.setReleaseTarget(null);
+          store.setModal(null);
+        } else if (key.escape || input === 'n' || input === 'N') {
+          store.setReleaseTarget(null);
+          store.setModal(null);
+        }
+        return;
+      }
       if (key.escape) {
         store.setModal(null);
       }
@@ -178,6 +206,13 @@ function handleSidebarInput(
       store.setFocusedPane('chat');
     } else if (target.type === 'action') {
       store.setModal('spawn');
+    }
+  } else if (input === 'x' || input === 'X') {
+    // Prompt to release the currently highlighted agent
+    const target = getSidebarTarget(store.sidebarIndex, store.agents, store.channels);
+    if (target.type === 'agent') {
+      store.setReleaseTarget(target.name);
+      store.setModal('confirm-release');
     }
   } else if (input === 's' || input === 'S') {
     store.setModal('spawn');

@@ -10,6 +10,7 @@ import { AgentTermPane } from './AgentTermPane.js';
 import { SpawnDialog } from './SpawnDialog.js';
 import { HelpOverlay } from './HelpOverlay.js';
 import { SettingsModal } from './SettingsModal.js';
+import { ConfirmDialog } from './ConfirmDialog.js';
 import type { TuiStore } from '../store.js';
 import type { StoreApi } from 'zustand';
 import type { Dimensions } from '../hooks/use-dimensions.js';
@@ -36,6 +37,7 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSa
     sidebarIndex,
     activeThread,
     modal,
+    releaseTarget,
     terminalAgent,
     scrollOffset,
     processingAgents,
@@ -142,6 +144,13 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSa
             agentName={terminalAgent}
             width={Math.floor(width * 0.8)}
             height={height - 4}
+          />
+        </Box>
+      )}
+      {modal === 'confirm-release' && releaseTarget && (
+        <Box position="absolute" marginLeft={Math.floor(width / 2) - 22} marginTop={Math.floor(height / 3)}>
+          <ConfirmDialog
+            message={`Release agent "${releaseTarget}"? This will kill the process.`}
           />
         </Box>
       )}

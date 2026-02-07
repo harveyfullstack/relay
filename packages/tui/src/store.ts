@@ -46,6 +46,7 @@ export interface TuiState {
   sidebarIndex: number;
   activeThread: string | null;
   modal: ModalType;
+  releaseTarget: string | null;
   terminalAgent: string | null;
   scrollOffset: number;
 }
@@ -84,6 +85,7 @@ export interface TuiActions {
   setSidebarIndex: (index: number) => void;
   setActiveThread: (threadId: string | null) => void;
   setModal: (modal: ModalType) => void;
+  setReleaseTarget: (name: string | null) => void;
   setTerminalAgent: (name: string | null) => void;
   setScrollOffset: (offset: number) => void;
   scrollUp: (lines: number) => void;
@@ -109,6 +111,7 @@ export function createTuiStore() {
     sidebarIndex: 0,
     activeThread: null,
     modal: null,
+    releaseTarget: null,
     terminalAgent: null,
     scrollOffset: 0,
 
@@ -204,6 +207,7 @@ export function createTuiStore() {
     setSidebarIndex: (index) => set({ sidebarIndex: index }),
     setActiveThread: (threadId) => set({ activeThread: threadId, scrollOffset: 0 }),
     setModal: (modal) => set({ modal }),
+    setReleaseTarget: (name) => set({ releaseTarget: name }),
     setTerminalAgent: (name) => set({ terminalAgent: name }),
     setScrollOffset: (offset) => set({ scrollOffset: Math.max(0, offset) }),
 

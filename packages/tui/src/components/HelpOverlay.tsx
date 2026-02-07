@@ -16,6 +16,7 @@ const shortcuts = [
   { key: 'Up/Down', action: 'Navigate agents and channels' },
   { key: 'Enter', action: 'Select agent/channel' },
   { key: 'S', action: 'Spawn new agent' },
+  { key: 'X', action: 'Release selected agent (confirm)' },
   { key: ',', action: 'Settings' },
   { section: 'Chat' },
   { key: 'Up/Down', action: 'Scroll messages' },
