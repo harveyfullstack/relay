@@ -81,26 +81,34 @@ export function App({ storeApi, config }: AppProps) {
   );
 
   // Auto-show team init dialog when TUI starts with no agents online.
-  // Uses a ref to ensure we only trigger this once, and waits for the
-  // initial connection + agent list to settle.
+  // Subscribe to the store directly so we react to `connected` changing,
+  // since App doesn't use useStore and React won't re-render on state changes.
   const teamInitShown = useRef(false);
+  const teamInitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (teamInitShown.current) return;
-    const store = storeApi.getState();
-    if (!store.connected) return;
-    // Wait a tick for the agent list to populate
-    const timer = setTimeout(() => {
-      const current = storeApi.getState();
-      if (!teamInitShown.current && current.connected && current.agents.length === 0 && !current.modal) {
-        teamInitShown.current = true;
-        current.setModal('team-init');
-      } else {
-        // Agents already present or modal already open — don't show
-        teamInitShown.current = true;
+    const unsubscribe = storeApi.subscribe((state) => {
+      if (teamInitShown.current) return;
+      if (!state.connected) return;
+
+      // Connected but no agents — start a delayed check
+      if (!teamInitTimer.current) {
+        teamInitTimer.current = setTimeout(() => {
+          const current = storeApi.getState();
+          if (!teamInitShown.current && current.connected && current.agents.length === 0 && !current.modal) {
+            teamInitShown.current = true;
+            current.setModal('team-init');
+          } else {
+            teamInitShown.current = true;
+          }
+        }, 1500);
       }
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [storeApi, storeApi.getState().connected]);
+    });
+
+    return () => {
+      unsubscribe();
+      if (teamInitTimer.current) clearTimeout(teamInitTimer.current);
+    };
+  }, [storeApi]);
 
   // Global keyboard handling — reads state imperatively at keypress time
   useInput((input, key) => {
