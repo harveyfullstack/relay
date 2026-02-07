@@ -79,7 +79,20 @@ export function App({ storeApi, config }: AppProps) {
     }
 
     if (key.ctrl && input === 'l') {
-      store.toggleLogs();
+      // Determine which agent to show: selected target, or sidebar highlight
+      let agentName: string | null = null;
+      if (store.selectedTarget?.type === 'agent') {
+        agentName = store.selectedTarget.name;
+      } else {
+        const target = getSidebarTarget(store.sidebarIndex, store.agents, store.channels);
+        if (target.type === 'agent') {
+          agentName = target.name;
+        } else if (store.agents.length > 0) {
+          agentName = store.agents[0].name;
+        }
+      }
+      store.setTerminalAgent(agentName);
+      store.setModal(store.modal === 'terminal' ? null : 'terminal');
       return;
     }
 
@@ -98,8 +111,6 @@ export function App({ storeApi, config }: AppProps) {
       handleSidebarInput(input, key, store);
     } else if (focusedPane === 'chat') {
       handleChatInput(input, key, store);
-    } else if (focusedPane === 'logs') {
-      // Logs pane doesn't have special input yet
     }
   });
 

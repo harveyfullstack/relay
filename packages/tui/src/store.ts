@@ -45,8 +45,8 @@ export interface TuiState {
   selectedTarget: SelectedTarget | null;
   sidebarIndex: number;
   activeThread: string | null;
-  logsVisible: boolean;
   modal: ModalType;
+  terminalAgent: string | null;
   scrollOffset: number;
 }
 
@@ -83,8 +83,8 @@ export interface TuiActions {
   setSelectedTarget: (target: SelectedTarget | null) => void;
   setSidebarIndex: (index: number) => void;
   setActiveThread: (threadId: string | null) => void;
-  toggleLogs: () => void;
   setModal: (modal: ModalType) => void;
+  setTerminalAgent: (name: string | null) => void;
   setScrollOffset: (offset: number) => void;
   scrollUp: (lines: number) => void;
   scrollDown: (lines: number) => void;
@@ -108,8 +108,8 @@ export function createTuiStore() {
     selectedTarget: { type: 'channel', name: 'all' },
     sidebarIndex: 0,
     activeThread: null,
-    logsVisible: false,
     modal: null,
+    terminalAgent: null,
     scrollOffset: 0,
 
     // Connection
@@ -194,9 +194,7 @@ export function createTuiStore() {
 
     cycleFocus: () =>
       set((state) => {
-        const panes: FocusedPane[] = state.logsVisible
-          ? ['sidebar', 'chat', 'logs']
-          : ['sidebar', 'chat'];
+        const panes: FocusedPane[] = ['sidebar', 'chat'];
         const currentIndex = panes.indexOf(state.focusedPane);
         const nextIndex = (currentIndex + 1) % panes.length;
         return { focusedPane: panes[nextIndex] };
@@ -205,8 +203,8 @@ export function createTuiStore() {
     setSelectedTarget: (target) => set({ selectedTarget: target, scrollOffset: 0, activeThread: null }),
     setSidebarIndex: (index) => set({ sidebarIndex: index }),
     setActiveThread: (threadId) => set({ activeThread: threadId, scrollOffset: 0 }),
-    toggleLogs: () => set((state) => ({ logsVisible: !state.logsVisible })),
     setModal: (modal) => set({ modal }),
+    setTerminalAgent: (name) => set({ terminalAgent: name }),
     setScrollOffset: (offset) => set({ scrollOffset: Math.max(0, offset) }),
 
     scrollUp: (lines) =>

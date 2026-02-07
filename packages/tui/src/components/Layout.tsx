@@ -6,7 +6,7 @@ import { StatusBar } from './StatusBar.js';
 import { Sidebar } from './Sidebar.js';
 import { ChatPane } from './ChatPane.js';
 import { InputBar } from './InputBar.js';
-import { LogPane } from './LogPane.js';
+import { AgentTermPane } from './AgentTermPane.js';
 import { SpawnDialog } from './SpawnDialog.js';
 import { HelpOverlay } from './HelpOverlay.js';
 import { SettingsModal } from './SettingsModal.js';
@@ -30,14 +30,13 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSa
     daemonStatus,
     agents,
     messages,
-    logs,
     channels,
     focusedPane,
     selectedTarget,
     sidebarIndex,
     activeThread,
-    logsVisible,
     modal,
+    terminalAgent,
     scrollOffset,
     processingAgents,
     readyAgents,
@@ -56,10 +55,7 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSa
   const chatHeight = contentHeight - inputHeight;
 
   const mainContentWidth = width - sidebarWidth;
-  const chatWidth = logsVisible
-    ? Math.floor(mainContentWidth * 0.55)
-    : mainContentWidth;
-  const logWidth = logsVisible ? mainContentWidth - chatWidth : 0;
+  const chatWidth = mainContentWidth;
 
   return (
     <Box flexDirection="column" width={width} height={height} overflow="hidden">
@@ -107,16 +103,6 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSa
           />
         </Box>
 
-        {/* Log pane (optional) */}
-        {logsVisible && (
-          <LogPane
-            logs={logs}
-            selectedTarget={selectedTarget}
-            focused={focusedPane === 'logs'}
-            width={logWidth}
-            height={contentHeight}
-          />
-        )}
       </Box>
 
       {/* Status bar */}
@@ -147,6 +133,15 @@ export function Layout({ storeApi, dimensions, onSendMessage, onSpawnAgent, onSa
             settings={settings}
             onSave={onSaveSettings}
             onClose={closeModal}
+          />
+        </Box>
+      )}
+      {modal === 'terminal' && (
+        <Box position="absolute" marginLeft={Math.floor(width * 0.1)} marginTop={2}>
+          <AgentTermPane
+            agentName={terminalAgent}
+            width={Math.floor(width * 0.8)}
+            height={height - 4}
           />
         </Box>
       )}

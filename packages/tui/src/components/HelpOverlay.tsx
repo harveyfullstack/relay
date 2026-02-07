@@ -9,7 +9,7 @@ interface HelpOverlayProps {
 const shortcuts = [
   { section: 'Global' },
   { key: 'Tab', action: 'Cycle focus between panes' },
-  { key: 'Ctrl+L', action: 'Toggle log panel' },
+  { key: 'Ctrl+L', action: 'Toggle agent terminal' },
   { key: '?', action: 'Show/hide this help' },
   { key: 'Ctrl+C', action: 'Quit' },
   { section: 'Sidebar' },

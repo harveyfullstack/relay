@@ -19,9 +19,9 @@ export interface LogEntry {
   data: string;
 }
 
-export type FocusedPane = 'sidebar' | 'chat' | 'logs';
+export type FocusedPane = 'sidebar' | 'chat';
 
-export type ModalType = 'spawn' | 'help' | 'settings' | null;
+export type ModalType = 'spawn' | 'help' | 'settings' | 'terminal' | null;
 
 export interface TuiSettings {
   /** Display name shown to agents (default: 'Boss') */
