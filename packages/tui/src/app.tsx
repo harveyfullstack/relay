@@ -78,7 +78,7 @@ export function App({ storeApi, config }: AppProps) {
       return;
     }
 
-    if (key.ctrl && input === 'l') {
+    if (input === '.' && focusedPane !== 'chat') {
       // Determine which agent to show: selected target, or sidebar highlight
       let agentName: string | null = null;
       if (store.selectedTarget?.type === 'agent') {

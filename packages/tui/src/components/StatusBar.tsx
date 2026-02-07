@@ -41,7 +41,7 @@ export const StatusBar = memo(function StatusBar({ connected, daemonStatus, agen
           <Text>{uptime}</Text>
         </Text>
       </Box>
-      <Text dimColor>Tab:focus  Ctrl+L:terminal  ,:settings  Ctrl+C:quit</Text>
+      <Text dimColor>Tab:focus  .:terminal  ,:settings  Ctrl+C:quit</Text>
     </Box>
   );
 });
