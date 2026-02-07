@@ -63,10 +63,13 @@ export function App({ storeApi, config }: AppProps) {
     const store = storeApi.getState();
     const { focusedPane, modal } = store;
 
-    // If a modal is open, let it handle input
+    // If a modal is open, handle dismiss keys
     if (modal) {
-      // Only handle escape at the top level as a fallback
       if (key.escape) {
+        store.setModal(null);
+      }
+      // Allow period to toggle terminal modal off
+      if (input === '.' && modal === 'terminal') {
         store.setModal(null);
       }
       return;
@@ -75,6 +78,16 @@ export function App({ storeApi, config }: AppProps) {
     // Global shortcuts
     if (key.tab) {
       store.cycleFocus();
+      // If we just switched to sidebar, snap to nearest interactive item
+      if (storeApi.getState().focusedPane === 'sidebar') {
+        const interactive = getSidebarInteractiveIndices(store.agents, store.channels);
+        if (interactive.length > 0 && !interactive.includes(store.sidebarIndex)) {
+          const nearest = interactive.reduce((a, b) =>
+            Math.abs(b - store.sidebarIndex) < Math.abs(a - store.sidebarIndex) ? b : a
+          );
+          store.setSidebarIndex(nearest);
+        }
+      }
       return;
     }
 
