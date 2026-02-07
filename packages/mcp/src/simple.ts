@@ -72,7 +72,7 @@ export interface RelayTools {
   /** Spawn a worker agent */
   spawn(options: {
     name: string;
-    cli: 'claude' | 'codex' | 'gemini' | 'droid' | 'opencode';
+    cli: 'claude' | 'codex' | 'gemini' | 'droid' | 'opencode' | 'amp';
     task: string;
     model?: string;
     cwd?: string;

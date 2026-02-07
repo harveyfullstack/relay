@@ -7,13 +7,13 @@ import type { RelayClient } from '../client-adapter.js';
  * This list should be kept in sync with CliType in packages/wrapper/src/shared.ts
  * Note: 'cursor', 'spawned', 'other' are excluded as they're not valid spawn targets.
  */
-export const SPAWNABLE_CLIS = ['claude', 'codex', 'gemini', 'droid', 'opencode'] as const;
+export const SPAWNABLE_CLIS = ['claude', 'codex', 'gemini', 'droid', 'opencode', 'amp'] as const;
 export type SpawnableCli = typeof SPAWNABLE_CLIS[number];
 
 export const relaySpawnSchema = z.object({
   name: z.string().describe('Unique name for the worker agent'),
   cli: z.enum(SPAWNABLE_CLIS).describe(
-    'CLI tool to use for the worker (claude, codex, gemini, droid, opencode)'
+    'CLI tool to use for the worker (claude, codex, gemini, droid, opencode, amp)'
   ),
   task: z.string().describe('Task description/prompt for the worker'),
   model: z.string().optional().describe('Model override (e.g., "claude-3-5-sonnet")'),
@@ -43,7 +43,7 @@ Example:
       cli: {
         type: 'string',
         enum: SPAWNABLE_CLIS as unknown as string[],
-        description: 'CLI tool to use (claude, codex, gemini, droid, opencode)',
+        description: 'CLI tool to use (claude, codex, gemini, droid, opencode, amp)',
       },
       task: {
         type: 'string',

@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { colors } from '../utils/theme.js';
 
-const CLI_OPTIONS = ['claude', 'codex', 'gemini', 'aider', 'goose'] as const;
+const CLI_OPTIONS = ['claude', 'codex', 'gemini', 'amp', 'aider', 'goose'] as const;
 
 interface SpawnDialogProps {
   onSpawn: (name: string, cli: string, task?: string) => void;
