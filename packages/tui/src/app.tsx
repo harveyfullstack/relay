@@ -70,9 +70,9 @@ export function App({ storeApi, config }: AppProps) {
 
   // Handle spawning a whole team at once
   const handleSpawnTeam = useCallback(
-    (members: { name: string; cli: string; task: string }[]) => {
+    (members: { name: string; cli: string }[]) => {
       for (const member of members) {
-        spawnAgent(member.name, member.cli, member.task).catch(() => {
+        spawnAgent(member.name, member.cli).catch(() => {
           // TODO: show error in status bar
         });
       }

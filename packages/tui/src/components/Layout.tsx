@@ -21,7 +21,7 @@ interface LayoutProps {
   dimensions: Dimensions;
   onSendMessage: (text: string) => void;
   onSpawnAgent: (name: string, cli: string, task?: string) => void;
-  onSpawnTeam: (members: { name: string; cli: string; task: string }[]) => void;
+  onSpawnTeam: (members: { name: string; cli: string }[]) => void;
   onSaveSettings: (settings: import('../types.js').TuiSettings) => void;
 }
 
